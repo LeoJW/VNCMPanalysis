@@ -53,6 +53,8 @@ for start_dir in moth_files:
                     shutil.rmtree(file_path)
             except Exception as e:
                 print('Failed to delete %s. Reason: %s' % (file_path, e))
+    metadata_file = open(os.path.join(sortfiles_dir, 'trial_start_times.txt'), 'w')
+    metadata_file.write('file name, start sample index, start time (s)\n')
     # Read open-ephys data
     # Assume only one record node, take first
     rootsession = Session(found_directory)
@@ -60,6 +62,7 @@ for start_dir in moth_files:
     # Loop over recordings (actually called experiments in open-ephys directory tree)
     trial_counter = 1
     for i in range(len(session.recordings)):
+        print('Experiment ' + str(session.recordings[i].experiment_index))
         # Check if there's a NI-DAQ continuous channel
         source_names = [s.metadata['source_node_name'] for s in session.recordings[i].continuous]
         if 'NI-DAQmx' not in source_names:
@@ -74,9 +77,6 @@ for start_dir in moth_files:
         exp_len_samples = session.recordings[i].continuous[ind].samples.shape[0]
         nchunks = np.ceil(exp_len_samples / chunk_size).astype(int)
         # Load in chunks, for each detect activity as passing threshold based on noise floor
-        has_activity = np.zeros(nchunks, dtype='bool')
-        start_times = np.zeros(nchunks)
-        print('Scanning chunks for activity...')
         for chunk in range(nchunks-1):
             # Load data of chunk
             data = session.recordings[i].continuous[ind].get_samples(
@@ -91,7 +91,6 @@ for start_dir in moth_files:
                     pkpk[channel] = np.ptp(signal.sosfilt(threshold_hpf, data[:,channel]))
                 threshold = threshold_times_pkpk * np.mean(pkpk)
             chunk_active = np.any(signal.sosfilt(general_bpf, data, axis=0) > threshold)
-            start_times[chunk] =  session.recordings[i].continuous[ind].timestamps[chunk_size * (chunk-1)]
             # If this chunk had activity, save to file as a "trial"
             if not chunk_active:
                 continue
@@ -102,36 +101,21 @@ for start_dir in moth_files:
             mdict = {'channelNames' : channel_names, 'data' : data}
             file_name = 'EMG_experiment' + str(session.recordings[i].experiment_index) + '_' + str(trial_counter).zfill(3) + '.mat'
             io.savemat(os.path.join(found_directory, sortfiles_dir, file_name), mdict)
+            # Write to metadata file of trial start times
+            start_index = chunk_size * chunk
+            start_time = session.recordings[i].continuous[ind].timestamps[start_index]
+            metadata_file.write(file_name + f', {start_index}, {start_time}' + '\n')
             print(str(trial_counter).zfill(3))
             trial_counter += 1
+    metadata_file.close()
 
-filename = '/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program/2023-05-24_13-42-33'
-rootsession = Session(filename)
-session = rootsession.recordnodes[0]
-exp_len_samples = session.recordings[0].continuous[0].samples.shape[0]
-data = session.recordings[0].continuous[0].get_samples(
-                start_sample_index=0, 
-                end_sample_index=exp_len_samples,
-                selected_channels=np.array([3]))
-plt.plot(data)
-plt.show()
-# plt.figure()
-# for j in range(data.shape[1]):
-#     plt.plot(data[:,j] / np.ptp(data[:,j]) + j)
+# filename = '/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program/2023-05-24_13-42-33'
+# rootsession = Session(filename)
+# session = rootsession.recordnodes[0]
+# exp_len_samples = session.recordings[0].continuous[0].samples.shape[0]
+# data = session.recordings[0].continuous[0].get_samples(
+#                 start_sample_index=0, 
+#                 end_sample_index=exp_len_samples,
+#                 selected_channels=np.array([3]))
+# plt.plot(data)
 # plt.show()
-
-
-# threshold_hpf = signal.butter(6, [2000], btype="highpass", fs=fs, output='sos')
-# # # w, h = signal.sosfreqz(threshold_hpf, worN=10000)
-# # # db = 20*np.log10(np.maximum(np.abs(h), 1e-5))
-# # # plt.plot(w * fs / (2 * np.pi), db)
-# # filtsos = signal.butter(6, [10], btype="highpass", fs=fs, output='sos')
-# x = signal.sosfilt(threshold_hpf, data[:,0])
-# fft = np.fft.rfft(x)
-# psd = (np.abs(fft) ** 2) #/ len(data)
-# freqs = np.fft.fftfreq(len(x), 1 / fs)
-# idx = np.argsort(freqs)
-# plt.plot(freqs[idx], psd[idx])
-# # f, Pxx_den = signal.welch(data[:,0], fs, nperseg=1024)
-# # plt.semilogy(f, Pxx_den)
-# # plt.show()
