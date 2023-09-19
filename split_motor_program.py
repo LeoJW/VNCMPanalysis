@@ -7,7 +7,8 @@ from open_ephys.analysis import Session
 from functions import *
 
 
-motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program')
+# motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program')
+motor_program_dir = os.path.normpath('/Volumes/PikesPeak/Open Ephys/good_data')
 
 # Controls
 overwrite_previous = True
@@ -53,33 +54,35 @@ for start_dir in moth_files:
                     shutil.rmtree(file_path)
             except Exception as e:
                 print('Failed to delete %s. Reason: %s' % (file_path, e))
-    metadata_file = open(os.path.join(sortfiles_dir, 'trial_start_times.txt'), 'w')
-    metadata_file.write('file name, start sample index, start time (s)\n')
+    trial_start_times_file = open(os.path.join(sortfiles_dir, 'trial_start_times.txt'), 'w')
+    trial_start_times_file.write('file name, start sample index, start time (s)\n')
+    experiment_start_times_file = open(os.path.join(sortfiles_dir, 'experiment_start_times.txt'), 'w')
+    experiment_start_times_file.write('experiment, time (milliseconds since midnight Jan 1st 1970 UTC):\n')
     # Read open-ephys data
     # Assume only one record node, take first
     rootsession = Session(found_directory)
     session = rootsession.recordnodes[0]
     # Loop over recordings (actually called experiments in open-ephys directory tree)
     trial_counter = 1
-    for i in range(len(session.recordings)):
-        print('Experiment ' + str(session.recordings[i].experiment_index))
+    for exp in session.recordings:
+        print('Experiment ' + str(exp.experiment_index))
         # Check if there's a NI-DAQ continuous channel
-        source_names = [s.metadata['source_node_name'] for s in session.recordings[i].continuous]
+        source_names = [s.metadata['source_node_name'] for s in exp.continuous]
         if 'NI-DAQmx' not in source_names:
             print('Cannot find NI-DAQmx continuous source for ' + start_dir)
             continue
         ind = source_names.index('NI-DAQmx')
-        fs = session.recordings[i].continuous[ind].metadata['sample_rate']
+        fs = exp.continuous[ind].metadata['sample_rate']
         # Create filters
         threshold_hpf = signal.butter(3, [threshold_hp_cutoff], btype="highpass", fs=fs, output='sos')
         general_bpf = signal.butter(3, general_bp_cutoff, btype='bandpass', fs=fs, output='sos')
         # Determine how many chunks needed
-        exp_len_samples = session.recordings[i].continuous[ind].samples.shape[0]
+        exp_len_samples = exp.continuous[ind].samples.shape[0]
         nchunks = np.ceil(exp_len_samples / chunk_size).astype(int)
         # Load in chunks, for each detect activity as passing threshold based on noise floor
         for chunk in range(nchunks-1):
             # Load data of chunk
-            data = session.recordings[i].continuous[ind].get_samples(
+            data = exp.continuous[ind].get_samples(
                 start_sample_index=chunk_size * chunk, 
                 end_sample_index=chunk_size * (chunk + 1),
                 selected_channels=channel_inds)
@@ -99,15 +102,20 @@ for start_dir in moth_files:
                     ['time', 'RAX', 'RBA', 'RSA', 'RDVM', 'LAX', 'LBA', 'LSA', 'LDVM', 'RDLM', 'LDLM'], 
                     dtype=object)
             mdict = {'channelNames' : channel_names, 'data' : data}
-            file_name = 'EMG_experiment' + str(session.recordings[i].experiment_index) + '_' + str(trial_counter).zfill(3) + '.mat'
+            file_name = 'EMG_experiment' + str(exp.experiment_index) + '_' + str(trial_counter).zfill(3) + '.mat'
             io.savemat(os.path.join(found_directory, sortfiles_dir, file_name), mdict)
             # Write to metadata file of trial start times
             start_index = chunk_size * chunk
-            start_time = session.recordings[i].continuous[ind].timestamps[start_index]
-            metadata_file.write(file_name + f', {start_index}, {start_time}' + '\n')
+            start_time = exp.continuous[ind].timestamps[start_index]
+            trial_start_times_file.write(file_name + f', {start_index}, {start_time}' + '\n')
             print(str(trial_counter).zfill(3))
             trial_counter += 1
-    metadata_file.close()
+        # Write to metadata file of experiment start times
+        with open(os.path.join(exp.directory, 'sync_messages.txt'), 'r') as f:
+            timestamp = f.readline().strip('\n').split(': ')[1]
+        experiment_start_times_file.write('experiment' + str(exp.experiment_index) + ', ' + timestamp)
+    trial_start_times_file.close()
+    experiment_start_times_file.close()
 
 # filename = '/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program/2023-05-24_13-42-33'
 # rootsession = Session(filename)
