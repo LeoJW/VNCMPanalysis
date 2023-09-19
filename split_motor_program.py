@@ -113,7 +113,7 @@ for start_dir in moth_files:
         # Write to metadata file of experiment start times
         with open(os.path.join(exp.directory, 'sync_messages.txt'), 'r') as f:
             timestamp = f.readline().strip('\n').split(': ')[1]
-        experiment_start_times_file.write('experiment' + str(exp.experiment_index) + ', ' + timestamp)
+        experiment_start_times_file.write('experiment' + str(exp.experiment_index) + ', ' + timestamp + '\n')
     trial_start_times_file.close()
     experiment_start_times_file.close()
 
