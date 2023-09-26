@@ -4,8 +4,6 @@ Modified (hastily) by Leo Wood 09/2023
 Because what kind of insane monster writes shit to global variables in the workspace?!?!
 """
 
-using Printf
-
 #= Define data structure for data channels =#
 mutable struct ChannelStruct
     native_channel_name::String
@@ -582,7 +580,7 @@ function read_data_rhd(filenamestring;
 
     if verbose
         elapsed = time() - start
-        @printf("Done! Elapsed time: %0.1f seconds\n", elapsed)
+        println("Done! Elapsed time: $(elapsed) seconds")
         if datapresent > 0
             println("Extracted data returned as dict.")
         else
@@ -824,9 +822,9 @@ function read_data_rhs(filenamestring)
     recordtime = numamplifiersamples / samplerate
 
     if datapresent > 0
-        @printf("File contains %0.3f seconds of data.  Amplifiers were sampled at %0.2f kS/s.\n", recordtime, samplerate / 1000)
+        println("File contains $(recordtime) seconds of data.  Amplifiers were sampled at $(samplerate/1000) kS/s.")
     else
-        @printf("Header file contains no data.  Amplifiers were sampled at %0.2f kS/s.\n", samplerate / 1000)
+        println("Header file contains no data.  Amplifiers were sampled at $(samplerate/1000) kS/s.")
     end
 
     if datapresent > 0
@@ -1030,7 +1028,7 @@ function read_data_rhs(filenamestring)
 
     elapsed = time() - start
 
-    @printf("Done! Elapsed time: %0.1f seconds\n", elapsed)
+    println("Done! Elapsed time: $(elapsed) seconds")
     if datapresent > 0
         println("Extracted data are now available in the Julia workspace.")
     else
