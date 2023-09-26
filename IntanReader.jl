@@ -523,7 +523,7 @@ function read_data_rhd(filenamestring;
     """
     # (DON'T) Move variables to base workspace
     # Just move variables to dict and return that
-    
+
     Some notes:
     amplifier, ADC, and digital time are all the same. Pasing those as just "time"
     supply voltage and temp sensory times are the same, pass those as "time_sensor"
@@ -580,81 +580,13 @@ function read_data_rhd(filenamestring;
         datadict["reference_channel"] = referencechannel
     end
 
-    # global amplifier_data = amplifierdata
-    # global aux_input_data = auxinputdata
-    # global supply_voltage_data = supplyvoltagedata
-    # global t_amplifier = tamp
-
-    # global filename = filenamestring
-    # global path = pwd()
-
-    # global notes = notes
-    # global frequency_parameters = frequencyparameters
-    # if datafilemainversionnumber > 1
-    #     global reference_channel = referencechannel
-    # end
-
-    # if numamplifierchannels > 0
-    #     global amplifier_channels = amplifierchannels
-    #     if datapresent > 0
-    #         global amplifier_data = amplifier_data
-    #     end
-    #     global spike_triggers = spiketriggers
-    # end
-
-    # if numauxinputchannels > 0
-    #     global aux_input_channels = auxinputchannels
-    #     if datapresent > 0
-    #         global aux_input_data = aux_input_data
-    #         global t_aux_input = tauxinput
-    #     end
-    # end
-
-    # if numsupplyvoltagechannels > 0
-    #     global supply_voltage_channels = supplyvoltagechannels
-    #     if datapresent > 0
-    #         global supply_voltage_data = supply_voltage_data
-    #         global t_supply_voltage = tsupplyvoltage
-    #     end
-    # end
-
-    # if numboardadcchannels > 0
-    #     global board_adc_channels = boardadcchannels
-    #     if datapresent > 0
-    #         global board_adc_data = boardadcdata
-    #         global t_board_adc = tboardadc
-    #     end
-    # end
-
-    # if numboarddiginchannels > 0
-    #     global board_dig_in_channels = boarddiginchannels
-    #     if datapresent > 0
-    #         global board_dig_in_data = boarddigindata
-    #         global t_dig = tdig
-    #     end
-    # end
-
-    # if numboarddigoutchannels > 0
-    #     global board_dig_out_channels = boarddigoutchannels
-    #     if datapresent > 0
-    #         global board_dig_out_data = boarddigoutdata
-    #     end
-    # end
-
-    # if numtempsensorchannels > 0
-    #     if datapresent > 0
-    #         global temp_sensor_data = tempsensordata
-    #         global t_temp_sensor = ttempsensor
-    #     end
-    # end
-
     if verbose
         elapsed = time() - start
         @printf("Done! Elapsed time: %0.1f seconds\n", elapsed)
         if datapresent > 0
-            println("Extracted data are now available in the Julia workspace.")
+            println("Extracted data returned as dict.")
         else
-            println("Extracted waveform information is now available in the Julia workspace.")
+            println("Extracted waveform information returned as dict.")
         end
     end
     
