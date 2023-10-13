@@ -74,6 +74,146 @@ mutable struct StimParametersStruct
     charge_recovery_mode::Int16
 end
 
+# Quick and dirty modified function to just get N of amplifier and ADC 
+# Could be WAY faster but this is the fastest for me to write
+function read_rhd_size(filenamestring)
+    fid = open(filenamestring, "r")
+    filesize = stat(filenamestring).size
+    #= Check 'magic number' at beginning of file to make sure this is an Intan Technologies RHD2000 data file =#
+    magicnumber = read(fid, UInt32)
+    if magicnumber != 0xc6912702
+        error("Unrecognized file type.")
+    end
+    #= Read version number =#
+    datafilemainversionnumber = read(fid, Int16)
+    datafilesecondaryversionnumber = read(fid, Int16)
+    if datafilemainversionnumber == 1
+        numsamplesperdatablock = 60
+    else
+        numsamplesperdatablock = 128
+    end
+    samplerate = read(fid, Float32)
+    dspenabled = read(fid, Int16)
+    actualdspcutofffrequency = read(fid, Float32)
+    actuallowerbandwidth = read(fid, Float32)
+    actualupperbandwidth = read(fid, Float32)
+    desireddspcutofffrequency = read(fid, Float32)
+    desiredlowerbandwidth = read(fid, Float32)
+    desiredupperbandwidth = read(fid, Float32)
+    #= This tells us is a software 50/60 Hz notch filter was enabled during the data acquisition =#
+    notchfiltermode = read(fid, Int16)
+    notchfilterfrequency = 0
+    if notchfiltermode == 1
+        notchfilterfrequency = 50
+    elseif notchfiltermode == 2
+        notchfilterfrequency = 60
+    end
+    read(fid, Float32)
+    read(fid, Float32)
+    #= Place notes in array of Strings =#
+    notes = [readQString(fid), readQString(fid), readQString(fid)]
+    #= If data file is from GUI v1.1 or later, see if temperature sensor data was saved =#
+    numtempsensorchannels = 0
+    if (datafilemainversionnumber == 1 && datafilesecondaryversionnumber >= 1) || (datafilemainversionnumber > 1)
+        numtempsensorchannels = read(fid, Int16)
+    end
+    #= If data file is from GUI v1.3 or later, load eval board mode =#
+    if (datafilemainversionnumber == 1 && datafilesecondaryversionnumber >= 3) || (datafilemainversionnumber > 1)
+        read(fid, Int16)
+    end
+    #= If data file is from v2.0 or later (Intan Recording Controller), load name of digital reference channel =#
+    if datafilemainversionnumber > 1
+        readQString(fid)
+    end
+    amplifierindex = 1
+    auxinputindex = 1
+    supplyvoltageindex = 1
+    boardadcindex = 1
+    boarddiginindex = 1
+    boarddigoutindex = 1
+    #= Read signal summary from data file header =#
+    numberofsignalgroups = read(fid, Int16)
+    for _ = 1:numberofsignalgroups
+        readQString(fid)
+        readQString(fid)
+        signalgroupenabled = read(fid, Int16)
+        signalgroupnumchannels = read(fid, Int16)
+        read(fid, Int16)
+        if (signalgroupnumchannels > 0) && (signalgroupenabled > 0)
+            for _ = 1:signalgroupnumchannels
+                readQString(fid)
+                readQString(fid)
+                read(fid, Int16)
+                read(fid, Int16)
+                signaltype = read(fid, Int16)
+                channelenabled = read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Int16)
+                read(fid, Float32)
+                read(fid, Float32)
+                if channelenabled > 0
+                    if signaltype == 0
+                        amplifierindex = amplifierindex + 1
+                    elseif signaltype == 1
+                        auxinputindex = auxinputindex + 1
+                    elseif signaltype == 2
+                        supplyvoltageindex = supplyvoltageindex + 1
+                    elseif signaltype == 3
+                        boardadcindex = boardadcindex + 1
+                    elseif signaltype == 4
+                        boarddiginindex = boarddiginindex + 1
+                    elseif signaltype == 5
+                        boarddigoutindex = boarddigoutindex + 1
+                    else
+                        error("Unknown channel type")
+                    end
+                end
+            end
+        end
+    end
+    #= Summarize contents of data file =#
+    numamplifierchannels = amplifierindex - 1
+    numauxinputchannels = auxinputindex - 1
+    numsupplyvoltagechannels = supplyvoltageindex - 1
+    numboardadcchannels = boardadcindex - 1
+    numboarddiginchannels = boarddiginindex - 1
+    numboarddigoutchannels = boarddigoutindex - 1
+
+    #= Each data block contains numSamplesPerDataBlock amplifier samples =#
+    bytesperblock = numsamplesperdatablock * 4
+    bytesperblock = bytesperblock + numsamplesperdatablock * 2 * numamplifierchannels
+    #= Auxiliary inputs are sampled 4x slower than amplifiers =#
+    bytesperblock = bytesperblock + (numsamplesperdatablock / 4) * 2 * numauxinputchannels
+    #= Supply voltage is sampled once per data block =#
+    bytesperblock = bytesperblock + 1 * 2 * numsupplyvoltagechannels
+    #= Board analog inputs are sampled at same rate as amplifiers =#
+    bytesperblock = bytesperblock + numsamplesperdatablock * 2 * numboardadcchannels
+    #= Board digital inputs are sampled at same rate as amplifiers =#
+    if numboarddiginchannels > 0
+        bytesperblock = bytesperblock + numsamplesperdatablock * 2
+    end
+    #= Board digital outputs are sampled at same rate as amplifiers =#
+    if numboarddigoutchannels > 0
+        bytesperblock = bytesperblock + numsamplesperdatablock * 2
+    end
+    #= Temp sensor is sampled once per data block =#
+    if numtempsensorchannels > 0
+        bytesperblock = bytesperblock + 1 * 2 * numtempsensorchannels
+    end
+    #= How many data blocks remain in this file? =#
+    datapresent = 0
+    bytesremaining = filesize - position(fid)
+    if bytesremaining > 0
+        datapresent = 1
+    end
+    close(fid)
+    numamplifiersamples = Int(numsamplesperdatablock * Int(bytesremaining / bytesperblock))
+    return numamplifiersamples
+end
 
 #= Read the given file as .rhd format =#
 function read_data_rhd(filenamestring; 
@@ -317,9 +457,9 @@ function read_data_rhd(filenamestring;
     recordtime = numamplifiersamples / samplerate
 
     if verbose && datapresent > 0
-        @printf("File contains %0.3f seconds of data.  Amplifiers were sampled at %0.2f kS/s.\n", recordtime, samplerate / 1000)
+        println("File contains $(recordtime) seconds of data.  Amplifiers were sampled at $(samplerate/1000) kS/s.")
     elseif verbose
-        @printf("Header file contains no data.  Amplifiers were sampled at %0.2f kS/s.\n", samplerate / 1000)
+        println("Header file contains no data.  Amplifiers were sampled at $(samplerate/1000) kS/s.")
     end
 
     if datapresent > 0
@@ -480,7 +620,7 @@ function read_data_rhd(filenamestring;
         numgaps = sum(diff(tamplifier, dims=2)[1, :] .!= 1)
         if verbose && numgaps == 0
             println("No missing timestamps in data.")
-        else
+        elseif verbose
             println("Warning: ", numgaps, " gaps in timestamp data found. Time scale will not be uniform!")
         end
 
@@ -577,6 +717,7 @@ function read_data_rhd(filenamestring;
     if datafilemainversionnumber > 1
         datadict["reference_channel"] = referencechannel
     end
+    datadict["N"] = numamplifiersamples
 
     if verbose
         elapsed = time() - start
