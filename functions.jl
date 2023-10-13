@@ -24,12 +24,6 @@ function get_amps_sort(path)
     return mat
 end
 
-# Load digital barcodes from intan files
-
-
-# Load digital barcodes from open-ephys
-
-testpath = "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05/Record Node 101/experiment1/recording1"
 # Function to read continuous stream(s?) from a given RecordNode/experiment/recording
 function read_binary_open_ephys(recording_folder)
     dir_contents = readdir(recording_folder)
@@ -83,7 +77,6 @@ function read_binary_open_ephys(recording_folder, stream_indices)
     close(fid)
     return time, data
 end
-
 
 
 # Utility functions 
