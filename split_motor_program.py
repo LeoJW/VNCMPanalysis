@@ -116,14 +116,3 @@ for start_dir in moth_files:
         experiment_start_times_file.write('experiment' + str(exp.experiment_index) + ', ' + timestamp + '\n')
     trial_start_times_file.close()
     experiment_start_times_file.close()
-
-# filename = '/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program/2023-05-24_13-42-33'
-# rootsession = Session(filename)
-# session = rootsession.recordnodes[0]
-# exp_len_samples = session.recordings[0].continuous[0].samples.shape[0]
-# data = session.recordings[0].continuous[0].get_samples(
-#                 start_sample_index=0, 
-#                 end_sample_index=exp_len_samples,
-#                 selected_channels=np.array([3]))
-# plt.plot(data)
-# plt.show()
