@@ -24,7 +24,8 @@ function get_amps_sort(path)
     return mat
 end
 
-# Function to read continuous stream(s?) from a given RecordNode/experiment/recording
+# Function to read continuous stream(s?) from a given RecordNode/experiment/recording. Must pass in experiment folder!
+# TODO: Make more flexible (or make wrapper function) to catch being passed recording node, experiment, or top-level dir
 function read_binary_open_ephys(recording_folder)
     dir_contents = readdir(recording_folder)
     # Find and read structure.oebin
@@ -79,7 +80,8 @@ function read_binary_open_ephys(recording_folder, stream_indices)
 end
 
 
-# Utility functions 
+#---- Utility functions 
+
 function group_indices(vector)
     indices_dict = Dict{Int, Vector{Int}}()
     for (idx, value) in enumerate(vector)
@@ -90,4 +92,18 @@ function group_indices(vector)
         end
     end
     return indices_dict
+end
+
+function find_threshold_crossings(signal, threshold)
+    crossings = Int[]
+    above_threshold = false
+    for (index, value) in enumerate(signal)
+        if !above_threshold && value > threshold
+            push!(crossings, index)
+            above_threshold = true
+        elseif above_threshold && value <= threshold
+            above_threshold = false
+        end
+    end
+    return crossings
 end
