@@ -74,15 +74,16 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
     for (i, exp) in enumerate(experiments)
         # Find which rhd files happened after this experiment started
         time_compare = [findfirst(rhd_times[p] .> oep_times[i]) for p in poke_dirs]
-        poke_match_ind = findfirst((!).(isnothing.(time_compare)))
-        experiment_poke = poke_dirs[poke_match_ind]
-        rhd_match_ind = time_compare[poke_match_ind] - 1
-        println(experiment_poke)
+        matching_poke_ind = findfirst((!).(isnothing.(time_compare)))
+        experiment_poke = poke_dirs[matching_poke_ind]
+        first_rhd = time_compare[matching_poke_ind] - 1
+        println(rhd_start_ind[experiment_poke])
         # If open-ephys was started before intan index will be zero
         # Conditional here to catch those times
-        if rhd_match_ind == 0
-            rhd_match_ind += 1
+        if first_rhd == 0
+            first_rhd += 1
         end
+        println(first_rhd)
         # Get all AMPS data for this experiment
         trial_start_times = readdlm(joinpath(amps_dir, "trial_start_times.txt"), ',', Any, '\n', header=true)[1]
         exp_num = [parse(Int, split(x, "_")[2][end]) for x in trial_start_times[:,1]] .+ 1
@@ -95,14 +96,15 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
         mp_spike_inds = mp_spike_inds .+ [trial_start_ind[x] for x in amps_mat[mask,1]] .+ 1
         #---- Load run of .rhd files and open-ephys data where we have AMPS spikes
         # Preallocate the three digital channels for open-ephys and intan
+        # I use this fancy grow-size method for intan, but oep I just set once
         initial_capacity = 50000
         digital_names = ["barcode", "requestsend", "frame", "trigger"]
         rhd_digital = Dict{String, Vector{Int}}(key => Vector{Int}(undef, initial_capacity) for key in digital_names)
         oep_digital = Dict{String, Vector{Int}}(key => Vector{Int}(undef, initial_capacity) for key in digital_names)
         ind_rhd = Dict{String, Int}(key => 1 for key in digital_names)
-        ind_oep = Dict{String, Int}(key => 1 for key in digital_names)
         # Load each .rhd file, get indices of flip times
         # Just uses low-high transitions. I assume this is enough information to resolve sync
+        # Note camera frame signal is normal high, then drops low during exposure. Frame times will be 
         for (index_rhd, rhd_file) in enumerate(rhd_files[experiment_poke])
             adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
             shift_indices = rhd_start_ind[experiment_poke][index_rhd] - 1
@@ -115,16 +117,17 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
                 end
                 rhd_digital[channel][ind_rhd[channel]:ind_rhd[channel]+length(crossing_inds)-1] = crossing_inds
                 ind_rhd[channel] += length(crossing_inds)
+                # TODO: While you're here, actually translate barcodes, save start index and value for each
             end
         end
-        # Load open-ephys data for experiment, get indices of flip times
-        # openephys_dir, exp, 
-        # oep_time, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp))
-
-
         # Trim digital channels to final size
         for channel in digital_names
-            resize!(rhd_digital[channel], ind_rhd[channel])
+            resize!(rhd_digital[channel], ind_rhd[channel] - 1)
+        end
+        # Load open-ephys data for experiment, get indices of low-high transitions
+        _, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp, "recording1"), [19,20,21,22])
+        for (j, channel) in enumerate(digital_names)
+            oep_digital[channel] = find_threshold_crossings(oep_data[:,j], voltage_threshold)
         end
 
         # Come up with sample mapping based on barcodes
@@ -133,11 +136,11 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
         # Do that correction, then look for further distortions
 
         
-        return rhd_digital
+        return rhd_digital, oep_digital, oep_data, ind_rhd
     end
 end
 
-rhd_digital = read_and_match_moth_data(
+rhd_digital, oep_digital, oep_data, ind_rhd = read_and_match_moth_data(
     "/Volumes/PikesPeak/VNCMP/2023-05-25", 
     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05")
 

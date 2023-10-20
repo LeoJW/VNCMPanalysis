@@ -50,6 +50,8 @@ function read_binary_open_ephys(recording_folder)
         data[:,i] .= datamap[i,:] .* ch["bit_volts"]
     end
     close(fid)
+    # First entry of channels is somehow always zero. Set to identical to 2nd value to make smoother
+    data[1,:] = data[2,:]
     return time, data
 end
 function read_binary_open_ephys(recording_folder, stream_indices)
@@ -76,6 +78,8 @@ function read_binary_open_ephys(recording_folder, stream_indices)
         data[:,i] .= datamap[chi,:] .* oebin["continuous"][1]["channels"][chi]["bit_volts"]
     end
     close(fid)
+    # First entry of channels is somehow always zero. Set to identical to 2nd value to make smoother
+    data[1,:] = data[2,:]
     return time, data
 end
 
@@ -96,7 +100,7 @@ end
 
 function find_threshold_crossings(signal, threshold)
     crossings = Int[]
-    above_threshold = false
+    above_threshold = signal[1] > threshold ? true : false
     for (index, value) in enumerate(signal)
         if !above_threshold && value > threshold
             push!(crossings, index)
