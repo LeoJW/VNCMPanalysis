@@ -13,6 +13,11 @@ moths = ["2023-05-20", "2023-05-25"]
 vnc_dir = "/Volumes/PikesPeak/VNCMP"
 motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
 
+# Constants everything should know
+amps_muscle_order = [
+    "lax", "lba", "lsa", "ldvm", "ldlm", 
+    "rdlm", "rdvm", "rsa", "rba", "rax"]
+
 
 # Time synchronize and match data from intan, open-ephys, and spike sorted sources
 
@@ -24,8 +29,11 @@ parent dir of motor program open-ephys recordings
 
 Assumes parent dir of motor program recordings has spike sorting folder and Record Node folder 
 """
-function read_and_match_moth_data(vnc_dir, mp_dir)
+function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     voltage_threshold = 1.0 # V
+    debounce_window = 20 # samples
+    frame_dif_tol = 10 # samples
+    check_N_events = 20 # samples
 
     # Get how many "pokes" or intan folder runs there are
     poke_dirs = [str for str in readdir(vnc_dir) if !any(x -> contains(str, x), [".", "noise", "test", "phy"])]
@@ -69,6 +77,9 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
     
     # Load AMPS data
     amps_mat = get_amps_sort(amps_dir)
+    
+    # Create final spike data dict
+    spikedata = Dict{String, Vector{Int}}(key => Vector{Int}(undef, 0) for key in amps_muscle_order)
 
     # For each experiment, use universal timestamps to guess which .rhd file in associated poke matches start time of experiment
     for (i, exp) in enumerate(experiments)
@@ -77,13 +88,12 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
         matching_poke_ind = findfirst((!).(isnothing.(time_compare)))
         experiment_poke = poke_dirs[matching_poke_ind]
         first_rhd = time_compare[matching_poke_ind] - 1
-        println(rhd_start_ind[experiment_poke])
+        # println(rhd_start_ind[experiment_poke])
         # If open-ephys was started before intan index will be zero
         # Conditional here to catch those times
         if first_rhd == 0
             first_rhd += 1
         end
-        println(first_rhd)
         # Get all AMPS data for this experiment
         trial_start_times = readdlm(joinpath(amps_dir, "trial_start_times.txt"), ',', Any, '\n', header=true)[1]
         exp_num = [parse(Int, split(x, "_")[2][end]) for x in trial_start_times[:,1]] .+ 1
@@ -94,6 +104,9 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
         mp_spike_inds = Int.(amps_mat[mask,4])
         # Shift spike indices by starting index of each trial, +1 because moving from 0-index python to 1-index julia
         mp_spike_inds = mp_spike_inds .+ [trial_start_ind[x] for x in amps_mat[mask,1]] .+ 1
+        for (i_muscle, muscle) in enumerate(amps_muscle_order)
+            append!(spikedata[muscle], mp_spike_inds[amps_mat[mask,2] .== (i_muscle - 1)])
+        end
         #---- Load run of .rhd files and open-ephys data where we have AMPS spikes
         # Preallocate the three digital channels for open-ephys and intan
         # I use this fancy grow-size method for intan, but oep I just set once
@@ -105,12 +118,19 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
         # Load each .rhd file, get indices of flip times
         # Just uses low-high transitions. I assume this is enough information to resolve sync
         # Note camera frame signal is normal high, then drops low during exposure. Frame times will be 
+        rhdtime = Vector{Float64}([])
+        # bob = Vector{Float64}([])
         for (index_rhd, rhd_file) in enumerate(rhd_files[experiment_poke])
-            adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
+            # TODO: Switch back to not using rhd time when I'm done debugging
+            dat = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)
+            adc = dat["adc"]
+            # adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
             shift_indices = rhd_start_ind[experiment_poke][index_rhd] - 1
+            append!(rhdtime, dat["time"])
+            # append!(bob, adc[3,:])
             # Loop over each digital channel, get indices of low-high transitions
             for (j, channel) in enumerate(digital_names)
-                crossing_inds = find_threshold_crossings(adc[j,:], voltage_threshold) .+ shift_indices
+                crossing_inds = find_threshold_crossings(adc[j,:], voltage_threshold, debounce_window) .+ shift_indices
                 # Check if more capacity is needed before adding elements, double capacity if needed
                 if (ind_rhd[channel] + length(crossing_inds)) > length(rhd_digital[channel])
                     resize!(rhd_digital[channel], 2 * length(rhd_digital[channel]))
@@ -125,24 +145,75 @@ function read_and_match_moth_data(vnc_dir, mp_dir)
             resize!(rhd_digital[channel], ind_rhd[channel] - 1)
         end
         # Load open-ephys data for experiment, get indices of low-high transitions
-        _, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp, "recording1"), [19,20,21,22])
+        oeptime, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp, "recording1"), [19,20,21,22])
         for (j, channel) in enumerate(digital_names)
-            oep_digital[channel] = find_threshold_crossings(oep_data[:,j], voltage_threshold)
+            oep_digital[channel] = find_threshold_crossings(oep_data[:,j], voltage_threshold, debounce_window)
         end
 
-        # Come up with sample mapping based on barcodes
-        # Look for initial phase shift, in samples
+        # Map all event samples between intan and oep
+        # Initial mapping from trigger. Requires that we find exact match for each trigger pulse
+        if length(rhd_digital["trigger"]) != length(oep_digital["trigger"])
+            error("I'm not finding the same number of camera trigger presses on rhd and open-ephys DAQs!")
+        end
+        oep_events, rhd_events = oep_digital["trigger"], rhd_digital["trigger"]
+        # Add camera frame events
+        # Start at first frame after first trigger, match working out
+        oep_first = findfirst(oep_digital["frame"] .> oep_digital["trigger"][1])
+        rhd_first = findfirst(rhd_digital["frame"] .> rhd_digital["trigger"][1])
+        append!(oep_events, oep_digital["frame"][oep_first])
+        append!(rhd_events, rhd_digital["frame"][rhd_first])
+        match_events!(oep_events, rhd_events, oep_digital["frame"], rhd_digital["frame"], oep_first, rhd_first)
+        # # Work backwards first
+        # oep_index, rhd_index = oep_first, rhd_first
+        # while true
+        #     if oep_index <= 2 || rhd_index <= 2
+        #         break
+        #     end
+        #     oep_dif = oep_digital["frame"][oep_index] - oep_digital["frame"][oep_index-1]
+        #     rhd_dif = rhd_digital["frame"][rhd_index] - rhd_digital["frame"][rhd_index-1]
+        #     # Happy path where previous frames match up close enough in time
+        #     if abs(oep_dif - rhd_dif) < frame_dif_tol
+        #         append!(oep_events, oep_digital["frame"][oep_index-1])
+        #         append!(rhd_events, rhd_digital["frame"][rhd_index-1])
+        #         oep_index -= 1
+        #         rhd_index -= 1
+        #     # If next frame down doesn't match, find wherever next match is
+        #     else
+        #         # Check last X events
+        #         back_ind = min(check_n_events, min(oep_index - 1, rhd_index - 1))
+        #         oep_frames = oep_digital["frame"][oep_index] .- oep_digital["frame"][oep_index-back_ind:oep_index-1]
+        #         rhd_frames = rhd_digital["frame"][rhd_index] .- rhd_digital["frame"][rhd_index-back_ind:rhd_index-1]
+        #         has_matches = [any(abs.(x .- rhd_frames) .< frame_dif_tol) for x in oep_frames]
+        #         # Kill loop if no matches, otherwise jump to last one with match
+        #         if !any(has_matches)
+        #             break
+        #         end
+        #         oep_index = oep_index - back_ind + findlast(has_matches) - 1
+        #         rhd_index = rhd_index - back_ind + findfirst(abs.(oep_frames[findlast(has_matches)] .- rhd_frames) .< frame_dif_tol) - 1
+        #         append!(oep_events, oep_digital["frame"][oep_index])
+        #         append!(rhd_events, rhd_digital["frame"][rhd_index])
+        #     end
+        # end
 
-        # Do that correction, then look for further distortions
+
+
+        # Run interpolation to get function to convert from intan sample to oep (oep treated as master)
+
+        # Apply that to all samples of actual intan data
+
+        # Run interpolation on any data to match to new oep grid
 
         
-        return rhd_digital, oep_digital, oep_data, ind_rhd
+        return spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, oep_events, rhd_events
     end
 end
 
-rhd_digital, oep_digital, oep_data, ind_rhd = read_and_match_moth_data(
+spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, oep_events, rhd_events = read_and_match_moth_data(
     "/Volumes/PikesPeak/VNCMP/2023-05-25", 
     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05")
+# spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, bob = read_and_match_moth_data(
+#     "/Volumes/PikesPeak/VNCMP/2023-05-20", 
+#     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
 
 ##
 # mat = read_data_rhd(path, read_amplifier=false, read_adc=true)["adc"]
@@ -154,3 +225,43 @@ for i in 22
 end
 f[1,2] = Legend(f, ax)
 display(f)
+
+## More drift than you might think
+
+f = Figure()
+ax = Axis(f[1,1])
+sub = 5
+alignto = 1
+shift = rhd_digital["trigger"][alignto] - oep_digital["trigger"][alignto]
+y = oep_data[1:sub:end,3]
+lines!(ax, oeptime[1:sub:end] .- oeptime[oep_digital["trigger"][alignto]], [y[1:end-1]..., NaN])
+# scatter!(ax, oep_digital["trigger"][alignto], 0, markersize=20)
+scatter!(ax, 0, 0, markersize=20)
+why = bob[1:sub:end]
+lines!(ax, rhdtime[1:sub:end] .- rhdtime[rhd_digital["trigger"][alignto]], [why[1:end-1]..., NaN])
+# scatter!(ax, rhd_digital["trigger"][alignto] - shift, 0, markersize=10)
+display(f)
+
+## 
+f = Figure()
+ax = Axis(f[1,1])
+scatter!(ax, (oeptime[oep_events] .- oeptime[oep_events[1]]) - (rhdtime[rhd_events] .- rhdtime[rhd_events[1]]))
+display(f)
+
+
+## A fitting approach
+oep = oep_digital["trigger"] .- oep_digital["trigger"][1]
+rhd = rhd_digital["trigger"] .- rhd_digital["trigger"][1]
+# fit(oep, rhd)
+scatter(oep, rhd)
+ablines!([0], [1])
+current_figure()
+
+## How long for how much drift
+alignto = 1
+shift = rhd_digital["trigger"][alignto] - oep_digital["trigger"][alignto]
+drift = (oep_digital["trigger"] .- (rhd_digital["trigger"] .- shift) ) ./ 30000
+scatter((oep_digital["trigger"] .- oep_digital["trigger"][alignto]) / 30000, drift)
+
+# NI DAQ seems to run almost exactly 1ms faster per every second of runtime 
+# This is b/c intan DAQ actually ran at 29999.999666470107 Hz
