@@ -111,3 +111,91 @@ function find_threshold_crossings(signal, threshold)
     end
     return crossings
 end
+function find_threshold_crossings(signal, threshold, debounce_window::Int)
+    crossings = Int[]
+    above_threshold = signal[1] > threshold ? true : false
+    ind = -100
+    for (index, value) in enumerate(signal)
+        if !above_threshold && value > threshold && (index - ind) > debounce_window
+            push!(crossings, index)
+            above_threshold = true
+        elseif above_threshold && value <= threshold
+            above_threshold = false
+            ind = index
+        end
+    end
+    return crossings
+end
+
+
+# Assumes oep_events and rhd_events already store the first known event
+function match_events!(
+    oep_events, rhd_events, # storage arrays for matching events
+    oep_indices, rhd_indices, # indices of all events to find matches in
+    oep_first_match, rhd_first_match; # initial first known match
+    frame_dif_tol=10,
+    check_n_events=15)
+    # Kinda sloppy to work backwards then forwards. But I have to write this quickly! Easiest thing that sprang to mind
+    # Work backwards from first match
+    oep_index, rhd_index = oep_first_match, rhd_first_match
+    while true
+        if oep_index <= 2 || rhd_index <= 2
+            break
+        end
+        oep_dif = oep_indices[oep_index] - oep_indices[oep_index-1]
+        rhd_dif = rhd_indices[rhd_index] - rhd_indices[rhd_index-1]
+        # Happy path where previous frames match up close enough in time
+        if abs(oep_dif - rhd_dif) < frame_dif_tol
+            append!(oep_events, oep_indices[oep_index-1])
+            append!(rhd_events, rhd_indices[rhd_index-1])
+            oep_index -= 1
+            rhd_index -= 1
+        # If next frame down doesn't match, find wherever next match is
+        else
+            # Check last X events
+            back_ind = min(check_n_events, min(oep_index - 1, rhd_index - 1))
+            oep_frames = oep_indices[oep_index] .- oep_indices[oep_index-back_ind:oep_index-1]
+            rhd_frames = rhd_indices[rhd_index] .- rhd_indices[rhd_index-back_ind:rhd_index-1]
+            has_matches = [any(abs.(x .- rhd_frames) .< frame_dif_tol) for x in oep_frames]
+            # Kill loop if no matches, otherwise jump to last one with match
+            if !any(has_matches)
+                break
+            end
+            oep_index = oep_index - back_ind + findlast(has_matches) - 1
+            rhd_index = rhd_index - back_ind + findfirst(abs.(oep_frames[findlast(has_matches)] .- rhd_frames) .< frame_dif_tol) - 1
+            append!(oep_events, oep_indices[oep_index])
+            append!(rhd_events, rhd_indices[rhd_index])
+        end
+    end
+    # Work forwards from first match
+    oep_index, rhd_index = oep_first_match, rhd_first_match
+    while true
+        if oep_index >= length(oep_indices) - 1 || rhd_index >= length(rhd_indices) - 1
+            break
+        end
+        oep_dif = oep_indices[oep_index+1] - oep_indices[oep_index]
+        rhd_dif = rhd_indices[rhd_index+1] - rhd_indices[rhd_index]
+        # Happy path where previous frames match up close enough in time
+        if abs(oep_dif - rhd_dif) < frame_dif_tol
+            append!(oep_events, oep_indices[oep_index+1])
+            append!(rhd_events, rhd_indices[rhd_index+1])
+            oep_index += 1
+            rhd_index += 1
+        # If next frame up doesn't match, find wherever next match is
+        else
+            # Check next X events
+            next_ind = min(check_n_events, min(length(oep_indices) - oep_index, length(rhd_indices) - rhd_index))
+            oep_frames = oep_indices[oep_index+1:oep_index+next_ind] .- oep_indices[oep_index]
+            rhd_frames = rhd_indices[rhd_index+1:rhd_index+next_ind] .- rhd_indices[rhd_index]
+            has_matches = [any(abs.(x .- rhd_frames) .< frame_dif_tol) for x in oep_frames]
+            # Kill loop if no matches, otherwise jump to last one with match
+            if !any(has_matches)
+                break
+            end
+            oep_index = oep_index + findfirst(has_matches)
+            rhd_index = rhd_index + findfirst(abs.(oep_frames[findfirst(has_matches)] .- rhd_frames) .< frame_dif_tol)
+            append!(oep_events, oep_indices[oep_index])
+            append!(rhd_events, rhd_indices[rhd_index])
+        end
+    end
+end
