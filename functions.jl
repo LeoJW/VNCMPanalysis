@@ -1,7 +1,8 @@
 # Function to load spike data from phy
-# TODO: can potentially modify to include other details like cluster quality, doublet, etc
 function read_phy_spikes(phydir)
-    params = Dict(split(x, " = ")[1] => split(x, " = ")[2] for x in readlines(joinpath(phydir, "params.py")))
+    # Sorting parameters
+    sort_params = Dict(split(x, " = ")[1] => split(x, " = ")[2] for x in readlines(joinpath(phydir, "params.py")))
+    # Read actual unit data
     spike_inds = npzread(joinpath(phydir, "spike_times.npy"))
     units = npzread(joinpath(phydir, "spike_clusters.npy"))
     neurons = Dict{Int, Vector{Int64}}()
@@ -12,7 +13,24 @@ function read_phy_spikes(phydir)
             neurons[value] = [spike_inds[idx]]
         end
     end
-    return neurons
+    # Information on unit quality
+    unit_details = Dict{Int, Vector{String}}(key => [] for key in keys(neurons))
+    unit_quality = readdlm(joinpath(phydir, "cluster_group.tsv"), skipstart=1)
+    for row in eachrow(unit_quality)
+        append!(unit_details[row[1]], row[2])
+    end
+    # Add information on doublets if provided
+    if isfile(joinpath(phydir, "cluster_doublet.tsv"))
+        unit_doublets = readdlm(joinpath(phydir, "cluster_doublet.tsv"), skipstart=1)
+        for unit in keys(neurons)
+            if unit in unit_doublets[:,1]
+                append!(unit_details[unit], "doublet")
+            else
+                append!(unit_details[unit], "")
+            end
+        end
+    end
+    return neurons, unit_details, sort_params
 end
 
 # Function to load spike data from AMPS

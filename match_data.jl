@@ -2,6 +2,7 @@ using NPZ   # Read .npy files
 using JSON  # Read json formatted files, duh
 using DelimitedFiles
 using Mmap
+using BSplineKit
 using GLMakie
 using BenchmarkTools
 include("IntanReader.jl")
@@ -33,7 +34,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     voltage_threshold = 1.0 # V
     debounce_window = 20 # samples
     frame_dif_tol = 10 # samples
-    check_N_events = 20 # samples
+    check_n_events = 15 # samples
 
     # Get how many "pokes" or intan folder runs there are
     poke_dirs = [str for str in readdir(vnc_dir) if !any(x -> contains(str, x), [".", "noise", "test", "phy"])]
@@ -162,42 +163,18 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         rhd_first = findfirst(rhd_digital["frame"] .> rhd_digital["trigger"][1])
         append!(oep_events, oep_digital["frame"][oep_first])
         append!(rhd_events, rhd_digital["frame"][rhd_first])
-        match_events!(oep_events, rhd_events, oep_digital["frame"], rhd_digital["frame"], oep_first, rhd_first)
-        # # Work backwards first
-        # oep_index, rhd_index = oep_first, rhd_first
-        # while true
-        #     if oep_index <= 2 || rhd_index <= 2
-        #         break
-        #     end
-        #     oep_dif = oep_digital["frame"][oep_index] - oep_digital["frame"][oep_index-1]
-        #     rhd_dif = rhd_digital["frame"][rhd_index] - rhd_digital["frame"][rhd_index-1]
-        #     # Happy path where previous frames match up close enough in time
-        #     if abs(oep_dif - rhd_dif) < frame_dif_tol
-        #         append!(oep_events, oep_digital["frame"][oep_index-1])
-        #         append!(rhd_events, rhd_digital["frame"][rhd_index-1])
-        #         oep_index -= 1
-        #         rhd_index -= 1
-        #     # If next frame down doesn't match, find wherever next match is
-        #     else
-        #         # Check last X events
-        #         back_ind = min(check_n_events, min(oep_index - 1, rhd_index - 1))
-        #         oep_frames = oep_digital["frame"][oep_index] .- oep_digital["frame"][oep_index-back_ind:oep_index-1]
-        #         rhd_frames = rhd_digital["frame"][rhd_index] .- rhd_digital["frame"][rhd_index-back_ind:rhd_index-1]
-        #         has_matches = [any(abs.(x .- rhd_frames) .< frame_dif_tol) for x in oep_frames]
-        #         # Kill loop if no matches, otherwise jump to last one with match
-        #         if !any(has_matches)
-        #             break
-        #         end
-        #         oep_index = oep_index - back_ind + findlast(has_matches) - 1
-        #         rhd_index = rhd_index - back_ind + findfirst(abs.(oep_frames[findlast(has_matches)] .- rhd_frames) .< frame_dif_tol) - 1
-        #         append!(oep_events, oep_digital["frame"][oep_index])
-        #         append!(rhd_events, rhd_digital["frame"][rhd_index])
-        #     end
-        # end
+        match_events!(oep_events, rhd_events, oep_digital["frame"], rhd_digital["frame"], oep_first, rhd_first;
+            frame_dif_tol=frame_dif_tol, check_n_events=check_n_events)
+        # TODO: Add other event channels if needed
 
+        sort_idx = sortperm(oep_events)
+        oep_events, rhd_events = oep_events[sort_idx], rhd_events[sort_idx]
 
+        # BSpline interpolation to get function to convert from intan samples to oep 
+        # open-ephys is treated as master because it actually ran at 30kHz 
+        itp = interpolate(rhd_events, oep_events, BSplineOrder(4))
 
-        # Run interpolation to get function to convert from intan sample to oep (oep treated as master)
+        # Read phy data
 
         # Apply that to all samples of actual intan data
 
@@ -242,10 +219,15 @@ lines!(ax, rhdtime[1:sub:end] .- rhdtime[rhd_digital["trigger"][alignto]], [why[
 # scatter!(ax, rhd_digital["trigger"][alignto] - shift, 0, markersize=10)
 display(f)
 
-## 
+##
+
+itp = interpolate(rhd_events, oep_events, BSplineOrder(4))
+xitp = extrema(rhd_events)[1]:extrema(rhd_events)[2]
+
 f = Figure()
 ax = Axis(f[1,1])
-scatter!(ax, (oeptime[oep_events] .- oeptime[oep_events[1]]) - (rhdtime[rhd_events] .- rhdtime[rhd_events[1]]))
+scatter!(ax, rhd_events .- rhd_events[1], oep_events .- oep_events[1])
+lines!(ax, xitp .- rhd_events[1], itp.(xitp) .- oep_events[1])
 display(f)
 
 
