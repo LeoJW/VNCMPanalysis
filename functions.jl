@@ -14,10 +14,13 @@ function read_phy_spikes(phydir)
         end
     end
     # Information on unit quality
-    unit_quality = readdlm(joinpath(phydir, "cluster_group.tsv"), skipstart=1)
     unit_details = Dict{String, Dict{Int, Any}}(
-        "quality" => Dict(row[1] => row[2] for row in eachrow(unit_quality)),
+        "quality" => Dict(key => "unk" for key in keys(neurons)),
         "doublet" => Dict(key => false for key in keys(neurons)))
+    unit_quality = readdlm(joinpath(phydir, "cluster_group.tsv"), skipstart=1)
+    for row in eachrow(unit_quality)
+        unit_details["quality"][row[1]] = row[2]
+    end
     # Add information on doublets if provided
     if isfile(joinpath(phydir, "cluster_doublet.tsv"))
         unit_doublets = readdlm(joinpath(phydir, "cluster_doublet.tsv"), skipstart=1)

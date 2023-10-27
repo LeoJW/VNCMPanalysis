@@ -3,6 +3,8 @@ using JSON  # Read json formatted files, duh
 using DelimitedFiles
 using Mmap
 using BSplineKit
+using DataFrames
+using PooledArrays
 using GLMakie
 using BenchmarkTools
 include("IntanReader.jl")
@@ -32,7 +34,7 @@ Assumes parent dir of motor program recordings has spike sorting folder and Reco
 """
 function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     voltage_threshold = 1.0 # V
-    debounce_window = 20 # samples
+    debounce_window = 30 # samples
     frame_dif_tol = 10 # samples
     check_n_events = 15 # samples
 
@@ -76,11 +78,12 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     oep_times = [readdlm(joinpath(openephys_dir, s, "recording1", "sync_messages.txt"))[1,10] for s in experiments]
     oep_times = trunc.(Int, oep_times / 1000) # ms to s
     
-    # Load AMPS data
+    # Load motor program spikes from AMPs
     amps_mat = get_amps_sort(amps_dir)
     
-    # Create final spike data dict
-    spikedata = Dict{String, Vector{Int}}(key => Vector{Int}(undef, 0) for key in amps_muscle_order)
+    # Create final spike data dataframe
+    df = DataFrame(:moth => String[], :poke => Int[], :unit => String[], :index => Int[], :quality => String[], :doublet => Bool[])
+    neuron_names = []
 
     # For each experiment, use universal timestamps to guess which .rhd file in associated poke matches start time of experiment
     for (i, exp) in enumerate(experiments)
@@ -89,13 +92,13 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         matching_poke_ind = findfirst((!).(isnothing.(time_compare)))
         experiment_poke = poke_dirs[matching_poke_ind]
         first_rhd = time_compare[matching_poke_ind] - 1
-        # println(rhd_start_ind[experiment_poke])
         # If open-ephys was started before intan index will be zero
         # Conditional here to catch those times
         if first_rhd == 0
             first_rhd += 1
         end
-        # Get all AMPS data for this experiment
+        #--- Grab motor program and neural spike event indices
+        # Get all AMPS/motor program data for this experiment
         trial_start_times = readdlm(joinpath(amps_dir, "trial_start_times.txt"), ',', Any, '\n', header=true)[1]
         exp_num = [parse(Int, split(x, "_")[2][end]) for x in trial_start_times[:,1]] .+ 1
         trial_start_ind = Dict{Int, Int}(parse(Int, split(x[1], "_")[3][1:3]) => x[2] for x in eachrow(trial_start_times))
@@ -105,10 +108,21 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         mp_spike_inds = Int.(amps_mat[mask,4])
         # Shift spike indices by starting index of each trial, +1 because moving from 0-index python to 1-index julia
         mp_spike_inds = mp_spike_inds .+ [trial_start_ind[x] for x in amps_mat[mask,1]] .+ 1
-        for (i_muscle, muscle) in enumerate(amps_muscle_order)
-            append!(spikedata[muscle], mp_spike_inds[amps_mat[mask,2] .== (i_muscle - 1)])
-        end
-        #---- Load run of .rhd files and open-ephys data where we have AMPS spikes
+        # for (i_muscle, muscle) in enumerate(amps_muscle_order)
+        #     append!(spikedata[muscle], mp_spike_inds[amps_mat[mask,2] .== (i_muscle - 1)])
+        # end
+        # Add motor program data to final dataframe
+        df = vcat(df, DataFrame(
+            :moth => splitpath(vnc_dir)[end],
+            :poke => parse(Int, split(experiment_poke, "_")[1][end]),
+            :unit => [amps_muscle_order[Int(x+1)] for x in amps_mat[mask,2]],
+            :index => mp_spike_inds,
+            :quality => "good",
+            :doublet => false
+        ))
+        
+        #---- Sample alignment for intan data
+        # Load run of .rhd files and open-ephys data where we have AMPS spikes
         # Preallocate the three digital channels for open-ephys and intan
         # I use this fancy grow-size method for intan, but oep I just set once
         initial_capacity = 50000
@@ -120,7 +134,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         # Just uses low-high transitions. I assume this is enough information to resolve sync
         # Note camera frame signal is normal high, then drops low during exposure. Frame times will be 
         rhdtime = Vector{Float64}([])
-        # bob = Vector{Float64}([])
+        bob = Vector{Float64}([])
         for (index_rhd, rhd_file) in enumerate(rhd_files[experiment_poke])
             # TODO: Switch back to not using rhd time when I'm done debugging
             dat = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)
@@ -128,7 +142,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
             # adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
             shift_indices = rhd_start_ind[experiment_poke][index_rhd] - 1
             append!(rhdtime, dat["time"])
-            # append!(bob, adc[3,:])
+            append!(bob, adc[4,:])
             # Loop over each digital channel, get indices of low-high transitions
             for (j, channel) in enumerate(digital_names)
                 crossing_inds = find_threshold_crossings(adc[j,:], voltage_threshold, debounce_window) .+ shift_indices
@@ -154,7 +168,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         # Map all event samples between intan and oep
         # Initial mapping from trigger. Requires that we find exact match for each trigger pulse
         if length(rhd_digital["trigger"]) != length(oep_digital["trigger"])
-            error("I'm not finding the same number of camera trigger presses on rhd and open-ephys DAQs!")
+            error("Intan DAQ has $(length(rhd_digital["trigger"])) trigger presses while open-ephys has $(length(oep_digital["trigger"]))!")
         end
         oep_events, rhd_events = oep_digital["trigger"], rhd_digital["trigger"]
         # Add camera frame events
@@ -166,31 +180,53 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         match_events!(oep_events, rhd_events, oep_digital["frame"], rhd_digital["frame"], oep_first, rhd_first;
             frame_dif_tol=frame_dif_tol, check_n_events=check_n_events)
         # TODO: Add other event channels if needed
-
-        sort_idx = sortperm(oep_events)
-        oep_events, rhd_events = oep_events[sort_idx], rhd_events[sort_idx]
-
         # BSpline interpolation to get function to convert from intan samples to oep 
         # open-ephys is treated as master because it actually ran at 30kHz 
+        sort_idx = sortperm(oep_events)
+        oep_events, rhd_events = oep_events[sort_idx], rhd_events[sort_idx]
         itp = interpolate(rhd_events, oep_events, BSplineOrder(4))
 
-        # Read phy data
-
-        # Apply that to all samples of actual intan data
-
-        # Run interpolation on any data to match to new oep grid
-
-        
-        return spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, oep_events, rhd_events
+        # Now that we have alignment, load neural spikes from Phy matching this poke/experiment
+        neurons, unit_details, sort_params = read_phy_spikes(joinpath(vnc_dir, "phy_folder", phy_dirs[matching_poke_ind]))
+        println(keys(neurons))
+        println(keys(unit_details["quality"]))
+        # Add each phy unit to data
+        for key in keys(neurons)
+            # Assign unit names/numbers that are unique across multiple pokes of same moth
+            unit_number = !(key in neuron_names) ? key : maximum(neuron_names) + key + 1
+            append!(neuron_names, unit_number)
+            df = vcat(df, DataFrame(
+                :moth => splitpath(vnc_dir)[end],
+                :poke => parse(Int, split(experiment_poke, "_")[1][end]),
+                :unit => string(unit_number),
+                :index => round.(Int, itp.(neurons[key])),
+                :quality => unit_details["quality"][key],
+                :doublet => unit_details["doublet"][key]
+            ))
+        end
     end
+    # NOTE: Unsure if better to pool before or after full dataframe is built. 
+    # For now pooling after as it feels like the safest move. 
+    # But you CAN concatenate pooled arrays, I'm just not sure if that break something
+    df.moth = PooledArray(df.moth, compress=true)
+    df.poke = PooledArray(df.poke, compress=true)
+    df.unit = PooledArray(df.unit, compress=true)
+    df.quality = PooledArray(df.quality, compress=true)
+    df.doublet = PooledArray(df.doublet, compress=true)
+
+    return df
 end
 
-spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, oep_events, rhd_events = read_and_match_moth_data(
+df = read_and_match_moth_data(
     "/Volumes/PikesPeak/VNCMP/2023-05-25", 
     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05")
-# spikedata, rhd_digital, oep_digital, oep_data, oeptime, rhdtime, bob = read_and_match_moth_data(
+# df = read_and_match_moth_data(
 #     "/Volumes/PikesPeak/VNCMP/2023-05-20", 
 #     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
+
+##
+
+neurons, unit_details, sort_params = read_phy_spikes("/Volumes/PikesPeak/VNCMP/2023-05-25/phy_folder/poke2_230525_123745")
 
 ##
 # mat = read_data_rhd(path, read_amplifier=false, read_adc=true)["adc"]
@@ -229,6 +265,13 @@ ax = Axis(f[1,1])
 scatter!(ax, rhd_events .- rhd_events[1], oep_events .- oep_events[1])
 lines!(ax, xitp .- rhd_events[1], itp.(xitp) .- oep_events[1])
 display(f)
+
+##
+f = Figure()
+ax = Axis(f[1,1])
+scatter!(ax, spikedata["ldlm"] ./ 30000, zeros(length(spikedata["ldlm"])))
+scatter!(ax, spikedata["rdlm"] ./ 30000, zeros(length(spikedata["rdlm"])))
+current_figure()
 
 
 ## A fitting approach
