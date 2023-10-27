@@ -134,13 +134,15 @@ function find_threshold_crossings(signal, threshold, debounce_window::Int)
         if !above_threshold && value > threshold && (index - ind) > debounce_window
             push!(crossings, index)
             above_threshold = true
-        elseif above_threshold && value <= threshold
+            ind = index  # Update the debounce tracking index for both directions
+        elseif above_threshold && value <= threshold && (index - ind) > debounce_window
             above_threshold = false
-            ind = index
+            ind = index  # Update the debounce tracking index for both directions
         end
     end
     return crossings
 end
+
 
 
 # Assumes oep_events and rhd_events already store the first known event
