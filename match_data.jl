@@ -37,6 +37,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     debounce_window = 30 # samples
     frame_dif_tol = 10 # samples
     check_n_events = 15 # samples
+    fsamp = 30000 # Hz
 
     # Get how many "pokes" or intan folder runs there are
     poke_dirs = [str for str in readdir(vnc_dir) if !any(x -> contains(str, x), [".", "noise", "test", "phy"])]
@@ -82,7 +83,15 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     amps_mat = get_amps_sort(amps_dir)
     
     # Create final spike data dataframe
-    df = DataFrame(:moth => String[], :poke => Int[], :unit => String[], :index => Int[], :quality => String[], :doublet => Bool[])
+    df = DataFrame(
+        :moth => String[], 
+        :poke => Int[], 
+        :unit => String[], 
+        :ismuscle => Bool[],
+        :index => Int[], 
+        :time => Float64[],
+        :quality => String[], 
+        :doublet => Bool[])
     neuron_names = []
 
     # For each experiment, use universal timestamps to guess which .rhd file in associated poke matches start time of experiment
@@ -117,6 +126,8 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
             :poke => parse(Int, split(experiment_poke, "_")[1][end]),
             :unit => [amps_muscle_order[Int(x+1)] for x in amps_mat[mask,2]],
             :index => mp_spike_inds,
+            :time => mp_spike_inds ./ fsamp,
+            :ismuscle => true,
             :quality => "good",
             :doublet => false
         ))
@@ -188,18 +199,21 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
 
         # Now that we have alignment, load neural spikes from Phy matching this poke/experiment
         neurons, unit_details, sort_params = read_phy_spikes(joinpath(vnc_dir, "phy_folder", phy_dirs[matching_poke_ind]))
-        println(keys(neurons))
-        println(keys(unit_details["quality"]))
+        # Catch maximum unit number of last poke's units
+        prev_max_unit_number = length(neuron_names) > 0 ? maximum(neuron_names) : 0
         # Add each phy unit to data
         for key in keys(neurons)
             # Assign unit names/numbers that are unique across multiple pokes of same moth
-            unit_number = !(key in neuron_names) ? key : maximum(neuron_names) + key + 1
+            unit_number = !(key in neuron_names) ? key : prev_max_unit_number + key + 1
             append!(neuron_names, unit_number)
+            indices = round.(Int, itp.(neurons[key]))
             df = vcat(df, DataFrame(
                 :moth => splitpath(vnc_dir)[end],
                 :poke => parse(Int, split(experiment_poke, "_")[1][end]),
                 :unit => string(unit_number),
-                :index => round.(Int, itp.(neurons[key])),
+                :index => indices,
+                :time => indices ./ fsamp,
+                :ismuscle => false,
                 :quality => unit_details["quality"][key],
                 :doublet => unit_details["doublet"][key]
             ))
@@ -217,16 +231,15 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     return df
 end
 
-df = read_and_match_moth_data(
-    "/Volumes/PikesPeak/VNCMP/2023-05-25", 
-    "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05")
-# df = read_and_match_moth_data(
-#     "/Volumes/PikesPeak/VNCMP/2023-05-20", 
-#     "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
+df = vcat(
+    read_and_match_moth_data(
+        "/Volumes/PikesPeak/VNCMP/2023-05-25", 
+        "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05"),
+    read_and_match_moth_data(
+        "/Volumes/PikesPeak/VNCMP/2023-05-20", 
+        "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
+)
 
-##
-
-neurons, unit_details, sort_params = read_phy_spikes("/Volumes/PikesPeak/VNCMP/2023-05-25/phy_folder/poke2_230525_123745")
 
 ##
 # mat = read_data_rhd(path, read_amplifier=false, read_adc=true)["adc"]
