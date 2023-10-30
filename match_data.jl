@@ -4,8 +4,11 @@ using DelimitedFiles
 using Mmap
 using BSplineKit
 using DataFrames
+using DataFramesMeta
 using PooledArrays
+using Pipe
 using GLMakie
+using AlgebraOfGraphics
 using BenchmarkTools
 include("IntanReader.jl")
 include("functions.jl")
@@ -16,7 +19,7 @@ moths = ["2023-05-20", "2023-05-25"]
 vnc_dir = "/Volumes/PikesPeak/VNCMP"
 motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
 
-# Constants everything should know
+# Constants everything should know (effectively global)
 amps_muscle_order = [
     "lax", "lba", "lsa", "ldvm", "ldlm", 
     "rdlm", "rdvm", "rsa", "rba", "rax"]
@@ -32,12 +35,14 @@ parent dir of motor program open-ephys recordings
 
 Assumes parent dir of motor program recordings has spike sorting folder and Record Node folder 
 """
-function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
+function read_and_match_moth_data(vnc_dir, mp_dir; wingbeat_muscle="ldlm")
+    # Important constants not worth making input arguments
     voltage_threshold = 1.0 # V
     debounce_window = 30 # samples
     frame_dif_tol = 10 # samples
     check_n_events = 15 # samples
     fsamp = 30000 # Hz
+    wingbeat_diff_threshold = 1000 # samples, 33ms at 30kHz
 
     # Get how many "pokes" or intan folder runs there are
     poke_dirs = [str for str in readdir(vnc_dir) if !any(x -> contains(str, x), [".", "noise", "test", "phy"])]
@@ -82,16 +87,19 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
     # Load motor program spikes from AMPs
     amps_mat = get_amps_sort(amps_dir)
     
-    # Create final spike data dataframe
+    # Initialize final output dataframe
     df = DataFrame(
         :moth => String[], 
         :poke => Int[], 
         :unit => String[], 
         :ismuscle => Bool[],
         :index => Int[], 
-        :time => Float64[],
+        :abstime => Float64[], # Spike time relative to recording start
+        :time => Float64[], # Spike time relative to wingbeat start
         :quality => String[], 
-        :doublet => Bool[])
+        :doublet => Bool[],
+        :wb => Int[],
+        :wblen => Float64[])
     neuron_names = []
 
     # For each experiment, use universal timestamps to guess which .rhd file in associated poke matches start time of experiment
@@ -117,20 +125,38 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         mp_spike_inds = Int.(amps_mat[mask,4])
         # Shift spike indices by starting index of each trial, +1 because moving from 0-index python to 1-index julia
         mp_spike_inds = mp_spike_inds .+ [trial_start_ind[x] for x in amps_mat[mask,1]] .+ 1
-        # for (i_muscle, muscle) in enumerate(amps_muscle_order)
-        #     append!(spikedata[muscle], mp_spike_inds[amps_mat[mask,2] .== (i_muscle - 1)])
-        # end
-        # Add motor program data to final dataframe
-        df = vcat(df, DataFrame(
+        # Make motor program dataframe
+        local dfmp = DataFrame(
             :moth => splitpath(vnc_dir)[end],
             :poke => parse(Int, split(experiment_poke, "_")[1][end]),
             :unit => [amps_muscle_order[Int(x+1)] for x in amps_mat[mask,2]],
             :index => mp_spike_inds,
-            :time => mp_spike_inds ./ fsamp,
+            :abstime => mp_spike_inds ./ fsamp,
+            :time => 0.0,
             :ismuscle => true,
             :quality => "good",
-            :doublet => false
-        ))
+            :doublet => false,
+            :wb => 0,
+            :wblen => 0
+        )
+        #--- Create wingbeats
+        # Determine wingbeat start and end indices as "bins"
+        wb_muscle_inds = dfmp[dfmp.unit .== wingbeat_muscle, :index]
+        wb_muscle_diff = diff(wb_muscle_inds)
+        wb_starts = wb_muscle_inds[findall(wb_muscle_diff .>= wingbeat_diff_threshold) .+ 1]
+        append!(wb_starts, wb_starts[end]+fsamp) # Catch last wingbeat as anything within 1 second past the last jump
+        # Assign each spike to a wingbeat
+        dfmp.wb = searchsortedlast.(Ref(wb_starts), dfmp.index)
+        # Make wingbeat period/frequency column
+        # Set first to 0 for cleaning later (relative times unknowable for first wingbeat), set last to previous length (approx close enough)
+        wblen = diff(wb_starts)
+        wblen = vcat(0, wblen, wblen[end])
+        dfmp.wblen = wblen[dfmp.wb .+ 1] # +1 as first wingbeat will be counted as zero
+        # Calculate spike time relative to wingbeat start, phase
+        dfmp.time = (dfmp.index .- vcat(0, wb_starts)[dfmp.wb .+ 1]) ./ fsamp
+        # Add local motor program dataframe to full
+        df = vcat(df, dfmp)
+        
         
         #---- Sample alignment for intan data
         # Load run of .rhd files and open-ephys data where we have AMPS spikes
@@ -144,16 +170,9 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
         # Load each .rhd file, get indices of flip times
         # Just uses low-high transitions. I assume this is enough information to resolve sync
         # Note camera frame signal is normal high, then drops low during exposure. Frame times will be 
-        rhdtime = Vector{Float64}([])
-        bob = Vector{Float64}([])
         for (index_rhd, rhd_file) in enumerate(rhd_files[experiment_poke])
-            # TODO: Switch back to not using rhd time when I'm done debugging
-            dat = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)
-            adc = dat["adc"]
-            # adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
+            adc = read_data_rhd(joinpath(vnc_dir, experiment_poke, rhd_file), read_amplifier=false, read_adc=true)["adc"]
             shift_indices = rhd_start_ind[experiment_poke][index_rhd] - 1
-            append!(rhdtime, dat["time"])
-            append!(bob, adc[4,:])
             # Loop over each digital channel, get indices of low-high transitions
             for (j, channel) in enumerate(digital_names)
                 crossing_inds = find_threshold_crossings(adc[j,:], voltage_threshold, debounce_window) .+ shift_indices
@@ -171,7 +190,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
             resize!(rhd_digital[channel], ind_rhd[channel] - 1)
         end
         # Load open-ephys data for experiment, get indices of low-high transitions
-        oeptime, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp, "recording1"), [19,20,21,22])
+        _, oep_data = read_binary_open_ephys(joinpath(openephys_dir, exp, "recording1"), [19,20,21,22])
         for (j, channel) in enumerate(digital_names)
             oep_digital[channel] = find_threshold_crossings(oep_data[:,j], voltage_threshold, debounce_window)
         end
@@ -207,26 +226,33 @@ function read_and_match_moth_data(vnc_dir, mp_dir; verbose=false)
             unit_number = !(key in neuron_names) ? key : prev_max_unit_number + key + 1
             append!(neuron_names, unit_number)
             indices = round.(Int, itp.(neurons[key]))
-            df = vcat(df, DataFrame(
+            dtemp = DataFrame(
                 :moth => splitpath(vnc_dir)[end],
                 :poke => parse(Int, split(experiment_poke, "_")[1][end]),
                 :unit => string(unit_number),
                 :index => indices,
-                :time => indices ./ fsamp,
+                :abstime => indices ./ fsamp,
+                :time => 0.0,
                 :ismuscle => false,
                 :quality => unit_details["quality"][key],
-                :doublet => unit_details["doublet"][key]
-            ))
+                :doublet => unit_details["doublet"][key],
+                :wb => searchsortedlast.(Ref(wb_starts), indices),
+                :wblen => 0
+            )
+            dtemp.wblen = wblen[dtemp.wb .+ 1]
+            dtemp.time = (indices .- vcat(0, wb_starts)[dtemp.wb .+ 1]) ./ fsamp
+            df = vcat(df, dtemp)
         end
     end
+    # Remove data from 0th  wingbeats
+    df = @subset(df, :wb .!= 0)
+
     # NOTE: Unsure if better to pool before or after full dataframe is built. 
     # For now pooling after as it feels like the safest move. 
-    # But you CAN concatenate pooled arrays, I'm just not sure if that break something
-    df.moth = PooledArray(df.moth, compress=true)
-    df.poke = PooledArray(df.poke, compress=true)
-    df.unit = PooledArray(df.unit, compress=true)
-    df.quality = PooledArray(df.quality, compress=true)
-    df.doublet = PooledArray(df.doublet, compress=true)
+    # You CAN concatenate pooled arrays, I'm just not sure if that breaks something
+    for name in [col for col in names(df) if col ∉ ["index", "abstime", "time", "wb", "wblen"]]
+        df[:, name] = PooledArray(df[:, name], compress=true)
+    end
 
     return df
 end
@@ -240,17 +266,28 @@ df = vcat(
         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
 )
 
+##
+
+@pipe df |> 
+    @transform(_, :wbfreq = 30000 ./ :wblen) |> 
+    (
+    AlgebraOfGraphics.data(_) *
+    mapping(:wbfreq) * 
+    histogram(bins=100, normalization=:pdf, datalimits=extrema)
+    ) |> 
+    draw(_)
 
 ##
-# mat = read_data_rhd(path, read_amplifier=false, read_adc=true)["adc"]
-f = Figure()
-ax = Axis(f[1,1])
-for i in 22
-    # lines!(ax, dat[1:100000,i], label=string(i))
-    lines!(ax, dat[:,i], label=string(i))
-end
-f[1,2] = Legend(f, ax)
-display(f)
+
+bob = @pipe df |> 
+    groupby(_, [:moth, :poke, :unit]) |> 
+    combine(_, nrow)
+
+jim = @pipe df |> 
+    @subset(_, (!).(:ismuscle)) |> 
+    groupby(_, [:moth, :poke, :unit, :quality]) |> 
+    combine(_, nrow)
+
 
 ## More drift than you might think
 
