@@ -144,16 +144,18 @@ function read_and_match_moth_data(vnc_dir, mp_dir; wingbeat_muscle="ldlm")
         wb_muscle_inds = dfmp[dfmp.unit .== wingbeat_muscle, :index]
         wb_muscle_diff = diff(wb_muscle_inds)
         wb_starts = wb_muscle_inds[findall(wb_muscle_diff .>= wingbeat_diff_threshold) .+ 1]
-        append!(wb_starts, wb_starts[end]+fsamp) # Catch last wingbeat as anything within 1 second past the last jump
         # Assign each spike to a wingbeat
         dfmp.wb = searchsortedlast.(Ref(wb_starts), dfmp.index)
         # Make wingbeat period/frequency column
-        # Set first to 0 for cleaning later (relative times unknowable for first wingbeat), set last to previous length (approx close enough)
+        # Set first to NaN for cleaning later (relative times unknowable for first wingbeat), set last to previous length (approx close enough)
         wblen = diff(wb_starts)
-        wblen = vcat(0, wblen, wblen[end])
+        wblen = vcat(NaN, wblen, wblen[end])
         dfmp.wblen = wblen[dfmp.wb .+ 1] # +1 as first wingbeat will be counted as zero
         # Calculate spike time relative to wingbeat start, phase
         dfmp.time = (dfmp.index .- vcat(0, wb_starts)[dfmp.wb .+ 1]) ./ fsamp
+        # Make wingstroke numbers unique based on max in overall dataframe
+        max_wb_number = length(df.wb) > 0 ? maximum(df.wb) : 0
+        dfmp.wb .+= max_wb_number
         # Add local motor program dataframe to full
         df = vcat(df, dfmp)
         
@@ -241,11 +243,12 @@ function read_and_match_moth_data(vnc_dir, mp_dir; wingbeat_muscle="ldlm")
             )
             dtemp.wblen = wblen[dtemp.wb .+ 1]
             dtemp.time = (indices .- vcat(0, wb_starts)[dtemp.wb .+ 1]) ./ fsamp
+            dtemp.wb .+= max_wb_number
             df = vcat(df, dtemp)
         end
     end
-    # Remove data from 0th  wingbeats
-    df = @subset(df, :wb .!= 0)
+    # Remove data from 0th wingbeats, marked as wblen of NaN
+    df = @subset(df, (!).(isnan.(:wblen)))
 
     # NOTE: Unsure if better to pool before or after full dataframe is built. 
     # For now pooling after as it feels like the safest move. 
@@ -266,14 +269,19 @@ df = vcat(
         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
 )
 
+## Settings for all plots
+
+set_theme!(theme_dark())
+
 ##
 
 @pipe df |> 
     @transform(_, :wbfreq = 30000 ./ :wblen) |> 
     (
     AlgebraOfGraphics.data(_) *
-    mapping(:wbfreq) * 
-    histogram(bins=100, normalization=:pdf, datalimits=extrema)
+    mapping(:wbfreq, color=:moth) * 
+    histogram(bins=100, normalization=:pdf, datalimits=extrema) *
+    visual(alpha=0.5)
     ) |> 
     draw(_)
 
