@@ -219,3 +219,19 @@ function match_events!(
         end
     end
 end
+
+
+"""
+Remove duplicate spikes. 
+Spikes are considered duplicated if they are less than x ms apart where x is the exclusion period
+Expects dictionary of units, where each entry is an array of ints of spike event indices
+Keeps first spike. 
+If multiple adjacent spikes are too close, will remove all but first, even if removing a middle one would resolve
+"""
+function remove_duplicate_spikes!(neurons; exclusion_period_ms=1.0, fsamp=30000)
+    exclusion_period_samples = round(Int, exclusion_period_ms / 1000 * fsamp)
+    for key in keys(neurons)
+        too_close_inds = findall(diff(neurons[key]) .<= exclusion_period_samples) .+ 1
+        deleteat!(neurons[key], too_close_inds)
+    end
+end

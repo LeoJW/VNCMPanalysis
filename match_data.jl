@@ -18,6 +18,7 @@ moths = ["2023-05-20", "2023-05-25"]
 
 vnc_dir = "/Volumes/PikesPeak/VNCMP"
 motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
+analysis_dir = @__DIR__
 
 # Constants everything should know (effectively global)
 amps_muscle_order = [
@@ -35,7 +36,9 @@ parent dir of motor program open-ephys recordings
 
 Assumes parent dir of motor program recordings has spike sorting folder and Record Node folder 
 """
-function read_and_match_moth_data(vnc_dir, mp_dir; wingbeat_muscle="ldlm")
+function read_and_match_moth_data(vnc_dir, mp_dir; 
+    wingbeat_muscle="ldlm",
+    exclusion_period_ms=1.0)
     # Important constants not worth making input arguments
     voltage_threshold = 1.0 # V
     debounce_window = 30 # samples
@@ -220,6 +223,8 @@ function read_and_match_moth_data(vnc_dir, mp_dir; wingbeat_muscle="ldlm")
 
         # Now that we have alignment, load neural spikes from Phy matching this poke/experiment
         neurons, unit_details, sort_params = read_phy_spikes(joinpath(vnc_dir, "phy_folder", phy_dirs[matching_poke_ind]))
+        # Remove duplicated spikes within time radius
+        neurons = remove_duplicated_spikes!(neurons; exclusion_period_ms=exclusion_period_ms, fsamp=fsamp)
         # Catch maximum unit number of last poke's units
         prev_max_unit_number = length(neuron_names) > 0 ? maximum(neuron_names) : 0
         # Add each phy unit to data
@@ -269,9 +274,33 @@ df = vcat(
         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
 )
 
+## Post-processing
+@pipe df |> 
+    @transform(_, :wbfreq = 30000 ./ :wblen) |> 
+    # Clean out wingbeats below a frequency threshold
+    @subset(_, :wbfreq .> 10)
+    # Unwrap spikes 
+
 ## Settings for all plots
 
 set_theme!(theme_dark())
+
+## Make histograms of spike phase, unwrap spikes from there
+
+
+## group by unit, look at ISI to catch overlapping spikes
+
+for (key, gdf) in pairs(groupby(@subset(df, (!).(:ismuscle)), [:moth, :poke, :unit]))
+    if length(gdf.abstime) < 2
+        continue
+    end
+    println(key)
+    println(sum(diff(gdf.abstime) .< 0.001))
+    f = Figure()
+    ax = Axis(f[1,1])
+    hist!(ax, diff(gdf.abstime); bins=100, normalization=:pdf)
+    save(joinpath(analysis_dir, "figs", "ISI", key[1] * "_" * string(key[3]) * ".png"), f)
+end
 
 ##
 
