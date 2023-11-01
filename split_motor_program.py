@@ -101,6 +101,7 @@ for start_dir in moth_files:
             channel_names = np.array(
                     ['time', 'RAX', 'RBA', 'RSA', 'RDVM', 'LAX', 'LBA', 'LSA', 'LDVM', 'RDLM', 'LDLM'], 
                     dtype=object)
+            # NOTE: I suspect LBA and LAX are switched here, based on end data. Must have been switched on rig itself
             mdict = {'channelNames' : channel_names, 'data' : data}
             file_name = 'EMG_experiment' + str(exp.experiment_index) + '_' + str(trial_counter).zfill(3) + '.mat'
             io.savemat(os.path.join(found_directory, sortfiles_dir, file_name), mdict)

@@ -103,7 +103,9 @@ end
 
 
 #---- Utility functions 
-
+"""
+Utility function for quick finding of indices for all unique values
+"""
 function group_indices(vector)
     indices_dict = Dict{Int, Vector{Int}}()
     for (idx, value) in enumerate(vector)
@@ -234,4 +236,79 @@ function remove_duplicate_spikes!(neurons; exclusion_period_ms=1.0, fsamp=30000)
         too_close_inds = findall(diff(neurons[key]) .<= exclusion_period_samples) .+ 1
         deleteat!(neurons[key], too_close_inds)
     end
+end
+
+"""
+TODO: Write documentation here lol
+NOTE: phase_wrap_thresholds currently used as a global variable
+"""
+function unwrap_spikes!(gdf)
+    wbi = group_indices(gdf.wb)
+    # For each muscle
+    for m in unique(gdf.unit)
+        threshold = phase_wrap_thresholds[m[2:end]]
+        # Wrap spikes past threshold to next wingbeat
+        # Loop over each wingbeat
+        for i in eachindex(wbi)
+            # Get indices for this muscle in this wingbeat, move on if nothing
+            mi = findall(gdf.unit[wbi[i]] .== m)
+            if length(mi) == 0
+                continue
+            end
+            # Get which spikes in this wb are past threshold
+            inds = findall(gdf.phase[wbi[i][mi]] .>= threshold)
+            # Jump to next wingbeat if no spikes need to move
+            if length(inds) == 0
+                continue
+            end
+            inds = wbi[i][mi][inds]
+            # Get wblen to use for shifted spikes
+            if haskey(wbi, i+1)
+                gdf.wblen[inds] .= first(gdf.wblen[wbi[i+1]])
+                gdf.time[inds] .-= gdf.wblen[inds] # time = -(wblen - time)
+                gdf.phase[inds] = gdf.time[inds] ./ gdf.wblen[inds]
+                gdf.wb[inds] .+= 1
+            # If next wingbeat doesn't exist, mark to remove these spikes
+            # (Spike count and info theo analyses require complete wingbeats)
+            else
+                gdf.time[inds] .= NaN
+            end
+        end
+    end
+end
+
+function unwrap_spikes(time, phase, wb, wblen, muscle)
+    wbi = group_indices(wb)
+    # For each muscle
+    for m in unique(muscle)
+        threshold = phase_wrap_thresholds[m[2:end]]
+        # Wrap spikes past threshold to next wingbeat
+        # Loop over each wingbeat
+        for i in eachindex(wbi)
+            # Get indices for this muscle in this wingbeat, move on if nothing
+            mi = findall(muscle[wbi[i]] .== m)
+            if length(mi) == 0
+                continue
+            end
+            # Get which spikes in this wb are past threshold
+            inds = findall(phase[wbi[i][mi]] .>= threshold)
+            # Jump to next wingbeat if no spikes need to move
+            if length(inds) == 0
+                continue
+            end
+            inds = wbi[i][mi][inds]
+            # Get wblen to use for shifted spikes
+            if haskey(wbi, i+1)
+                wblen[inds] .= first(wblen[wbi[i+1]])
+                time[inds] .-= wblen[inds] # time = -(wblen - time)
+                phase[inds] = time[inds] ./ wblen[inds]
+                wb[inds] .+= 1
+            # If next wingbeat doesn't exist, mark to remove these spikes
+            # (Spike count and info theo analyses require complete wingbeats)
+            else
+                time[inds] .= NaN
+            end
+        end
+    end
+    return DataFrame(time=time, phase=phase, wb=wb, wblen=wblen)
 end

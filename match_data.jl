@@ -21,14 +21,15 @@ motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
 analysis_dir = @__DIR__
 
 # Constants everything should know (effectively global)
-amps_muscle_order = [
-    "lax", "lba", "lsa", "ldvm", "ldlm", 
+# NOTE: I suspect LAX and LBA got flipped in split_motor_program.py, so flipping them back here. But true AMPS order is lax, lba
+muscle_order = [
+    "lba", "lax", "lsa", "ldvm", "ldlm", 
     "rdlm", "rdvm", "rsa", "rba", "rax"]
+phase_wrap_thresholds = Dict("ax"=>0.32, "ba"=>0.6, "sa"=>0.4, "dvm"=>3.0, "dlm"=>3.0)
+# TODO: Come up with splits. Have to split AX same way joy does, so shifting before 0 rather than after 1
 
 
-# Time synchronize and match data from intan, open-ephys, and spike sorted sources
-
-
+##
 """ 
 Function to match data for one individual moth
 Takes two directory locations, parent dir of intan neural recordings and 
@@ -132,7 +133,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         local dfmp = DataFrame(
             :moth => splitpath(vnc_dir)[end],
             :poke => parse(Int, split(experiment_poke, "_")[1][end]),
-            :unit => [amps_muscle_order[Int(x+1)] for x in amps_mat[mask,2]],
+            :unit => [muscle_order[Int(x+1)] for x in amps_mat[mask,2]],
             :index => mp_spike_inds,
             :abstime => mp_spike_inds ./ fsamp,
             :time => 0.0,
@@ -224,7 +225,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         # Now that we have alignment, load neural spikes from Phy matching this poke/experiment
         neurons, unit_details, sort_params = read_phy_spikes(joinpath(vnc_dir, "phy_folder", phy_dirs[matching_poke_ind]))
         # Remove duplicated spikes within time radius
-        neurons = remove_duplicated_spikes!(neurons; exclusion_period_ms=exclusion_period_ms, fsamp=fsamp)
+        remove_duplicate_spikes!(neurons; exclusion_period_ms=exclusion_period_ms, fsamp=fsamp)
         # Catch maximum unit number of last poke's units
         prev_max_unit_number = length(neuron_names) > 0 ? maximum(neuron_names) : 0
         # Add each phy unit to data
@@ -254,6 +255,8 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
     end
     # Remove data from 0th wingbeats, marked as wblen of NaN
     df = @subset(df, (!).(isnan.(:wblen)))
+    # Rescale wblen to units of seconds
+    df.wblen ./= fsamp
 
     # NOTE: Unsure if better to pool before or after full dataframe is built. 
     # For now pooling after as it feels like the safest move. 
@@ -275,17 +278,51 @@ df = vcat(
 )
 
 ## Post-processing
-@pipe df |> 
-    @transform(_, :wbfreq = 30000 ./ :wblen) |> 
+df = @pipe df |> 
+    @transform(_, :wbfreq = 1 ./ :wblen) |> 
     # Clean out wingbeats below a frequency threshold
-    @subset(_, :wbfreq .> 10)
-    # Unwrap spikes 
+    @subset(_, :wbfreq .> 10) |> 
+    # Make phase column
+    @transform(_, :phase = :time ./ :wblen)
+##
+# Unwrap muscle spikes
+for gdf in groupby(df, [:moth, :poke])
+    if !first(gdf.ismuscle)
+        continue
+    end
+    transform!(gdf, unwrap_spikes!)
+end
+
+##
+bob = copy(@subset(first(groupby(df, [:moth, :poke])), :ismuscle))
+
+##
+@benchmark transform!(bob, unwrap_spikes!)
+@benchmark transform!(bob, [:time, :phase, :wb, :wblen, :unit] => unwrap_spikes => [:time, :phase, :wb, :wblen])
 
 ## Settings for all plots
 
 set_theme!(theme_dark())
+update_theme!(fontsize=30)
 
-## Make histograms of spike phase, unwrap spikes from there
+
+## Histograms of muscle spike phase
+
+@pipe df |> 
+    @subset(_, :ismuscle) |> 
+    @subset(_, :phase .!= 0.0) |> 
+    (
+    AlgebraOfGraphics.data(_) *
+    mapping(:phase, color=:moth, row=:unit) *
+    histogram(bins=100, normalization=:pdf, datalimits=extrema) *
+    visual(alpha=0.6)
+    ) |> 
+    draw(_, 
+        figure=(resolution=(1000, 1800),),
+        facet=(; linkxaxes=:colwise, linkyaxes=:none),
+        axis=(; limits=((0, 1), nothing))) |> 
+    save(joinpath(analysis_dir, "figs", "muscle_phase_hist.png"), _)
+current_figure()
 
 
 ## group by unit, look at ISI to catch overlapping spikes
