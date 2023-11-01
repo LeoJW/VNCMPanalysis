@@ -283,22 +283,10 @@ df = @pipe df |>
     # Clean out wingbeats below a frequency threshold
     @subset(_, :wbfreq .> 10) |> 
     # Make phase column
-    @transform(_, :phase = :time ./ :wblen)
-##
-# Unwrap muscle spikes
-for gdf in groupby(df, [:moth, :poke])
-    if !first(gdf.ismuscle)
-        continue
-    end
-    transform!(gdf, unwrap_spikes!)
-end
-
-##
-bob = copy(@subset(first(groupby(df, [:moth, :poke])), :ismuscle))
-
-##
-@benchmark transform!(bob, unwrap_spikes!)
-@benchmark transform!(bob, [:time, :phase, :wb, :wblen, :unit] => unwrap_spikes => [:time, :phase, :wb, :wblen])
+    @transform(_, :phase = :time ./ :wblen) |> 
+    # Unwrap muscle spikes
+    groupby(_, [:moth, :poke]) |> 
+    transform!(_, [:time, :phase, :wb, :wblen, :unit, :ismuscle] => unwrap_spikes => [:time, :phase, :wb, :wblen])
 
 ## Settings for all plots
 
@@ -320,7 +308,7 @@ update_theme!(fontsize=30)
     draw(_, 
         figure=(resolution=(1000, 1800),),
         facet=(; linkxaxes=:colwise, linkyaxes=:none),
-        axis=(; limits=((0, 1), nothing))) |> 
+        axis=(; limits=(nothing, nothing))) |> 
     save(joinpath(analysis_dir, "figs", "muscle_phase_hist.png"), _)
 current_figure()
 
