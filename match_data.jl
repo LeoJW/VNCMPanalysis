@@ -26,7 +26,6 @@ muscle_order = [
     "lba", "lax", "lsa", "ldvm", "ldlm", 
     "rdlm", "rdvm", "rsa", "rba", "rax"]
 phase_wrap_thresholds = Dict("ax"=>0.32, "ba"=>0.6, "sa"=>0.4, "dvm"=>3.0, "dlm"=>3.0)
-# TODO: Come up with splits. Have to split AX same way joy does, so shifting before 0 rather than after 1
 
 
 ##
@@ -143,6 +142,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
             :wb => 0,
             :wblen => 0
         )
+
         #--- Create wingbeats
         # Determine wingbeat start and end indices as "bins"
         wb_muscle_inds = dfmp[dfmp.unit .== wingbeat_muscle, :index]
@@ -151,7 +151,8 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         # Assign each spike to a wingbeat
         dfmp.wb = searchsortedlast.(Ref(wb_starts), dfmp.index)
         # Make wingbeat period/frequency column
-        # Set first to NaN for cleaning later (relative times unknowable for first wingbeat), set last to previous length (approx close enough)
+        # Set first to NaN for cleaning later (relative times unknowable for first wingbeat)
+        # Set last to previous length (approx close enough)
         wblen = diff(wb_starts)
         wblen = vcat(NaN, wblen, wblen[end])
         dfmp.wblen = wblen[dfmp.wb .+ 1] # +1 as first wingbeat will be counted as zero
@@ -162,7 +163,6 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         dfmp.wb .+= max_wb_number
         # Add local motor program dataframe to full
         df = vcat(df, dfmp)
-        
         
         #---- Sample alignment for intan data
         # Load run of .rhd files and open-ephys data where we have AMPS spikes
@@ -265,6 +265,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         df[:, name] = PooledArray(df[:, name], compress=true)
     end
 
+    # TODO: Some way to return visual stimuli, either as its own data structure or in the dataframe
     return df
 end
 
@@ -277,20 +278,35 @@ df = vcat(
         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
 )
 
-## Post-processing
+# Post-processing
 df = @pipe df |> 
     @transform(_, :wbfreq = 1 ./ :wblen) |> 
     # Clean out wingbeats below a frequency threshold
     @subset(_, :wbfreq .> 10) |> 
+    # rdlm barely has any data so go ahead and remove
+    @subset(_, :unit .!= "rdlm") |> 
+    # Remove neural units that are noise
+    @subset(_, :quality .!= "noise") |> 
+    # Final wingbeats have neural spikes that drag on for many seconds
+    # May be useful later, but for now removing any neural spikes past when wingbeat should end
+    @subset(_, :time .<= :wblen) |> 
     # Make phase column
     @transform(_, :phase = :time ./ :wblen) |> 
     # Unwrap muscle spikes
     groupby(_, [:moth, :poke]) |> 
-    transform!(_, [:time, :phase, :wb, :wblen, :unit, :ismuscle] => unwrap_spikes => [:time, :phase, :wb, :wblen])
+    transform!(_, [:time, :phase, :wb, :wblen, :unit, :ismuscle] => unwrap_spikes_to_prev => [:time, :phase, :wb, :wblen]) |> 
+    @subset(_, (!).(isnan.(:time)))
 
 ## Settings for all plots
 
-set_theme!(theme_dark())
+dark_or_light = "light"
+if dark_or_light .== "light"
+    set_theme!()
+    figsdir = joinpath(analysis_dir, "figs_light")
+else
+    set_theme!(theme_dark())
+    figsdir = joinpath(analysis_dir, "figs_dark")
+end
 update_theme!(fontsize=30)
 
 
@@ -309,35 +325,89 @@ update_theme!(fontsize=30)
         figure=(resolution=(1000, 1800),),
         facet=(; linkxaxes=:colwise, linkyaxes=:none),
         axis=(; limits=(nothing, nothing))) |> 
-    save(joinpath(analysis_dir, "figs", "muscle_phase_hist.png"), _)
+    save(joinpath(figsdir, "muscle_phase_hist_with_1centered_unwrap.png"), _)
 current_figure()
 
+## Dimensionality checking. Max number of spikes per wingbeat combinatorially between muscles and neurons?
+
+max_n_spike_per_wb = @pipe df |> 
+    groupby(_, [:moth, :poke, :unit, :wb]) |> 
+    combine(_, nrow) |> 
+    groupby(_, [:moth, :poke, :unit]) |> 
+    combine(_, :nrow => maximum)
+
+## Plot all units against time for a couple wingstrokes
+
+dt = @subset(df, (:moth .== "2023-05-25") .&& (:wb .>= 1000) .&& (:wb .<= 1004))
+
+f = Figure(resolution=(1800, 1000))
+ax = Axis(f[1,1], xlabel="Time (s)")
+vlines!(dt[dt.unit .== "ldlm" .&& dt.phase .== 1.0, :abstime];
+    color=:grey)
+increment = 1 / (length(unique(dt.unit)) + 2)
+value_to_index = Dict(key => i for (i, key) in enumerate(unique(dt.wb)))
+for (i, (key, gdf)) in enumerate(pairs(groupby(dt, :unit)))
+    wbvec = [value_to_index[value] for value in gdf.wb]
+    vlines!(ax, gdf.abstime;
+        ymin=i * increment - increment * 0.4,
+        ymax=i * increment + increment * 0.4,
+        linewidth = gdf.ismuscle[1] ? 4 : 1.5,
+        # linestyle = gdf.ismuscle[1] ? :dashdot : :solid,
+        label=key[1],
+        color=wbvec,
+        colormap=:tab10,
+        colorrange=(1,10))
+end
+hideydecorations!(ax)
+save(joinpath(figsdir, "example_spikes_across_several_wb_1centered.png"), f)
+current_figure()
+
+##
+bob = @pipe dt |> 
+    @subset(_, (!).(:ismuscle) .&& (:abstime .> 121))
+
+##
+jim = @subset(df, (:moth .== "2023-05-25") .&& (:wb .== 7867))
+f = Figure()
+ax = Axis(f[1,1])
+nunique = length(unique(jim.unit))
+increment = 1 / (nunique + 2)
+for (i, unit) in enumerate(unique(jim.unit))
+    vlines!(ax, jim[jim.unit .== unit, :time]; 
+        ymin=i * increment - increment * 0.4,
+        ymax=i * increment + increment * 0.4,
+        label=unit)
+end
+axislegend()
+current_figure()
 
 ## group by unit, look at ISI to catch overlapping spikes
 
 for (key, gdf) in pairs(groupby(@subset(df, (!).(:ismuscle)), [:moth, :poke, :unit]))
-    if length(gdf.abstime) < 2
+    diftime = diff(gdf.abstime)
+    diftime = diftime[diftime .< 0.2]
+    if length(diftime) < 1
         continue
     end
-    println(key)
-    println(sum(diff(gdf.abstime) .< 0.001))
     f = Figure()
     ax = Axis(f[1,1])
-    hist!(ax, diff(gdf.abstime); bins=100, normalization=:pdf)
-    save(joinpath(analysis_dir, "figs", "ISI", key[1] * "_" * string(key[3]) * ".png"), f)
+    hist!(ax, diftime; bins=100, normalization=:pdf)
+    save(joinpath(figsdir, "ISI", key[1] * "_" * string(key[3]) * ".png"), f)
 end
 
-##
+## Wingbeat frequency plot
 
 @pipe df |> 
-    @transform(_, :wbfreq = 30000 ./ :wblen) |> 
     (
     AlgebraOfGraphics.data(_) *
-    mapping(:wbfreq, color=:moth) * 
+    mapping(:wbfreq => "Wingbeat Frequency (Hz)", color=:moth => "Moth") * 
     histogram(bins=100, normalization=:pdf, datalimits=extrema) *
     visual(alpha=0.5)
     ) |> 
-    draw(_)
+    draw(_,
+        figure=(resolution=(1600, 800),)) |> 
+    save(joinpath(figsdir, "wingbeat_frequency.png"), _)
+current_figure()
 
 ##
 

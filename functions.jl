@@ -244,7 +244,7 @@ Different from comparative version.
 Moves everything to next wingbeat, so always generates negative phases instead of phase > 1.0
 NOTE: phase_wrap_thresholds currently used as a global variable
 """
-function unwrap_spikes(time, phase, wb, wblen, muscle, ismuscle)
+function unwrap_spikes_to_next(time, phase, wb, wblen, muscle, ismuscle)
     wbi = group_indices(wb)
     # For each muscle
     for m in unique(muscle[ismuscle])
@@ -271,6 +271,41 @@ function unwrap_spikes(time, phase, wb, wblen, muscle, ismuscle)
                 phase[inds] = time[inds] ./ wblen[inds]
                 wb[inds] .+= 1
             # If next wingbeat doesn't exist, mark to remove these spikes
+            # (Spike count and info theo analyses require complete wingbeats)
+            else
+                time[inds] .= NaN
+            end
+        end
+    end
+    return DataFrame(time=time, phase=phase, wb=wb, wblen=wblen)
+end
+function unwrap_spikes_to_prev(time, phase, wb, wblen, muscle, ismuscle)
+    wbi = group_indices(wb)
+    # For each muscle
+    for m in unique(muscle[ismuscle])
+        threshold = phase_wrap_thresholds[m[2:end]]
+        # Wrap spikes past threshold to next wingbeat
+        # Loop over each wingbeat
+        for i in eachindex(wbi)
+            # Get indices for this muscle in this wingbeat, move on if nothing
+            mi = findall(muscle[wbi[i]] .== m)
+            if length(mi) == 0
+                continue
+            end
+            # Get which spikes in this wb are past threshold
+            inds = findall(phase[wbi[i][mi]] .< threshold)
+            # Jump to next wingbeat if no spikes need to move
+            if length(inds) == 0
+                continue
+            end
+            inds = wbi[i][mi][inds]
+            # Get wblen to use for shifted spikes
+            if haskey(wbi, i-1)
+                wblen[inds] .= first(wblen[wbi[i-1]])
+                time[inds] .+= wblen[inds]
+                phase[inds] = time[inds] ./ wblen[inds]
+                wb[inds] .-= 1
+            # If prev wingbeat doesn't exist, mark to remove these spikes
             # (Spike count and info theo analyses require complete wingbeats)
             else
                 time[inds] .= NaN
