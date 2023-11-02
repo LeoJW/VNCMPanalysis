@@ -324,17 +324,65 @@ update_theme!(fontsize=30)
     draw(_, 
         figure=(resolution=(1000, 1800),),
         facet=(; linkxaxes=:colwise, linkyaxes=:none),
-        axis=(; limits=(nothing, nothing))) |> 
-    save(joinpath(figsdir, "muscle_phase_hist_with_1centered_unwrap.png"), _)
+        axis=(; limits=(nothing, nothing))) #|> 
+    # save(joinpath(figsdir, "muscle_phase_hist_with_1centered_unwrap.png"), _)
 current_figure()
 
-## Dimensionality checking. Max number of spikes per wingbeat combinatorially between muscles and neurons?
-
+## Dimensionality checking. 
+# Max number of spikes per wingbeat combinatorially between muscles and neurons?
 max_n_spike_per_wb = @pipe df |> 
     groupby(_, [:moth, :poke, :unit, :wb]) |> 
     combine(_, nrow) |> 
     groupby(_, [:moth, :poke, :unit]) |> 
     combine(_, :nrow => maximum)
+
+# How many rows (wingstrokes) vs columns (max num spikes) for each combination of (neuron, muscle)
+nwb_combos = Dict{Tuple, Int}()
+for gdf in groupby(df, [:moth, :poke, :wb])
+    muscles = unique(gdf[gdf.ismuscle, :unit])
+    neurons = unique(gdf[(!).(gdf.ismuscle), :unit])
+    for combos in Base.product(muscles, neurons)
+        key = (first(gdf.moth), first(gdf.poke), combos[1], combos[2])
+        if combos[1] == combos[2]
+            continue
+        elseif !haskey(nwb_combos, key)
+            nwb_combos[key] = 1
+        else
+            nwb_combos[key] += 1
+        end
+    end
+end
+
+# For each combination get overall dimensionality
+num_wingbeats = Int[]
+num_dimensions = Int[]
+num_dim_firstmuscle = Int[]
+for key in keys(nwb_combos)
+    append!(num_wingbeats, nwb_combos[key])
+    dim1 = @subset(max_n_spike_per_wb, (:moth .== key[1]) .&& (:poke .== key[2]) .&& (:unit .== key[3])).nrow_maximum[1]
+    dim2 = @subset(max_n_spike_per_wb, (:moth .== key[1]) .&& (:poke .== key[2]) .&& (:unit .== key[4])).nrow_maximum[1]
+    append!(num_dimensions, dim1 + dim2)
+    append!(num_dim_firstmuscle, 1 + dim2)
+end
+
+##
+f = Figure(resolution=(1200, 900))
+ax = Axis(f[1,1],
+    xlabel="Number of wingbeats for (muscle, neuron) pairs",
+    ylabel="Overall dimensionality (# of columns in input + output)")
+scatter!(ax, num_wingbeats, num_dimensions)
+save(joinpath(figsdir, "dimensionality_vs_nwingbeats.png"), f)
+current_figure()
+
+f = Figure(resolution=(1200, 900))
+ax = Axis(f[1,1],
+    xlabel="Number of wingbeats for (muscle, neuron) pairs",
+    ylabel="Overall dimensionality (# of columns in input + output)")
+scatter!(ax, num_wingbeats, num_dimensions, label="Original")
+scatter!(ax, num_wingbeats, num_dim_firstmuscle, label="Muscles only first spike")
+axislegend()
+save(joinpath(figsdir, "dimensionality_vs_nwingbeats_muscles_only_one.png"), f)
+current_figure()
 
 ## Plot all units against time for a couple wingstrokes
 
@@ -360,25 +408,6 @@ for (i, (key, gdf)) in enumerate(pairs(groupby(dt, :unit)))
 end
 hideydecorations!(ax)
 save(joinpath(figsdir, "example_spikes_across_several_wb_1centered.png"), f)
-current_figure()
-
-##
-bob = @pipe dt |> 
-    @subset(_, (!).(:ismuscle) .&& (:abstime .> 121))
-
-##
-jim = @subset(df, (:moth .== "2023-05-25") .&& (:wb .== 7867))
-f = Figure()
-ax = Axis(f[1,1])
-nunique = length(unique(jim.unit))
-increment = 1 / (nunique + 2)
-for (i, unit) in enumerate(unique(jim.unit))
-    vlines!(ax, jim[jim.unit .== unit, :time]; 
-        ymin=i * increment - increment * 0.4,
-        ymax=i * increment + increment * 0.4,
-        label=unit)
-end
-axislegend()
 current_figure()
 
 ## group by unit, look at ISI to catch overlapping spikes
@@ -419,56 +448,3 @@ jim = @pipe df |>
     @subset(_, (!).(:ismuscle)) |> 
     groupby(_, [:moth, :poke, :unit, :quality]) |> 
     combine(_, nrow)
-
-
-## More drift than you might think
-
-f = Figure()
-ax = Axis(f[1,1])
-sub = 5
-alignto = 1
-shift = rhd_digital["trigger"][alignto] - oep_digital["trigger"][alignto]
-y = oep_data[1:sub:end,3]
-lines!(ax, oeptime[1:sub:end] .- oeptime[oep_digital["trigger"][alignto]], [y[1:end-1]..., NaN])
-# scatter!(ax, oep_digital["trigger"][alignto], 0, markersize=20)
-scatter!(ax, 0, 0, markersize=20)
-why = bob[1:sub:end]
-lines!(ax, rhdtime[1:sub:end] .- rhdtime[rhd_digital["trigger"][alignto]], [why[1:end-1]..., NaN])
-# scatter!(ax, rhd_digital["trigger"][alignto] - shift, 0, markersize=10)
-display(f)
-
-##
-
-itp = interpolate(rhd_events, oep_events, BSplineOrder(4))
-xitp = extrema(rhd_events)[1]:extrema(rhd_events)[2]
-
-f = Figure()
-ax = Axis(f[1,1])
-scatter!(ax, rhd_events .- rhd_events[1], oep_events .- oep_events[1])
-lines!(ax, xitp .- rhd_events[1], itp.(xitp) .- oep_events[1])
-display(f)
-
-##
-f = Figure()
-ax = Axis(f[1,1])
-scatter!(ax, spikedata["ldlm"] ./ 30000, zeros(length(spikedata["ldlm"])))
-scatter!(ax, spikedata["rdlm"] ./ 30000, zeros(length(spikedata["rdlm"])))
-current_figure()
-
-
-## A fitting approach
-oep = oep_digital["trigger"] .- oep_digital["trigger"][1]
-rhd = rhd_digital["trigger"] .- rhd_digital["trigger"][1]
-# fit(oep, rhd)
-scatter(oep, rhd)
-ablines!([0], [1])
-current_figure()
-
-## How long for how much drift
-alignto = 1
-shift = rhd_digital["trigger"][alignto] - oep_digital["trigger"][alignto]
-drift = (oep_digital["trigger"] .- (rhd_digital["trigger"] .- shift) ) ./ 30000
-scatter((oep_digital["trigger"] .- oep_digital["trigger"][alignto]) / 30000, drift)
-
-# NI DAQ seems to run almost exactly 1ms faster per every second of runtime 
-# This is b/c intan DAQ actually ran at 29999.999666470107 Hz
