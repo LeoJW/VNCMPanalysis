@@ -1,5 +1,8 @@
+using Base.Threads: nthreads, @threads, @spawn
+using Base.Iterators: partition # Multithreading
 using NPZ   # Read .npy files
 using JSON  # Read json formatted files, duh
+using JLD
 using DelimitedFiles
 using Mmap
 using BSplineKit
@@ -9,9 +12,11 @@ using PooledArrays
 using Pipe
 using GLMakie
 using AlgebraOfGraphics
+using CausalityTools
 using BenchmarkTools
 include("IntanReader.jl")
 include("functions.jl")
+include("precision_functions.jl")
 
 moths = ["2023-05-20", "2023-05-25"]
 
@@ -365,7 +370,6 @@ for key in keys(nwb_combos)
     append!(num_dim_firstmuscle, 1 + dim2)
 end
 
-##
 f = Figure(resolution=(1200, 900))
 ax = Axis(f[1,1],
     xlabel="Number of wingbeats for (muscle, neuron) pairs",
@@ -383,6 +387,62 @@ scatter!(ax, num_wingbeats, num_dim_firstmuscle, label="Muscles only first spike
 axislegend()
 save(joinpath(figsdir, "dimensionality_vs_nwingbeats_muscles_only_one.png"), f)
 current_figure()
+
+
+##--- Calculate and plot precision for each (muscle, neuron) combination
+# Create list of all muscle, unit combinations for each moth
+combinations = Dict{String, Set}(moth => Set([]) for moth in unique(df.moth))
+for gdf in groupby(df, [:moth, :poke, :wb])
+    muscles = unique(gdf[gdf.ismuscle, :unit])
+    neurons = unique(gdf[(!).(gdf.ismuscle), :unit])
+    for combos in Base.product(muscles, neurons)
+        if combos[1] == combos[2]
+            continue
+        elseif !(combos in combinations[gdf.moth[1]])
+            push!(combinations[gdf.moth[1]], combos)
+        end
+    end
+end
+# group by moth, poke, loop over (muscle, neuron) combinations, calculate precision and make a plot
+prec = Dict{Tuple{String, String, String}, Float64}()
+for gdf in groupby(df, :moth)
+    thismoth = gdf.moth[1]
+    for combo in combinations[thismoth]
+        X, Y = XY_array_from_dataframe((combo[1], combo[2]), gdf.unit, gdf.time, gdf.wb)
+        if size(X,1) <= (size(X,2) + size(Y,2))
+            prec[(thismoth, combo[1], combo[2])] = 0.0
+            continue
+        end
+        println(X)
+        f = Figure()
+        ax = Axis(f[1,1], xscale=log10, xlabel="Added noise amplitude (ms)", ylabel="MI (bits)")
+        precision_val = precision(X, Y;
+            noise=exp10.(range(log10(0.05), stop=log10(10), length=100)),
+            repeats=100,
+            do_plot=true,
+            ax=ax
+        )
+        prec[(thismoth, combo[1], combo[2])] = precision_val
+        ax.title = "Moth $thismoth, Muscle: $(combo[1]), Neuron: $(combo[2])"
+        save(joinpath(figsdir, "precision_curves", join(thismoth, combo[1], combo[2], "_") * ".png"), f)
+    end
+end
+
+##
+
+gdf = first(groupby(df, :moth))
+combo = first(combinations[gdf.moth[1]])
+X, Y = XY_array_from_dataframe((combo[1], combo[2]), gdf.unit, gdf.time, gdf.wb)
+
+nspike = vec(sum((!).(isnan.(X)), dims=2))
+[sum(nspike .== n) for n in unique(nspike)]
+
+# TODO: Better system that saves parameters I ran this under (like number of repeats)
+save(joinpath(analysis_dir, "precision_rough_first_pass.jld"), "GOV", prec)
+
+
+## Plot of precision curves, facet per muscle
+
 
 ## Plot all units against time for a couple wingstrokes
 

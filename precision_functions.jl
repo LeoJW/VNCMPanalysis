@@ -230,12 +230,14 @@ function find_std_subsampling(x, y;
     return sqrt(variance_predicted)
 end
 
+# TODO: Clean up, likely split this to have version that modifies plot and version that makes plot using multiple dispatch
 function precision(x::Array{Float64}, y::Array{Float64};
     noise::Vector{Float64}=exp10.(range(log10(0.05), stop=log10(6), length=120)),
     estimator=GaoOhViswanath(k=4),
     split_sizes=collect(1:5),
     repeats=100,
-    do_plot=false)
+    do_plot=false, 
+    ax=nothing)
     # Calculate mutual information as spike times corrupted with noise
     MI = repeat_corrupted_MI(x, y; estimator=estimator, noise=noise, repeats=repeats)
     # Find std of MI at zero noise using non-overlapping subsets
@@ -251,13 +253,17 @@ function precision(x::Array{Float64}, y::Array{Float64};
     end
     # Plot if requested
     if do_plot
-        f = Figure()
-        ax = Axis(f[1,1], xscale=log10, xlabel="Added noise amplitude (ms)", ylabel="MI (bits)")
+        if isnothing(ax)
+            f = Figure()
+            ax = Axis(f[1,1], xscale=log10, xlabel="Added noise amplitude (ms)", ylabel="MI (bits)")
+        end
         μ, σ = vec(meanMI), vec(std(MI, dims=2))
         band!(ax, noise, μ .+ σ, μ .- σ, color=(:blue, 0.5))
         lines!(ax, noise, μ, color=:blue)
         lines!(ax, noise, fill(zero_noise_MI - sd, length(noise)), linestyle=:dash, color=:blue)
-        display(f)
+        if isnothing(ax)
+            display(f)
+        end
     end
     return precision_level
 end
@@ -565,6 +571,26 @@ function dataframe_to_XYarray(wb, count, time, args...; max_wb=nothing)
         y = y[inds,:]
     end
     return x, y
+end
+
+function XY_array_from_dataframe(targetcols, unit, values, wb)
+    mask1, mask2 = unit .== targetcols[1], unit .== targetcols[2]
+    # Get wingbeats that have both units/targets spiking
+    wb1, wb2 = wb[mask1], wb[mask2]
+    common_wingbeats = find_common_elements(wb1, wb2)
+    dim1, dim2 = max_count(wb1), max_count(wb2)
+    # Could be more efficient here but whatever
+    wbinds1, wbinds2 = group_indices(wb1), group_indices(wb2)
+    # Preallocate 
+    X = fill(NaN, length(common_wingbeats), dim1)
+    Y = fill(NaN, length(common_wingbeats), dim2)
+    # Loop over wingbeats
+    for (i, iwb) in enumerate(common_wingbeats)
+        data1, data2 = values[mask1][wbinds1[iwb]], values[mask2][wbinds2[iwb]]
+        X[i,1:length(data1)] = data1
+        Y[i,1:length(data2)] = data2
+    end
+    return X, Y
 end
 
 

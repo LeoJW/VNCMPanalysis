@@ -102,53 +102,6 @@ function read_binary_open_ephys(recording_folder, stream_indices)
 end
 
 
-#---- Utility functions 
-"""
-Utility function for quick finding of indices for all unique values
-"""
-function group_indices(vector)
-    indices_dict = Dict{Int, Vector{Int}}()
-    for (idx, value) in enumerate(vector)
-        if haskey(indices_dict, value)
-            push!(indices_dict[value], idx)
-        else
-            indices_dict[value] = [idx]
-        end
-    end
-    return indices_dict
-end
-
-function find_threshold_crossings(signal, threshold)
-    crossings = Int[]
-    above_threshold = signal[1] > threshold ? true : false
-    for (index, value) in enumerate(signal)
-        if !above_threshold && value > threshold
-            push!(crossings, index)
-            above_threshold = true
-        elseif above_threshold && value <= threshold
-            above_threshold = false
-        end
-    end
-    return crossings
-end
-function find_threshold_crossings(signal, threshold, debounce_window::Int)
-    crossings = Int[]
-    above_threshold = signal[1] > threshold ? true : false
-    ind = -100
-    for (index, value) in enumerate(signal)
-        if !above_threshold && value > threshold && (index - ind) > debounce_window
-            push!(crossings, index)
-            above_threshold = true
-            ind = index  # Update the debounce tracking index for both directions
-        elseif above_threshold && value <= threshold && (index - ind) > debounce_window
-            above_threshold = false
-            ind = index  # Update the debounce tracking index for both directions
-        end
-    end
-    return crossings
-end
-
-
 
 # Assumes oep_events and rhd_events already store the first known event
 function match_events!(
@@ -313,4 +266,82 @@ function unwrap_spikes_to_prev(time, phase, wb, wblen, muscle, ismuscle)
         end
     end
     return DataFrame(time=time, phase=phase, wb=wb, wblen=wblen)
+end
+
+
+#---- Utility functions 
+"""
+Utility function for quick finding of indices for all unique values
+"""
+function group_indices(vector)
+    indices_dict = Dict{Int, Vector{Int}}()
+    for (idx, value) in enumerate(vector)
+        if haskey(indices_dict, value)
+            push!(indices_dict[value], idx)
+        else
+            indices_dict[value] = [idx]
+        end
+    end
+    return indices_dict
+end
+
+function find_threshold_crossings(signal, threshold)
+    crossings = Int[]
+    above_threshold = signal[1] > threshold ? true : false
+    for (index, value) in enumerate(signal)
+        if !above_threshold && value > threshold
+            push!(crossings, index)
+            above_threshold = true
+        elseif above_threshold && value <= threshold
+            above_threshold = false
+        end
+    end
+    return crossings
+end
+function find_threshold_crossings(signal, threshold, debounce_window::Int)
+    crossings = Int[]
+    above_threshold = signal[1] > threshold ? true : false
+    ind = -100
+    for (index, value) in enumerate(signal)
+        if !above_threshold && value > threshold && (index - ind) > debounce_window
+            push!(crossings, index)
+            above_threshold = true
+            ind = index  # Update the debounce tracking index for both directions
+        elseif above_threshold && value <= threshold && (index - ind) > debounce_window
+            above_threshold = false
+            ind = index  # Update the debounce tracking index for both directions
+        end
+    end
+    return crossings
+end
+
+function find_common_elements(vec1, vec2)
+    common = Int[]  # Initialize an empty array to store common elements
+    i, j = 1, 1  # Initialize pointers for both vectors
+    while i <= length(vec1) && j <= length(vec2)
+        if vec1[i] == vec2[j]
+            push!(common, vec1[i])  # Both vectors have the same element, so add it to the common array
+            i += 1
+            j += 1
+        elseif vec1[i] < vec2[j]
+            i += 1  # Move the pointer in the first vector
+        else
+            j += 1  # Move the pointer in the second vector
+        end
+    end
+    return common
+end
+
+function max_count(vec)
+    max_count = 0
+    current_count = 1
+    for i in 2:length(vec)
+        if vec[i] == vec[i-1]
+            current_count += 1
+        else
+            current_count = 1
+        end
+        max_count = max(max_count, current_count)
+    end
+    return max_count
 end
