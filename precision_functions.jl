@@ -39,14 +39,10 @@ function repeat_corrupted_MI(x::Array{Float64}, y::Array{Float64};
     estimator=GaoOhViswanath(k=4), 
     repeats::Int=150, 
     noise::Vector{Float64}=exp10.(range(log10(0.05), stop=log10(6), length=120)))
-    # How many spikes per wingbeat from X
-    nspike = vec(sum((!).(isnan.(x)), dims=2))
-    # Probability of each possible number of spikes (except zero)
-    unq = unique(nspike)
-    unq = unq[unq .!= 0]
-    probs = zeros(maximum(unq))
-    probs[unq] .= [sum(nspike .== u) / length(nspike) for u in unq]
-    # TODO: If first noise level is zero, run that MI once here
+    # Determine how many spikes per wingbeat, probability of each possible number of spikes (except zero)
+    nspikeX, nspikeY = vec(sum((!).(isnan.(x)), dims=2)), vec(sum((!).(isnan.(y)), dims=2))
+    nspike_combinations = unique(eachrow(hcat(nspikeX, nspikeY)))
+    probs = Dict(combo => sum((nspikeX .== combo[1]) .&& (nspikeY .== combo[2])) / length(nspikeX) for combo in nspike_combinations)
 
     # Partition noise levels into chunks that tasks will deal with
     tasks_per_thread = 1 # customize this as needed. More tasks have more overhead, but better load balancing
@@ -56,20 +52,20 @@ function repeat_corrupted_MI(x::Array{Float64}, y::Array{Float64};
     tasks = map(data_chunks) do chunk
         @spawn begin
             local_mi = zeros(length(chunk), repeats)
-            Xn = zeros(size(x))
+            Yn = zeros(size(y))
             for (i,noiselvl) in enumerate(chunk)
                 # Loop over repeats
                 for j in 1:repeats
                     # Loop over number of spikes per wb
                     mi = 0
-                    for sp in unq
-                        mask = nspike .== sp
+                    for combo in nspike_combinations
+                        mask = (nspikeX .== combo[1]) .&& (nspikeY .== combo[2])
                         nwb = sum(mask)
-                        @inbounds if (nwb > sp) && (estimator.k < nwb)
-                            Xn = x[mask, 1:sp] .+ (noiselvl * rand(nwb, sp))
-                            X = StateSpaceSet(Xn)
-                            Y = StateSpaceSet(y[mask, :])
-                            mi += mutualinfo(estimator, X, Y) * probs[sp]
+                        @inbounds if (nwb > sum(combo)) && (estimator.k < nwb)
+                            Yn = y[mask, 1:combo[2]] .+ (noiselvl * rand(nwb, combo[2]))
+                            X = StateSpaceSet(x[mask, 1:combo[1]])
+                            Y = StateSpaceSet(Yn)
+                            mi += mutualinfo(estimator, X, Y) * probs[combo]
                         end
                     end
                     local_mi[i,j] = mi
@@ -177,22 +173,25 @@ function subsampling_MI(x, y;
     tasks = map(data_chunks) do chunk
         @spawn begin
             xlocal, ylocal = x[chunk,:], y[chunk,:]
-            # How many spikes per wingbeat from X
-            nspike = vec(sum((!).(isnan.(xlocal)), dims=2))
-            # Probability of each possible number of spikes (except zero)
-            unq = unique(nspike)
-            unq = unq[unq .!= 0]
-            probs = zeros(maximum(unq))
-            probs[unq] .= [sum(nspike .== u) / length(nspike) for u in unq]
+            # # How many spikes per wingbeat from X
+            # nspike = vec(sum((!).(isnan.(xlocal)), dims=2))
+            # # Probability of each possible number of spikes (except zero)
+            # unq = unique(nspike)
+            # unq = unq[unq .!= 0]
+            # probs = zeros(maximum(unq))
+            # probs[unq] .= [sum(nspike .== u) / length(nspike) for u in unq]
+            nspikeX, nspikeY = vec(sum((!).(isnan.(xlocal)), dims=2)), vec(sum((!).(isnan.(ylocal)), dims=2))
+            nspike_combinations = unique(eachrow(hcat(nspikeX, nspikeY)))
+            probs = Dict(combo => sum((nspikeX .== combo[1]) .&& (nspikeY .== combo[2])) / length(nspikeX) for combo in nspike_combinations)
             # Loop over number of spikes per wb
             mi = 0
-            for sp in unq
-                mask = nspike .== sp
+            for combo in nspike_combinations
+                mask = (nspikeX .== combo[1]) .&& (nspikeY .== combo[2])
                 nwb = sum(mask)
-                if (nwb > sp) && (estimator.k < nwb)
-                    X = StateSpaceSet(xlocal[mask, 1:sp])
-                    Y = StateSpaceSet(ylocal[mask, :])
-                    mi += mutualinfo(estimator, X, Y) * probs[sp]
+                @inbounds if (nwb > sum(combo)) && (estimator.k < nwb)
+                    X = StateSpaceSet(xlocal[mask, 1:combo[1]])
+                    Y = StateSpaceSet(ylocal[mask, 1:combo[2]])
+                    mi += mutualinfo(estimator, X, Y) * probs[combo]
                 end
             end
             return mi
