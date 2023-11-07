@@ -232,7 +232,7 @@ function read_and_match_moth_data(vnc_dir, mp_dir;
         end
     end
     # Remove data from 0th wingbeats, marked as wblen of NaN
-    df = df[(!).(isnan.(:wblen)), :]
+    df = df[(!).(isnan.(df.wblen)), :]
     # Rescale wblen to units of seconds
     df.wblen ./= fsamp
 

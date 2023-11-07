@@ -235,12 +235,13 @@ function precision(x::Array{Float64}, y::Array{Float64};
     estimator=GaoOhViswanath(k=4),
     split_sizes=collect(1:5),
     repeats=100,
+    zero_noise_repeats=3,
     do_plot=false, 
     ax=nothing)
     # Calculate mutual information as spike times corrupted with noise
     MI = repeat_corrupted_MI(x, y; estimator=estimator, noise=noise, repeats=repeats)
     # Find std of MI at zero noise using non-overlapping subsets
-    zero_noise_MI = mean(repeat_corrupted_MI(x, y; estimator=estimator, noise=[1e-6], repeats=10))
+    zero_noise_MI = mean(repeat_corrupted_MI(x, y; estimator=estimator, noise=[1e-6], repeats=zero_noise_repeats))
     sd = find_std_subsampling(x, y; split_sizes=split_sizes, estimator=estimator)
     meanMI = mean(MI, dims=2)
     below_threshold = meanMI .< (zero_noise_MI - sd)
@@ -264,7 +265,7 @@ function precision(x::Array{Float64}, y::Array{Float64};
             display(f)
         end
     end
-    return precision_level
+    return precision_level, zero_noise_MI, sd
 end
 function precision_single(x::Array{Float64}, y::Array{Float64};
     noise::Vector{Float64}=exp10.(range(log10(0.05), stop=log10(6), length=120)),
@@ -285,6 +286,7 @@ function precision_single(x::Array{Float64}, y::Array{Float64};
     end
     return precision_level
 end
+
 
 """
 Version of precision function that exists primarily to draw plot

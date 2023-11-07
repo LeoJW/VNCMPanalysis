@@ -16,6 +16,9 @@ using GLMakie
 using AlgebraOfGraphics
 using CausalityTools
 using BenchmarkTools
+# Special process for transfer entropy module
+include("CoTETE.jl/src/CoTETE.jl")
+import .CoTETE
 
 moths = ["2023-05-20", "2023-05-25"]
 
@@ -38,7 +41,6 @@ include("precision_functions.jl")
 include("match_data.jl")
 
 ##
-
 
 df = vcat(
     read_and_match_moth_data(
@@ -81,6 +83,73 @@ else
 end
 update_theme!(fontsize=30)
 
+# Create list of all muscle, unit combinations for each moth
+combinations = Dict{String, Set}(moth => Set([]) for moth in unique(df.moth))
+for gdf in groupby(df, [:moth, :poke, :wb])
+    muscles = unique(gdf[gdf.ismuscle, :unit])
+    neurons = unique(gdf[(!).(gdf.ismuscle), :unit])
+    for combos in Base.product(muscles, neurons)
+        if combos[1] == combos[2]
+            continue
+        elseif !(combos in combinations[gdf.moth[1]])
+            push!(combinations[gdf.moth[1]], combos)
+        end
+    end
+end
+
+
+## Try out transfer entropy
+
+bob = @subset(df, :moth .== "2023-05-25" .&& :poke .== 1)
+target = bob[bob.unit .== "rsa", :abstime]
+source = bob[bob.unit .== "0", :abstime]
+sort!(target)
+sort!(source)
+# target, source = convert.(Float64, target), convert.(Float64, source)
+##
+parameters = CoTETE.CoTETEParameters(
+    l_x = 1, l_y = 10, transform_to_uniform=false, k_global=4, num_surrogates=50, use_exclusion_windows=true,
+    auto_find_start_and_num_events=true, num_target_events=1000)
+TE = CoTETE.estimate_TE_from_event_times(parameters, target, source)
+# TE, p = CoTETE.estimate_TE_and_p_value_from_event_times(parameters, target, source)
+##
+f = Figure()
+ax = Axis(f[1,1])
+vlines!(ax, target; ymin=0.0, ymax=0.25)
+vlines!(ax, source; ymin=0.3, ymax=0.55)
+display(f)
+
+##
+source = sort(1e4*rand(Int(1e4)))
+target = sort(1e4*rand(Int(1e5)))
+target = thin_target(source, target, 10)
+TE = CoTETE.estimate_TE_from_event_times(CoTETE.CoTETEParameters(l_x = 1, l_y = 1), 100 .* target, 100 .* source)
+
+# Transfer entropy seems to change by OOM based on OOM of inputs. That doesn't make sense, it shouldn't change
+
+##
+dt = DataFrame()
+parameters = CoTETE.CoTETEParameters(l_x = 5, l_y = 5, transform_to_uniform=true, k_global=3)
+for gdf in groupby(df, :moth)
+    thismoth = gdf.moth[1]
+    for combo in combinations[thismoth]
+        target, source = gdf[gdf.unit .== combo[1], :abstime], gdf[gdf.unit .== combo[2], :abstime]
+        sort!(target)
+        sort!(source)
+        println("$(combo[1]), $(combo[2])")
+        if length(target) < 10 || length(source) < 10
+            continue
+        end
+        TE = CoTETE.estimate_TE_from_event_times(parameters, target, source)
+        dt = vcat(dt, DataFrame(
+            :moth => thismoth,
+            :muscle => combo[1],
+            :neuron => combo[2], 
+            # :p => p,
+            :TE => TE
+        ))
+    end
+end
 
 ## Histograms of muscle spike phase
 
@@ -171,8 +240,8 @@ for gdf in groupby(df, [:moth, :poke, :wb])
     end
 end
 # group by moth, poke, loop over (muscle, neuron) combinations, calculate precision and make a plot
-precFirst = Dict{Tuple{String, String, String}, Float64}()
-dt = DataFrame()
+precFirst = Dict{Tuple{String, String, String}, Array{Float64}}()
+# dt = DataFrame()
 for gdf in groupby(df, :moth)
     thismoth = gdf.moth[1]
     for combo in combinations[thismoth]
@@ -197,7 +266,7 @@ for gdf in groupby(df, :moth)
         end
         f = Figure()
         ax = Axis(f[1,1], xscale=log10, xlabel="Added noise amplitude (ms)", ylabel="MI (bits)")
-        precision_val = precision(X[:,1], Y;
+        precision_val, zero_noise_MI, sd = precision(X[:,1], Y;
             noise=exp10.(range(log10(0.05), stop=log10(100), length=200)),
             repeats=100,
             do_plot=true,
@@ -205,7 +274,7 @@ for gdf in groupby(df, :moth)
         )
         text!(ax, 0.2, 0.2, text="# wingbeats = $(size(X,1))", fontsize=24, space=:relative)
         text!(ax, 0.2, 0.1, text="dimensionality = $(size(X,2) + size(Y,2))", fontsize=24, space=:relative)
-        precFirst[(thismoth, combo[1], combo[2])] = precision_val
+        precFirst[(thismoth, combo[1], combo[2])] = [precision_val, zero_noise_MI, sd]
         ax.title = "Moth $thismoth, Muscle: $(combo[1]), Neuron: $(combo[2])"
         save(joinpath(figsdir, "precision_curves_only_first_muscle_spike", combo[1], join((thismoth, combo[1], combo[2]), "_") * ".png"), f)
     end
