@@ -1,0 +1,44 @@
+import numpy as np
+import os
+import csv
+
+
+phy_dirs = [
+    'dir1', 'dir2', 'dir2'
+]
+dir_start_times = [0, 34, 144]
+
+new_dir = 'newdir'
+
+# From each dir read files of interest, load, change timestamps, append to new files
+max_clust_name = 0
+new_cluster_group = []
+for i, dir in enumerate(phy_dirs):
+    spike_times = np.load(os.path.join(phy_dirs, 'spike_times.npy'))
+    spike_clusters = np.load(os.path.join(phy_dirs, 'spike_clusters.npy'))
+    # Modify
+    spike_times += dir_start_times[i] * 30000
+    clust_ids = np.unique(spike_clusters)
+    id_dict = {id : id + max_clust_name + 1 for id in clust_ids}
+    for id in clust_ids:
+        spike_clusters[spike_clusters == id] = id_dict[id]
+    with open(os.path.join(phy_dirs, 'cluster_group.tsv')) as file:
+        cluster_group = []
+        tsv_file = csv.reader(file, delimiter='\t')
+        next(tsv_file, None)
+        for line in tsv_file:
+            cluster_group.append([str(id_dict[int(line[0])]), line[1]])
+    # Save 
+    if i == 0:
+        new_spike_times = spike_times
+        new_spike_clusters = spike_clusters
+        new_cluster_group = [['cluster_id', 'group'], *cluster_group]
+    else:
+        new_spike_times = np.vstack((new_spike_times, spike_times))
+        new_spike_clusters = np.vstack((new_spike_clusters, spike_clusters))
+        new_cluster_group += cluster_group
+    max_clust_name = np.max(np.unique(spike_clusters))
+
+np.save(os.path.join(new_dir, 'spike_times.npy'), new_spike_times)
+np.save(os.path.join(new_dir, 'spike_clusters.npy'), new_spike_clusters)
+np.savetxt(os.path.join(new_dir, 'cluster_group.tsv'), new_cluster_group, delimiter='\t', fmt='%s')
