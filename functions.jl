@@ -233,7 +233,7 @@ function unwrap_spikes_to_next(time, phase, wb, wblen, muscle, ismuscle)
     return DataFrame(time=time, phase=phase, wb=wb, wblen=wblen)
 end
 function unwrap_spikes_to_prev(time, phase, wb, wblen, muscle, ismuscle)
-    wbi = group_indices(wb)
+    wbi = countmap(wb)
     # For each muscle
     for m in unique(muscle[ismuscle])
         threshold = phase_wrap_thresholds[m[2:end]]
@@ -272,10 +272,11 @@ end
 #---- Utility functions 
 """
 Utility function for quick finding of indices for all unique values
+Works exactly the same as StatsBase.countmap, probably best to just use that
 """
-function group_indices(vector)
-    indices_dict = Dict{Int, Vector{Int}}()
-    for (idx, value) in enumerate(vector)
+function group_indices(input::Vector)
+    indices_dict = Dict{eltype(input), Vector{eltype(input)}}()
+    for (idx, value) in enumerate(input)
         if haskey(indices_dict, value)
             push!(indices_dict[value], idx)
         else
@@ -332,7 +333,10 @@ function find_common_elements(vec1, vec2)
     return common
 end
 
-function max_count(vec)
+"""
+Find maximum length run of repeating elements in a vector
+"""
+function max_count(vec::Vector)
     max_count = 0
     current_count = 1
     for i in 2:length(vec)
