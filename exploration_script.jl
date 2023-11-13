@@ -1,10 +1,11 @@
 using Base.Threads: nthreads, @threads, @spawn
 using Base.Iterators: partition # Multithreading
 using Random        # Mainly just for randperm()
-using StatsBase     # Just for inverse_rle
+using StatsBase     # For inverse_rle, countmap
 using NPZ   # Read .npy files
 using JSON  # Read json formatted files, duh
-using JLD
+using JLD   # Read and write .jld files for saving dicts
+using CSV   # Read and write .csv files, mostly for saving dataframes
 using DelimitedFiles
 using Mmap
 using BSplineKit
@@ -16,7 +17,7 @@ using GLMakie
 using AlgebraOfGraphics
 using CausalityTools
 using BenchmarkTools
-# Special process for transfer entropy module
+# # Special process for transfer entropy module
 include("CoTETE.jl/src/CoTETE.jl")
 import .CoTETE
 
@@ -102,13 +103,13 @@ end
 
 bob = @subset(df, :moth .== "2023-05-25" .&& :poke .== 1)
 target = bob[bob.unit .== "rsa", :abstime]
-source = bob[bob.unit .== "0", :abstime]
-sort!(target)
-sort!(source)
+source = bob[bob.unit .== "2", :abstime]
+# sort!(target)
+# sort!(source)
 # target, source = convert.(Float64, target), convert.(Float64, source)
 ##
 parameters = CoTETE.CoTETEParameters(
-    l_x = 1, l_y = 10, transform_to_uniform=false, k_global=4, num_surrogates=50, use_exclusion_windows=true,
+    l_x = 1, l_y = 5, transform_to_uniform=false, k_global=4, num_surrogates=50, use_exclusion_windows=true,
     auto_find_start_and_num_events=true, num_target_events=1000)
 TE = CoTETE.estimate_TE_from_event_times(parameters, target, source)
 # TE, p = CoTETE.estimate_TE_and_p_value_from_event_times(parameters, target, source)
@@ -152,7 +153,6 @@ for gdf in groupby(df, :moth)
 end
 
 ## Histograms of muscle spike phase
-
 @pipe df |> 
     @subset(_, :ismuscle) |> 
     @subset(_, :phase .!= 0.0) |> 
@@ -167,6 +167,22 @@ end
         facet=(; linkxaxes=:colwise, linkyaxes=:none),
         axis=(; limits=(nothing, nothing))) #|> 
     # save(joinpath(figsdir, "muscle_phase_hist_with_1centered_unwrap.png"), _)
+current_figure()
+
+## Histograms of neuron spike phase/time
+@pipe df |> 
+    @subset(_, (!).(:ismuscle)) |> 
+    (
+    AlgebraOfGraphics.data(_) *
+    mapping(:phase, color=:moth, layout=:unit) *
+    histogram(bins=100, normalization=:pdf, datalimits=extrema) *
+    visual(alpha=0.6)
+    ) |> 
+    draw(_, 
+        figure=(resolution=(2000, 1800),),
+        facet=(; linkxaxes=:colwise, linkyaxes=:none),
+        axis=(; limits=(nothing, nothing))) |> 
+    save(joinpath(figsdir, "neuron_phase_hist.png"), _)
 current_figure()
 
 ## Dimensionality checking. 
@@ -226,47 +242,22 @@ current_figure()
 
 
 ##--- Calculate and plot precision for each (muscle, neuron) combination
-# Create list of all muscle, unit combinations for each moth
-combinations = Dict{String, Set}(moth => Set([]) for moth in unique(df.moth))
-for gdf in groupby(df, [:moth, :poke, :wb])
-    muscles = unique(gdf[gdf.ismuscle, :unit])
-    neurons = unique(gdf[(!).(gdf.ismuscle), :unit])
-    for combos in Base.product(muscles, neurons)
-        if combos[1] == combos[2]
-            continue
-        elseif !(combos in combinations[gdf.moth[1]])
-            push!(combinations[gdf.moth[1]], combos)
-        end
-    end
-end
 # group by moth, poke, loop over (muscle, neuron) combinations, calculate precision and make a plot
-precFirst = Dict{Tuple{String, String, String}, Array{Float64}}()
-# dt = DataFrame()
+precFirst = Dict{Tuple{String, String, String}, Dict{Symbol, Any}}()
+dt = DataFrame()
 for gdf in groupby(df, :moth)
     thismoth = gdf.moth[1]
     for combo in combinations[thismoth]
         println("Moth $thismoth, Muscle: $(combo[1]), Neuron: $(combo[2])")
         X, Y = XY_array_from_dataframe((combo[1], combo[2]), gdf.unit, gdf.time .* 1000, gdf.wb)
-        # # Figure out combinatorics, how many wingbeats match each combination
-        # nspikeX, nspikeY = vec(sum((!).(isnan.(X)), dims=2)), vec(sum((!).(isnan.(Y)), dims=2))
-        # nspike_combinations = unique(eachrow(hcat(nspikeX, nspikeY)))
-        # nwb = [sum((nspikeX .== comb[1]) .&& (nspikeY .== comb[2])) for comb in nspike_combinations]
-        # dt = vcat(dt, DataFrame(
-        #     :moth => thismoth,
-        #     :muscle => combo[1],
-        #     :neuron => combo[2], 
-        #     :nspike_muscle => [x[1] for x in nspike_combinations],
-        #     :nspike_neuron => [x[2] for x in nspike_combinations],
-        #     :nwb => nwb
-        # ))
-        # if size(X,1) <= (size(X,2) + size(Y,2))
-        if size(X,1) <= (1 + size(Y,2))
-            precFirst[(thismoth, combo[1], combo[2])] = 0.0
+        mask = (!).(isnan.(X[:,1]))
+        X, Y = X[mask, 1:1], Y[mask, :]
+        if size(X,1) <= (1 + size(Y,2)) .|| (size(X,1) < 100)
             continue
         end
         f = Figure()
         ax = Axis(f[1,1], xscale=log10, xlabel="Added noise amplitude (ms)", ylabel="MI (bits)")
-        precision_val, zero_noise_MI, sd = precision(X[:,1], Y;
+        precision_val, zero_noise_MI, sd, MI_curve = precision(X, Y;
             noise=exp10.(range(log10(0.05), stop=log10(100), length=200)),
             repeats=100,
             do_plot=true,
@@ -274,64 +265,74 @@ for gdf in groupby(df, :moth)
         )
         text!(ax, 0.2, 0.2, text="# wingbeats = $(size(X,1))", fontsize=24, space=:relative)
         text!(ax, 0.2, 0.1, text="dimensionality = $(size(X,2) + size(Y,2))", fontsize=24, space=:relative)
-        precFirst[(thismoth, combo[1], combo[2])] = [precision_val, zero_noise_MI, sd]
         ax.title = "Moth $thismoth, Muscle: $(combo[1]), Neuron: $(combo[2])"
-        save(joinpath(figsdir, "precision_curves_only_first_muscle_spike", combo[1], join((thismoth, combo[1], combo[2]), "_") * ".png"), f)
+        save(joinpath(figsdir, "precision_curves_only_first_new_sort", combo[1], join((thismoth, combo[1], combo[2]), "_") * ".png"), f)
+
+        precFirst[(thismoth, combo[1], combo[2])] = Dict(
+            :precision => precision_val,
+            :MI => zero_noise_MI,
+            :sd => sd,
+            :curve => MI_curve)
+        dt = vcat(dt, DataFrame(
+            :moth => thismoth,
+            :muscle => combo[1],
+            :neuron => combo[2],
+            :precision => precision_val,
+            :MI => zero_noise_MI,
+            :sd => sd,
+            :nwb => size(X,1),
+            :dims => size(X,2) + 1
+        ))
     end
 end
+
 # TODO: Better system that saves parameters I ran this under (like number of repeats)
-save(joinpath(analysis_dir, "precision_rough_first_pass_muscle_first_spike.jld"), "GOV", precFirst)
+save(joinpath(analysis_dir, "precision_muscle_first_spike.jld"), "GOV", precFirst)
+CSV.write(joinpath(analysis_dir, "precision_muscle_first_spike.csv"), dt)
 
-##
-f = Figure()
-ax = Axis(f[1,1], xlabel="Precision (ms)")
-vals = collect(values(prec))
-hist!(ax, vals[(!).(isnan.(vals))]; bins=100, normalization=:pdf)
-save(joinpath(figsdir, "precision_distribution.png"), f)
+## Distributions of zero-noise MI and precision values
+# dt = DataFrame()
+# for key in keys(precFirst)
+#     dt = vcat(dt, DataFrame(
+#         :moth => key[1],
+#         :muscle => key[2],
+#         :neuron => key[3],
+#         :precision => precFirst[key][1],
+#         :MI => precFirst[key][2],
+#         :sd => precFirst[key][3]
+#     ))
+# end
+
+dt = @pipe CSV.read(joinpath(analysis_dir, "precision_muscle_first_spike.csv"), DataFrame) |> 
+    @subset(_, :precision .!= 0.0) |> 
+    @subset(_, (!).(isnan.(:precision)) .|| :MI .!= 0.0) |> 
+    @subset(_, :precision .> 1) |> 
+    @transform(_, :moth = string.(:moth)) |> 
+    transform(_, :muscle =>  ByRow(s -> uppercase.(s[2:end])) => :muscle)
+
+f = Figure(resolution=(1000,800))
+axtop = Axis(f[1,1])
+axmain = Axis(f[2,1], xlabel="Mutual information (bits/ws)", ylabel="Precision (ms)")
+axright = Axis(f[2,2])
+linkyaxes!(axmain, axright)
+linkxaxes!(axmain, axtop)
+
+for gdf in groupby(dt, :moth)
+    scatter!(axmain, gdf.MI, gdf.precision, label=first(gdf.moth))
+    density!(axtop, gdf.MI)
+    density!(axright, gdf.precision, direction=:y)
+end
+leg = Legend(f[1,2], axmain)
+leg.tellheight = true
+hidedecorations!(axtop, grid=false)
+hidedecorations!(axright, grid=false)
+xlims!(axmain, low=0)
+ylims!(axmain, low=0)
+ylims!(axright, low=0)
+save(joinpath(figsdir, "precision_vs_MI.png"), f)
 current_figure()
 
-##
 
-f = Figure()
-ax = Axis(f[1,1])
-scatter!(ax, dt.nspike_muscle, dt.nwb)
-# ax.xlabel = "Muscle N spikes"
-# ax.ylabel = "Neuron N spikes"
-current_figure()
-##
-@pipe dt |> 
-    @transform(_, :nspike_muscle = :nspike_muscle .+ (0.5 .* rand(nrow(dt)) .- 0.25)) |> 
-    (AlgebraOfGraphics.data(_) * 
-    mapping(:nspike_muscle => "# of muscle spikes", :nwb => "# of wingbeats") * 
-    (histogram(bins=([x-0.5 for x in 1:9], 40)) +
-    visual(color=:black, markersize=7, alpha=0.2))) |> 
-    draw(_, 
-        axis=(; xticks=(1:8, [string(x) for x in 1:8]))) |> 
-    save(joinpath(figsdir, "Nmusclespikes_vs_Nwingbeats.png"), _)
-current_figure()
-@pipe dt |> 
-    @transform(_, :nspike_neuron = :nspike_neuron .+ (0.5 .* rand(nrow(dt)) .- 0.25)) |> 
-    (AlgebraOfGraphics.data(_) * 
-    mapping(:nspike_neuron => "# of neuron spikes", :nwb => "# of wingbeats") * 
-    (histogram(bins=([x-0.5 for x in 1:34], 40)) +
-    visual(color=:black, markersize=7, alpha=0.2))) |> 
-    draw(_,
-        figure=(resolution=(1700, 800),),
-        axis=(; xticks=(1:33, [string(x) for x in 1:33]))) |> 
-    save(joinpath(figsdir, "Nneuronspikes_vs_Nwingbeats.png"), _)
-current_figure()
-
-## Test area
-gdf = first(groupby(df, :moth))
-combo = first(combinations[gdf.moth[1]])
-X, Y = XY_array_from_dataframe((combo[1], combo[2]), gdf.unit, gdf.time, gdf.wb)
-
-nspikeX, nspikeY = vec(sum((!).(isnan.(X)), dims=2)), vec(sum((!).(isnan.(Y)), dims=2))
-nspike_combinations = unique(eachrow(hcat(nspikeX, nspikeY)))
-# nwb = [sum((nspikeX .== comb[1]) .&& (nspikeY .== comb[2])) for comb in nspike_combinations]
-# nspikeX, nspikeY = vec(sum((!).(isnan.(x)), dims=2)), vec(sum((!).(isnan.(y)), dims=2))
-nspike_combinations = unique(eachrow(hcat(nspikeX, nspikeY)))
-probs = Dict(combo => sum((nspikeX .== combo[1]) .&& (nspikeY .== combo[2])) for combo in nspike_combinations)
 
 ## Plot of precision curves, facet per muscle
 
