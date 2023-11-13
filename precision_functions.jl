@@ -30,6 +30,7 @@ end
 
 """
 repeat_corrupted_MI
+
 x - Array of spike times/phases, each row is a wingbeat or behavioral separator. NaNs expected for fill
 y - Array of output variables, likely PCs of body torque or force, each row is a wingbeat
 
@@ -265,7 +266,7 @@ function precision(x::Array{Float64}, y::Array{Float64};
             display(f)
         end
     end
-    return precision_level, zero_noise_MI, sd
+    return precision_level, zero_noise_MI, sd, meanMI
 end
 function precision_single(x::Array{Float64}, y::Array{Float64};
     noise::Vector{Float64}=exp10.(range(log10(0.05), stop=log10(6), length=120)),

@@ -233,7 +233,7 @@ function unwrap_spikes_to_next(time, phase, wb, wblen, muscle, ismuscle)
     return DataFrame(time=time, phase=phase, wb=wb, wblen=wblen)
 end
 function unwrap_spikes_to_prev(time, phase, wb, wblen, muscle, ismuscle)
-    wbi = countmap(wb)
+    wbi = group_indices(wb)
     # For each muscle
     for m in unique(muscle[ismuscle])
         threshold = phase_wrap_thresholds[m[2:end]]
@@ -274,7 +274,7 @@ end
 Utility function for quick finding of indices for all unique values
 Works exactly the same as StatsBase.countmap, probably best to just use that
 """
-function group_indices(input::Vector)
+function group_indices(input)
     indices_dict = Dict{eltype(input), Vector{eltype(input)}}()
     for (idx, value) in enumerate(input)
         if haskey(indices_dict, value)
