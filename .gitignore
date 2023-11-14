@@ -27,7 +27,8 @@ share/python-wheels/
 MANIFEST
 
 # Figure repositories
-*figs_
+*figs_dark/
+*figs_light/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
