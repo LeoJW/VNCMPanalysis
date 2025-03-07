@@ -690,7 +690,7 @@ function read_data_rhd(filenamestring;
     if read_aux
         datadict["aux_channels"] = auxinputchannels
         datadict["time_aux"] = tauxinput
-        datadict["aux"] = datapresent ? aux_input_data : nothing
+        datadict["aux"] = datapresent ? auxinputdata : nothing
     end
     # Supply voltage
     if read_supply_voltage && numsupplyvoltagechannels > 0
