@@ -1,14 +1,17 @@
+"""
+Version for pre-2025 motor program data. 
+Use split_motor_program_fullOpenEphys.py for all recordings taken using intan headstage for EMG
+"""
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import signal, io
 import os
 import shutil
+from scipy import signal, io
 from open_ephys.analysis import Session
 from functions import *
 
-
-# motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program')
-motor_program_dir = os.path.normpath('/Volumes/PikesPeak/Open Ephys/good_data')
+motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/pre_2025/motor_program')
+# motor_program_dir = os.path.normpath('/Volumes/PikesPeak/Open Ephys/good_data')
 
 # Controls
 overwrite_previous = True
