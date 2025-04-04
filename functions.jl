@@ -42,6 +42,33 @@ function get_amps_sort(path)
     return mat
 end
 
+# Function like read_phy_spikes, to read in motor program spikes and shift back to real times based on trial_start_times
+# Picks max experiment number if use_exp is negative (default)
+function read_mp_spikes(mp_dir::String; use_exp::Int = -1)
+    muscle_code = Dict(
+        0 => "lax", 1 => "lba", 2 => "lsa", 3 => "ldvm", 4 => "ldlm",
+        5 => "rdlm", 6 => "rdvm", 7 => "rsa", 8 => "rba", 9 => "rax")
+    amps_mat = get_amps_sort(mp_dir)
+    trial_start_times = readdlm(joinpath(mp_dir, "trial_start_times.txt"), ',', Any, '\n', header=true)[1]
+    exp_num = [parse(Int, split(x, "_")[2][end]) for x in trial_start_times[:,1]] .+ 1
+    if use_exp < 0
+        use_exp = maximum(exp_num)
+    end
+    trial_start_ind = Dict{Int, Int}(parse(Int, split(x[1], "_")[3][1:3]) => x[2] for x in eachrow(trial_start_times))
+    trials_in_this_experiment = findall(exp_num .== use_exp)
+    amps_trial_inds = vec(any(amps_mat[:,1] .== trials_in_this_experiment', dims=2))
+    mask = amps_trial_inds .&& (amps_mat[:,6] .== 1) # get spikes in this experiment also marked as valid
+    mp_spike_inds = Int.(amps_mat[mask,4])
+    # Shift spike indices by starting index of each trial, +1 because moving from 0-index python to 1-index julia
+    mp_spike_inds = mp_spike_inds .+ [trial_start_ind[x] for x in amps_mat[mask,1]] .+ 1
+    # Populate output dict
+    muscles = Dict{String, Vector{Int64}}()
+    for (muscle_int, muscle_name) in muscle_code
+        muscles[muscle_name] = mp_spike_inds[amps_mat[mask,2] .== muscle_int]
+    end
+    return muscles
+end
+
 # Function to read continuous stream(s?) from a given RecordNode/experiment/recording. Must pass in experiment folder!
 # TODO: Make more flexible (or make wrapper function) to catch being passed recording node, experiment, or top-level dir
 function read_binary_open_ephys(recording_folder)
@@ -192,8 +219,13 @@ function remove_duplicate_spikes!(neurons; exclusion_period_ms=1.0, fsamp=30000)
 end
 
 """
-TODO: Write documentation here lol
+unwrap_spikes
+Takes a set of columns, and "unwraps" spikes by assigning ones before or after a phase threshold
+to adjacent wingstrokes. This allows us to group muscle firing as bursts without discontinuities, 
+as bursts may overlap the arbitrary point at which we cut up wingstrokes and get separated
+
 Different from comparative version. 
+
 Moves everything to next wingbeat, so always generates negative phases instead of phase > 1.0
 NOTE: phase_wrap_thresholds currently used as a global variable
 """
@@ -217,10 +249,10 @@ function unwrap_spikes_to_next(time, phase, wb, wblen, muscle, ismuscle)
                 continue
             end
             inds = wbi[i][mi][inds]
-            # Get wblen to use for shifted spikes
             if haskey(wbi, i+1)
-                wblen[inds] .= first(wblen[wbi[i+1]])
+                # Order of these lines matters a lot! Time shift uses current wblen, but phase shift uses next
                 time[inds] .-= wblen[inds] # time = -(wblen - time)
+                wblen[inds] .= first(wblen[wbi[i+1]])
                 phase[inds] = time[inds] ./ wblen[inds]
                 wb[inds] .+= 1
             # If next wingbeat doesn't exist, mark to remove these spikes

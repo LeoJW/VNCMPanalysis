@@ -4,7 +4,7 @@ using Random        # Mainly just for randperm()
 using StatsBase     # For inverse_rle, countmap
 using NPZ   # Read .npy files
 using JSON  # Read json formatted files, duh
-using JLD   # Read and write .jld files for saving dicts
+# using JLD   # Read and write .jld files for saving dicts
 using CSV   # Read and write .csv files, mostly for saving dataframes
 using DelimitedFiles
 using Mmap
@@ -18,14 +18,16 @@ using AlgebraOfGraphics
 using CausalityTools
 using BenchmarkTools
 # # Special process for transfer entropy module
-include("CoTETE.jl/src/CoTETE.jl")
-import .CoTETE
+# include("CoTETE.jl/src/CoTETE.jl")
+# import .CoTETE
 
 moths = ["2023-05-20", "2023-05-25"]
 
 
-vnc_dir = "/Volumes/PikesPeak/VNCMP"
-motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
+# vnc_dir = "/Volumes/PikesPeak/VNCMP"
+# motor_program_dir = "/Volumes/PikesPeak/VNCMP/MP_data/good_data"
+vnc_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/"
+motor_program_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program"
 analysis_dir = @__DIR__
 
 # Constants everything should know (effectively global)
@@ -43,16 +45,19 @@ include("match_data.jl")
 
 ##
 
-df = vcat(
-    read_and_match_moth_data(
-        "/Volumes/PikesPeak/VNCMP/2023-05-25", 
-        "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05"),
-    read_and_match_moth_data(
-        "/Volumes/PikesPeak/VNCMP/2023-05-20", 
-        "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
-)
+# df = vcat(
+#     read_and_match_moth_data(
+#         "/Volumes/PikesPeak/VNCMP/2023-05-25", 
+#         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-25_12-24-05"),
+#     read_and_match_moth_data(
+#         "/Volumes/PikesPeak/VNCMP/2023-05-20", 
+#         "/Volumes/PikesPeak/VNCMP/MP_data/good_data/2023-05-20_15-36-35")
+# )
+df = read_and_match_moth_data(
+    "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2023-05-25",
+    "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/motor_program/2023-05-25_12-24-05")
 
-
+##
 # Post-processing
 df = @pipe df |> 
     @transform(_, :wbfreq = 1 ./ :wblen) |> 
@@ -102,17 +107,149 @@ end
 ## Try out transfer entropy
 
 bob = @subset(df, :moth .== "2023-05-25" .&& :poke .== 1)
-target = bob[bob.unit .== "rsa", :abstime]
-source = bob[bob.unit .== "2", :abstime]
-# sort!(target)
-# sort!(source)
-# target, source = convert.(Float64, target), convert.(Float64, source)
+target = bob[bob.unit .== "ldlm", :abstime]
+source = bob[bob.unit .== "18", :abstime]
+sort!(target)
+sort!(source)
+target, source = convert.(Float64, target), convert.(Float64, source)
+
+target = target[target .> source[1]]
+# target = target[vcat(diff(target), 0) .> 0.04]
+
+f = Figure()
+ax = Axis(f[1,1])
+vlines!(ax, source, ymin=-0.0, ymax=0.0)
+vlines!(ax, target, ymin=0.5, ymax=1.0)
+vlines!(ax, target .+ (0.005 .* rand(length(target))) .- 0.01, ymin=0.0, ymax=0.5)
+f
+
+## Van Rossum Metric; interesting stuff
+
+function spikedist(u, v, τ)
+    d = sum(exp(-abs(ui-uj)/τ) for ui in u for uj in u) +
+        sum(exp(-abs(vi-vj)/τ) for vi in v for vj in v) -
+        2 * sum(exp(-abs(ui-vi)/τ) for ui in u for vi in v)
+    return d
+end
+
 ##
+bob = @subset(df, :moth .== "2023-05-25" .&& :poke .== 2)
+s1 = bob[bob.unit .== "94", :abstime]
+s2 = bob[bob.unit .== "lba", :abstime]
+
+X = exp10.(range(log10(0.0001), stop=log10(0.1), length=20))
+dist = [spikedist(s1, s2, x) for x in X]
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+lines!(ax, X, dist)
+current_figure()
+
+println(X[findmin(dist)[2]])
+
+##
+bob = @subset(df, :moth .== "2023-05-25" .&& :poke .== 1)
+target = bob[bob.unit .== "lba", :abstime]
+source = bob[bob.unit .== "18", :abstime]
+sort!(target)
+sort!(source)
+target, source = convert.(Float64, target), convert.(Float64, source)
+
+include("CoTETE.jl/src/CoTETE.jl")
+import .CoTETE
 parameters = CoTETE.CoTETEParameters(
-    l_x = 1, l_y = 5, transform_to_uniform=false, k_global=4, num_surrogates=50, use_exclusion_windows=true,
-    auto_find_start_and_num_events=true, num_target_events=1000)
-TE = CoTETE.estimate_TE_from_event_times(parameters, target, source)
+            l_x = 3, l_y = 2,
+            transform_to_uniform=true, 
+            k_global=4,
+            num_surrogates=100, 
+            use_exclusion_windows=false,
+            add_dummy_exclusion_windows=false,
+            # sampling_method="jittered_target",
+            # jittered_sampling_noise=0.05,
+            # num_samples_ratio=4.0,
+            auto_find_start_and_num_events=true,
+            metric=Cityblock())
+CoTETE.estimate_TE_from_event_times(parameters, source, target)
+
+##
+xrange, yrange = 2:2:20, 2:2:20
+TE = zeros(length(xrange),length(yrange))
+for (i,lx) in enumerate(xrange)
+    for (j,ly) in enumerate(yrange)
+        parameters = CoTETE.CoTETEParameters(
+            l_x = lx, l_y = ly,
+            transform_to_uniform=false, 
+            k_global=4,
+            num_surrogates=100, 
+            use_exclusion_windows=false,
+            add_dummy_exclusion_windows=false,
+            # sampling_method="jittered_target",
+            # jittered_sampling_noise=0.05,
+            # num_samples_ratio=4.0,
+            auto_find_start_and_num_events=true,
+            metric=Euclidean())
+
+        bob = target .+ (0.005 .* rand(length(target))) .- 0.01
+        # target = target[vcat(diff(target), 0) .> 0.04]
+
+        TE[i,j] = CoTETE.estimate_TE_from_event_times(parameters, target, bob)
+    end
+end
+
+##
+fig, ax, hm = heatmap(xrange, yrange, TE)
+Colorbar(fig[:, end+1], hm)
+ax.xlabel = "Muscle embed length"
+ax.ylabel = "Fake muscle embed length"
+ax.title = ""
+fig
+
+# TE, p, TE_surrogate, locals = CoTETE.estimate_TE_and_p_value_from_event_times(parameters, target, source;
+#     return_surrogate_TE_values=true, return_locals=true)
+
+##
+
+muscles = unique(bob[bob.ismuscle, :unit])
+neurons = unique(bob[(!).(bob.ismuscle), :unit])
+parameters = CoTETE.CoTETEParameters(
+    l_x = 3, l_y = 3,
+    transform_to_uniform=false, 
+    k_global=4, 
+    num_surrogates=50, 
+    use_exclusion_windows=true,
+    num_samples_ratio=4.0,
+    auto_find_start_and_num_events=true,
+    num_target_events=1000)
+
+muscle_spikes = bob[bob.unit .== "rax", :abstime]
+nmTE = Dict{String, Float64}()
+mnTE = Dict{String, Float64}()
+for (i,n) in enumerate(neurons)
+    neuron_spikes = bob[bob.unit .== n, :abstime]
+    if length(neuron_spikes) < 100
+        continue
+    end
+    println(n)
+    # params, target, source
+    #muscle -> neuron
+    mnTE[n] = CoTETE.estimate_TE_from_event_times(parameters, neuron_spikes, muscle_spikes)
+    #neuron -> muscle
+    nmTE[n] = CoTETE.estimate_TE_from_event_times(parameters, muscle_spikes, neuron_spikes)
+    println("$(mnTE[n]) vs $(nmTE[n])")
+    if mnTE[n] > nmTE[n]
+        println("   More likely ascending?")
+    else
+        println("   More likely descending?")
+    end
+end
 # TE, p = CoTETE.estimate_TE_and_p_value_from_event_times(parameters, target, source)
+
+##
+f = Figure()
+ax = Axis(f[1,1])
+hm = heatmap!(ax, lxrange, lyrange, TE)
+Colorbar(f[:, end+1], hm)
+current_figure()
+
 ##
 f = Figure()
 ax = Axis(f[1,1])
@@ -121,36 +258,67 @@ vlines!(ax, source; ymin=0.3, ymax=0.55)
 display(f)
 
 ##
+function thin_target(source, target, target_rate)
+    start_index = 1
+    while target[start_index] < source[1]
+         start_index += 1
+    end
+    target = target[start_index:end]
+    new_target = Float64[]
+    index_of_last_source = 1
+    for event in target
+        while index_of_last_source < length(source) && source[index_of_last_source + 1] < event
+                 index_of_last_source += 1
+        end
+        distance_to_last_source = event - source[index_of_last_source]
+        lambda = 0.5 + 5exp(-50(distance_to_last_source - 0.5)^2) - 5exp(-50(-0.5)^2)
+        if rand() < lambda/target_rate
+              push!(new_target, event)
+        end
+    end
+    return new_target
+end
+
 source = sort(1e4*rand(Int(1e4)))
 target = sort(1e4*rand(Int(1e5)))
+# append!(target, sort(1e4*rand(Int(1e4))))
+# sort!(target)
 target = thin_target(source, target, 10)
-TE = CoTETE.estimate_TE_from_event_times(CoTETE.CoTETEParameters(l_x = 1, l_y = 1), 100 .* target, 100 .* source)
+TE = CoTETE.estimate_TE_from_event_times(CoTETE.CoTETEParameters(l_x = 3, l_y = 3), target, source)
 
-# Transfer entropy seems to change by OOM based on OOM of inputs. That doesn't make sense, it shouldn't change
 
 ##
 dt = DataFrame()
-parameters = CoTETE.CoTETEParameters(l_x = 5, l_y = 5, transform_to_uniform=true, k_global=3)
+parameters = CoTETE.CoTETEParameters(
+    l_x = 5, l_y = 5,
+    transform_to_uniform=false,
+    k_global=3,
+    num_surrogates=50)
 for gdf in groupby(df, :moth)
     thismoth = gdf.moth[1]
+    println("Moth : $(thismoth)")
     for combo in combinations[thismoth]
         target, source = gdf[gdf.unit .== combo[1], :abstime], gdf[gdf.unit .== combo[2], :abstime]
         sort!(target)
         sort!(source)
         println("$(combo[1]), $(combo[2])")
-        if length(target) < 10 || length(source) < 10
+        if length(target) < 50 || length(source) < 50
             continue
         end
-        TE = CoTETE.estimate_TE_from_event_times(parameters, target, source)
+        TEnm = CoTETE.estimate_TE_from_event_times(parameters, target, source)
+        TEmn = CoTETE.estimate_TE_from_event_times(parameters, source, target)
         dt = vcat(dt, DataFrame(
             :moth => thismoth,
             :muscle => combo[1],
             :neuron => combo[2], 
             # :p => p,
-            :TE => TE
+            :TEnm => TEnm
+            :TEmn => TEmn,
         ))
     end
 end
+
+@transform!(dt, :MI = :TEmn + :TEnm)
 
 ## Histograms of muscle spike phase
 @pipe df |> 
@@ -170,19 +338,29 @@ end
 current_figure()
 
 ## Histograms of neuron spike phase/time
-@pipe df |> 
+dplot = @pipe df |> 
     @subset(_, (!).(:ismuscle)) |> 
+    @transform(_, :unit = ifelse.(:moth .== "2023-05-20", :unit .* "a", :unit .* "b")) |> 
+    groupby(_, :unit) |> 
+    transform(_, nrow => :nwb) |> 
+    @subset(_, :nwb .> 100)
+n_units = length(unique(dplot.unit))
+n_row = 3
+@pipe dplot |> 
     (
     AlgebraOfGraphics.data(_) *
-    mapping(:phase, color=:moth, layout=:unit) *
+    mapping(:phase => "Neuron spike phase (a.u.)", layout=:unit) *
     histogram(bins=100, normalization=:pdf, datalimits=extrema) *
     visual(alpha=0.6)
     ) |> 
     draw(_, 
-        figure=(resolution=(2000, 1800),),
+        figure=(resolution=(2000, 900),),
+        palettes=(layout=vec([(r, c) for r in 1:n_row, c in 1:ceil(Int, n_units/n_row)]),),
         facet=(; linkxaxes=:colwise, linkyaxes=:none),
-        axis=(; limits=(nothing, nothing))) |> 
-    save(joinpath(figsdir, "neuron_phase_hist.png"), _)
+        axis=(; limits=(nothing, nothing), 
+            xticks=([0, 0.5, 1.0], ["0", "0.5", "1"]),
+            ygridvisible=false, yticklabelsvisible=false, yticksvisible=false, ylabel="")) #|> 
+    # save(joinpath(figsdir, "neuron_phase_hist.png"), _)
 current_figure()
 
 ## Dimensionality checking. 
@@ -290,46 +468,74 @@ end
 save(joinpath(analysis_dir, "precision_muscle_first_spike.jld"), "GOV", precFirst)
 CSV.write(joinpath(analysis_dir, "precision_muscle_first_spike.csv"), dt)
 
+## Precision for just phasic neurons
+dt = @pipe CSV.read(joinpath(analysis_dir, "precision_muscle_first_spike.csv"), DataFrame) |> 
+    @subset(_, :precision .!= 0.0) |> 
+    @subset(_, (!).(isnan.(:precision)) .|| :MI .!= 0.0) |> 
+    @subset(_, :precision .> 1) |> 
+    @transform(_, :moth = string.(:moth)) |> 
+    @subset(_, :neuron .== 13 .|| :neuron .== 94 .|| :neuron .== 97) |> 
+    @subset(_, :precision .< 50)
+
+f = Figure(resolution=(1000,800))
+ax = Axis(f[1,1], xlabel="Precision (ms)")
+color_dict = Dict(unq => Makie.wong_colors()[i] for (i,unq) in enumerate(unique(dt.neuron)))
+hist!(ax, dt.precision, normalization=:probability)
+scatter!(ax, dt.precision, rand(length(dt.precision)) .* 0.05 .- 0.07, color=[color_dict[x] for x in dt.neuron])
+xlims!(ax, low=0, high=50)
+hideydecorations!(ax)
+save(joinpath(figsdir, "precision_distribution_phasic_only.png"), f)
+current_figure()
+
 ## Distributions of zero-noise MI and precision values
-# dt = DataFrame()
-# for key in keys(precFirst)
-#     dt = vcat(dt, DataFrame(
-#         :moth => key[1],
-#         :muscle => key[2],
-#         :neuron => key[3],
-#         :precision => precFirst[key][1],
-#         :MI => precFirst[key][2],
-#         :sd => precFirst[key][3]
-#     ))
-# end
+
+"""
+Not NaN but still remove:
+05-25, lax, 18
+05-25, lax, 25
+"""
+good_neurons = @pipe df |> 
+    @subset(_, (!).(:ismuscle) .&& :quality .== "good") |> 
+    unique(_.unit) |> 
+    parse.(Int, _)
 
 dt = @pipe CSV.read(joinpath(analysis_dir, "precision_muscle_first_spike.csv"), DataFrame) |> 
     @subset(_, :precision .!= 0.0) |> 
     @subset(_, (!).(isnan.(:precision)) .|| :MI .!= 0.0) |> 
     @subset(_, :precision .> 1) |> 
     @transform(_, :moth = string.(:moth)) |> 
-    transform(_, :muscle =>  ByRow(s -> uppercase.(s[2:end])) => :muscle)
+    # transform(_, :muscle =>  ByRow(s -> uppercase.(s[2:end])) => :muscle) |> 
+    transform(_, :neuron => ByRow(x -> x in good_neurons ? "good" : "mua") => :quality)
 
 f = Figure(resolution=(1000,800))
 axtop = Axis(f[1,1])
-axmain = Axis(f[2,1], xlabel="Mutual information (bits/ws)", ylabel="Precision (ms)")
-axright = Axis(f[2,2])
+axmain = Axis(f[2,1], xlabel="Mutual information (bits/ws)", ylabel="Precision (ms)", 
+    yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+    yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10))
+axright = Axis(f[2,2], yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+    yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10))
 linkyaxes!(axmain, axright)
 linkxaxes!(axmain, axtop)
 
 for gdf in groupby(dt, :moth)
     scatter!(axmain, gdf.MI, gdf.precision, label=first(gdf.moth))
-    density!(axtop, gdf.MI)
-    density!(axright, gdf.precision, direction=:y)
+    # density!(axtop, gdf.MI)
+    # density!(axright, gdf.precision, direction=:y)
+    # hist!(axright, gdf.precision, direction=:x, 
+    #     bins=exp10.(range(log10(1), stop=log10(100), length=40)), normalization=:density)
 end
+density!(axtop, dt.MI)
+density!(axright, dt.precision, direction=:y)
 leg = Legend(f[1,2], axmain)
 leg.tellheight = true
-hidedecorations!(axtop, grid=false)
-hidedecorations!(axright, grid=false)
+hideydecorations!(axtop)
+hidexdecorations!(axtop, grid=false, minorgrid=false, ticks=false, minorticks=false)
+hidexdecorations!(axright)
+hideydecorations!(axright, grid=false, minorgrid=false, ticks=false, minorticks=false)
 xlims!(axmain, low=0)
 ylims!(axmain, low=0)
 ylims!(axright, low=0)
-save(joinpath(figsdir, "precision_vs_MI.png"), f)
+# save(joinpath(figsdir, "precision_vs_MI_logScalePrecision.png"), f)
 current_figure()
 
 
@@ -380,6 +586,7 @@ end
 ## Wingbeat frequency plot
 
 @pipe df |> 
+    @subset(_, :wbfreq .> 2) |> 
     (
     AlgebraOfGraphics.data(_) *
     mapping(:wbfreq => "Wingbeat Frequency (Hz)", color=:moth => "Moth") * 
@@ -387,8 +594,9 @@ end
     visual(alpha=0.5)
     ) |> 
     draw(_,
-        figure=(resolution=(1600, 800),)) |> 
-    save(joinpath(figsdir, "wingbeat_frequency.png"), _)
+        figure=(resolution=(1500, 900),),
+        axis=(; limits=((0, 20), (0, nothing)), ylabel="Probability density")) |> 
+    save(joinpath(figsdir, "wingbeat_frequency_all.png"), _)
 current_figure()
 
 ##
