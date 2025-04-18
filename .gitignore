@@ -1,3 +1,7 @@
+# Project-specific stuff
+data_for_python/
+VNCMP-Leo-2025-04-02/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
