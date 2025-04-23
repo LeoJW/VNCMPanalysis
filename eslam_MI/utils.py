@@ -63,12 +63,12 @@ def linear_mut_info(x, y, threshold=1e-10):
 
 
 class Dataset(torch.utils.data.Dataset):
-  def __init__(self, X, Y):
+    def __init__(self, X, Y):
         self.X = X
         self.Y = Y
-  def __len__(self):
+    def __len__(self):
         return len(self.X)
-  def __getitem__(self, index):
+    def __getitem__(self, index):
         return self.X[index], self.Y[index]
 
 
@@ -216,11 +216,11 @@ class decoder_INFO(nn.Module):
 
     def forward(self, dataZX, dataZY, batch_size=None):
         return estimate_mutual_information(self.estimator, dataZX, dataZY,
-                                           lambda x, y: self.critic_fn(x, y, batch_size),
-                                           baseline_fn=self.baseline_fn)
+                                        lambda x, y: self.critic_fn(x, y, batch_size),
+                                        baseline_fn=self.baseline_fn)
 
 def write_config(args):
-  out_fn = "config.json"
-  out_fp = os.path.join(args.save_dir, out_fn)
-  with open(out_fp, 'w') as fh:
-    json.dump(vars(args), fh)
+    out_fn = "config.json"
+    out_fp = os.path.join(args.save_dir, out_fn)
+    with open(out_fp, 'w') as fh:
+        json.dump(vars(args), fh)
