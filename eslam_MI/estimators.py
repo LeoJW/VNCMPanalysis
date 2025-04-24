@@ -176,18 +176,18 @@ def smile_lower_bound(f, clip=None):
 def estimate_mutual_information(estimator, x, y, critic_fn, baseline_fn=None):
     """Estimate variational lower bounds on mutual information.
 
-  Args:
+    Args:
     estimator: string specifying estimator, one of:
-      'nwj', 'infonce', 'tuba', 'js', 'interpolated'
+        'nwj', 'infonce', 'tuba', 'js', 'interpolated'
     x: [batch_size, dim_x] Tensor
     y: [batch_size, dim_y] Tensor
     critic_fn: callable that takes x and y as input and outputs critic scores
-      output shape is a [batch_size, batch_size] matrix
+        output shape is a [batch_size, batch_size] matrix
     baseline_fn (optional): callable that takes y as input 
-      outputs a [batch_size]  or [batch_size, 1] vector
+        outputs a [batch_size]  or [batch_size, 1] vector
     alpha_logit (optional): logit(alpha) for interpolated bound, equivalent to momentum
 
-  Returns:
+    Returns:
     scalar estimate of mutual information
     """
     x = x.to(device)
