@@ -46,17 +46,15 @@ if __name__ == '__main__':
     print("Neuron Labels:", x_labels)
     print("Muscle Labels:", y_labels)
 
-    # Optimizer parameters (for training)
-    opt_params = {
+    params = {
+        # Optimizer parameters (for training)
         'epochs': 100,
         'batch_size': 128,
         'learning_rate': 5e-4,
         'n_trials': 2,
         'patience': 50,
-        'min_delta': 0.001
-    }
-    # Critic parameters for DSIB or DVSIB (for the estimator), except embed_dim, which changes with training
-    critic_params = {
+        'min_delta': 0.001,
+        # Critic parameters for DSIB or DVSIB (for the estimator), except embed_dim, which changes with training
         'Nx': X.shape[0],
         'Ny': Y.shape[0],
         'layers': 2,
@@ -64,13 +62,13 @@ if __name__ == '__main__':
         'activation': 'leaky_relu',
         'beta': 512,
         'max_dz': 10, # max value for embed_dim that we search for
-        'estimator': 'infonce', # Estimator: infonce or smile_5. See esitmators.py for all options
+        'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep' # Almost always we'll use separable
     }
 
     # Make dataset into tensors
     X, Y = torch.tensor(X, dtype=torch.float32), torch.tensor(Y, dtype=torch.float32)
-    dataset = BatchedDataset(X, Y, opt_params['batch_size'])
+    dataset = BatchedDataset(X, Y, params['batch_size'])
     full_dataset = create_train_test_eval(dataset, train_fraction=0.95, device=device)
 
     torch.cuda.empty_cache()
@@ -78,8 +76,8 @@ if __name__ == '__main__':
     # First do a vanilla run to get calibrated
     print('-------------- Vanilla run -------------')
     start = time.time()
-    this_critic_params = {**critic_params, 'embed_dim': 1} # Choose dz
-    mis, mis_test = train_model(DSIB, full_dataset, opt_params, this_critic_params)
+    this_params = {**params, 'embed_dim': 1} # Choose dz
+    mis, mis_test = train_model(DSIB, full_dataset, this_params)
     print(time.time() - start)
     # torch.cuda.empty_cache()
 
