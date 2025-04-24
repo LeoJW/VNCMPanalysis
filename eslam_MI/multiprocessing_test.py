@@ -69,7 +69,7 @@ if __name__ == '__main__':
     # Make dataset into tensors
     X, Y = torch.tensor(X, dtype=torch.float32), torch.tensor(Y, dtype=torch.float32)
     dataset = BatchedDataset(X, Y, params['batch_size'])
-    full_dataset = create_train_test_eval(dataset, train_fraction=0.95, device=device)
+    full_dataset = create_data_split(dataset, train_fraction=0.95, device=device)
 
     torch.cuda.empty_cache()
 

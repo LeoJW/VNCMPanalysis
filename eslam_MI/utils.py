@@ -206,9 +206,11 @@ class decoder_INFO(nn.Module):
             raise ValueError("Invalid mode. Choose 'sep', 'bi', or 'concat'.")
 
     def forward(self, dataZX, dataZY, batch_size=None):
-        return estimate_mutual_information(self.estimator, dataZX, dataZY,
-                                        lambda x, y: self.critic_fn(x, y, batch_size),
-                                        baseline_fn=self.baseline_fn)
+        return estimate_mutual_information(
+            self.estimator, dataZX, dataZY,
+            lambda x, y: self.critic_fn(x, y, batch_size),
+            baseline_fn=self.baseline_fn
+        )
 
 def write_config(args):
     out_fn = "config.json"
@@ -255,10 +257,10 @@ class BatchedDataset(Dataset):
         indices = torch.concat([self.batch_indices[idx] for idx in idxlist])
         return self.X[:, indices], self.Y[:, indices]
 
-def create_train_test_eval(dataset, train_fraction=0.95, eval_fraction=None, device=None):
+
+def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_from_train=True, device=None):
     """
-    Creates train loader and test/eval data views without concatenation.
-    
+    Creates train loader and test/eval data views
     Args:
         dataset (FullAndBatchedDataset): The dataset containing all data
         train_fraction (float): Fraction of batches to use for training
@@ -267,17 +269,19 @@ def create_train_test_eval(dataset, train_fraction=0.95, eval_fraction=None, dev
     Returns:
         tuple: (train_loader, test_data, eval_data)
     """
-    # Generate train/test and eval splits
+    # Generate train/test splits
     train_size = int(train_fraction * len(dataset.batch_indices))
-    if eval_fraction is None:
-        eval_size = int((1 - train_fraction) * len(dataset.batch_indices))
-    else:
-        eval_size = int(eval_fraction * len(dataset.batch_indices))
     # Create train/test/eval indices, separate eval set with different random indices
     traintest_indices = torch.randperm(len(dataset.batch_indices))
     train_indices = traintest_indices[:train_size]
     test_indices = traintest_indices[train_size:]
-    eval_indices = torch.randperm(len(dataset.batch_indices))[eval_size:]
+    # Generate eval split, either from train subset or independently
+    eval_fraction = (1 - train_fraction) if eval_fraction is None else eval_fraction
+    eval_size = int(eval_fraction * len(dataset.batch_indices))
+    if eval_from_train:
+        eval_indices = traintest_indices[:eval_size]
+    else:
+        eval_indices = torch.randperm(len(dataset.batch_indices))[:eval_size]
     # Create training data loader, send test and eval to device
     train_loader = DataLoader(
         dataset,

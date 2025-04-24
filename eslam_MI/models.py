@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from utils import *
+from estimators import *
 
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
@@ -43,6 +44,15 @@ class DSIB(nn.Module):
 
     def forward(self, dataX, dataY):
         batch_size = dataX.shape[0]  # Dynamically infer batch size
+        # Chunked version of sep infonce inference, if asked
+        if (self.params['chunk_size'] < batch_size and 
+            self.params['chunked_inference'] and 
+            self.params['mode'] == 'sep' and 
+            self.params['estimator'] == 'infonce'):
+            lossGout = estimate_full_mutual_information_infonce(self, dataX, dataY, chunk_size=self.params['chunk_size'])
+            loss = -lossGout
+            return loss
+
         if self.params['mode'] in ["sep", "bi"]:
             zX = self.encoder_x(dataX)
             zY = self.encoder_y(dataY)
