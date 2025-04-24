@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
 from estimators import estimate_mutual_information
 import os
 import json
@@ -62,14 +63,83 @@ def linear_mut_info(x, y, threshold=1e-10):
         return np.nan
 
 
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, X, Y):
+class BatchedDataset(Dataset):
+    """
+    Dataset that supports both batch-wise and full data access.
+    Maintains only one copy of data in memory, supposedly
+    """
+    def __init__(self, X, Y, batch_size):
+        """
+        Args:
+            X (torch.Tensor): First time series data of shape [M_x, N]
+            Y (torch.Tensor): Second time series data of shape [M_y, N]
+            batch_size (int): Size of each batch
+        """
         self.X = X
         self.Y = Y
+        self.batch_size = batch_size
+        # Create batch indices
+        self.all_indices = torch.arange(X.shape[1])
+        self.total_columns = X.shape[1]
+        self.total_batches = (self.total_columns + batch_size - 1) // batch_size
+        # Pre-compute valid batch indices (those with non-zero X and Y)
+        self.batch_indices = []
+        for i in range(self.total_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, self.total_columns)
+            batch_inds = self.all_indices[start_idx:end_idx]
+            if torch.any(X[:, batch_inds] > 0) and torch.any(Y[:, batch_inds] > 0):
+                self.batch_indices.append(batch_inds)
     def __len__(self):
-        return len(self.X)
-    def __getitem__(self, index):
-        return self.X[index], self.Y[index]
+        return len(self.batch_indices)
+    def __getitem__(self, idx):
+        """Return a batch at the specified batch index."""
+        indices = self.batch_indices[idx]
+        return self.X[:, indices], self.Y[:, indices]
+    def get_multibatch(self, idxlist):
+        """Return a list of batch indices as one vector"""
+        indices = torch.concat([self.batch_indices[idx] for idx in idxlist])
+        return self.X[:, indices], self.Y[:, indices]
+
+def create_train_test_eval(dataset, train_fraction=0.95, eval_fraction=None, device=None):
+    """
+    Creates train loader and test/eval data views without concatenation.
+    
+    Args:
+        dataset (FullAndBatchedDataset): The dataset containing all data
+        train_fraction (float): Fraction of batches to use for training
+        device (torch.device): Device to move test/eval data to
+        
+    Returns:
+        tuple: (train_loader, test_data, eval_data)
+    """
+    # Generate train/test and eval splits
+    train_size = int(train_fraction * len(dataset.batch_indices))
+    if eval_fraction is None:
+        eval_size = int((1 - train_fraction) * len(dataset.batch_indices))
+    else:
+        eval_size = int(eval_fraction * len(dataset.batch_indices))
+    # Create train/test/eval indices, separate eval set with different random indices
+    traintest_indices = torch.randperm(len(dataset.batch_indices))
+    train_indices = traintest_indices[:train_size]
+    test_indices = traintest_indices[train_size:]
+    eval_indices = torch.randperm(len(dataset.batch_indices))[eval_size:]
+    # Create training data loader, send test and eval to device
+    train_loader = DataLoader(
+        dataset,
+        sampler=train_indices,
+        num_workers=0  # Adjust based on your system
+    )
+    # Get test and eval data as views. Batches are sorted to be presented in real data order
+    test_X, test_Y = dataset.get_multibatch(test_indices.sort()[0])
+    eval_X, eval_Y = dataset.get_multibatch(eval_indices.sort()[0])
+    # Move test and eval data to device if specified
+    if device is not None:
+        test_X = test_X.T.to(device)
+        test_Y = test_Y.T.to(device)
+        eval_X = eval_X.T.to(device)
+        eval_Y = eval_Y.T.to(device)
+    return train_loader, (test_X, test_Y), (eval_X, eval_Y)
 
 
 class mlp(nn.Module):
