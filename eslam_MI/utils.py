@@ -63,85 +63,6 @@ def linear_mut_info(x, y, threshold=1e-10):
         return np.nan
 
 
-class BatchedDataset(Dataset):
-    """
-    Dataset that supports both batch-wise and full data access.
-    Maintains only one copy of data in memory, supposedly
-    """
-    def __init__(self, X, Y, batch_size):
-        """
-        Args:
-            X (torch.Tensor): First time series data of shape [M_x, N]
-            Y (torch.Tensor): Second time series data of shape [M_y, N]
-            batch_size (int): Size of each batch
-        """
-        self.X = X
-        self.Y = Y
-        self.batch_size = batch_size
-        # Create batch indices
-        self.all_indices = torch.arange(X.shape[1])
-        self.total_columns = X.shape[1]
-        self.total_batches = (self.total_columns + batch_size - 1) // batch_size
-        # Pre-compute valid batch indices (those with non-zero X and Y)
-        self.batch_indices = []
-        for i in range(self.total_batches):
-            start_idx = i * batch_size
-            end_idx = min(start_idx + batch_size, self.total_columns)
-            batch_inds = self.all_indices[start_idx:end_idx]
-            if torch.any(X[:, batch_inds] > 0) and torch.any(Y[:, batch_inds] > 0):
-                self.batch_indices.append(batch_inds)
-    def __len__(self):
-        return len(self.batch_indices)
-    def __getitem__(self, idx):
-        """Return a batch at the specified batch index."""
-        indices = self.batch_indices[idx]
-        return self.X[:, indices], self.Y[:, indices]
-    def get_multibatch(self, idxlist):
-        """Return a list of batch indices as one vector"""
-        indices = torch.concat([self.batch_indices[idx] for idx in idxlist])
-        return self.X[:, indices], self.Y[:, indices]
-
-def create_train_test_eval(dataset, train_fraction=0.95, eval_fraction=None, device=None):
-    """
-    Creates train loader and test/eval data views without concatenation.
-    
-    Args:
-        dataset (FullAndBatchedDataset): The dataset containing all data
-        train_fraction (float): Fraction of batches to use for training
-        device (torch.device): Device to move test/eval data to
-        
-    Returns:
-        tuple: (train_loader, test_data, eval_data)
-    """
-    # Generate train/test and eval splits
-    train_size = int(train_fraction * len(dataset.batch_indices))
-    if eval_fraction is None:
-        eval_size = int((1 - train_fraction) * len(dataset.batch_indices))
-    else:
-        eval_size = int(eval_fraction * len(dataset.batch_indices))
-    # Create train/test/eval indices, separate eval set with different random indices
-    traintest_indices = torch.randperm(len(dataset.batch_indices))
-    train_indices = traintest_indices[:train_size]
-    test_indices = traintest_indices[train_size:]
-    eval_indices = torch.randperm(len(dataset.batch_indices))[eval_size:]
-    # Create training data loader, send test and eval to device
-    train_loader = DataLoader(
-        dataset,
-        sampler=train_indices,
-        num_workers=0  # Adjust based on your system
-    )
-    # Get test and eval data as views. Batches are sorted to be presented in real data order
-    test_X, test_Y = dataset.get_multibatch(test_indices.sort()[0])
-    eval_X, eval_Y = dataset.get_multibatch(eval_indices.sort()[0])
-    # Move test and eval data to device if specified
-    if device is not None:
-        test_X = test_X.T.to(device)
-        test_Y = test_Y.T.to(device)
-        eval_X = eval_X.T.to(device)
-        eval_Y = eval_Y.T.to(device)
-    return train_loader, (test_X, test_Y), (eval_X, eval_Y)
-
-
 class mlp(nn.Module):
     def __init__(self, dim, hidden_dim, output_dim, layers, activation):
         """Create an mlp from the configurations."""
@@ -294,3 +215,164 @@ def write_config(args):
     out_fp = os.path.join(args.save_dir, out_fn)
     with open(out_fp, 'w') as fh:
         json.dump(vars(args), fh)
+
+
+class BatchedDataset(Dataset):
+    """
+    Dataset that supports both batch-wise and full data access.
+    Maintains only one copy of data in memory, supposedly
+    """
+    def __init__(self, X, Y, batch_size):
+        """
+        Args:
+            X (torch.Tensor): First time series data of shape [M_x, N]
+            Y (torch.Tensor): Second time series data of shape [M_y, N]
+            batch_size (int): Size of each batch
+        """
+        self.X = X
+        self.Y = Y
+        self.batch_size = batch_size
+        # Create batch indices
+        self.all_indices = torch.arange(X.shape[1])
+        self.total_columns = X.shape[1]
+        self.total_batches = (self.total_columns + batch_size - 1) // batch_size
+        # Pre-compute valid batch indices (those with non-zero X and Y)
+        self.batch_indices = []
+        for i in range(self.total_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, self.total_columns)
+            batch_inds = self.all_indices[start_idx:end_idx]
+            if torch.any(X[:, batch_inds] > 0) and torch.any(Y[:, batch_inds] > 0):
+                self.batch_indices.append(batch_inds)
+    def __len__(self):
+        return len(self.batch_indices)
+    def __getitem__(self, idx):
+        """Return a batch at the specified batch index."""
+        indices = self.batch_indices[idx]
+        return self.X[:, indices], self.Y[:, indices]
+    def get_multibatch(self, idxlist):
+        """Return a list of batch indices as one vector"""
+        indices = torch.concat([self.batch_indices[idx] for idx in idxlist])
+        return self.X[:, indices], self.Y[:, indices]
+
+def create_train_test_eval(dataset, train_fraction=0.95, eval_fraction=None, device=None):
+    """
+    Creates train loader and test/eval data views without concatenation.
+    
+    Args:
+        dataset (FullAndBatchedDataset): The dataset containing all data
+        train_fraction (float): Fraction of batches to use for training
+        device (torch.device): Device to move test/eval data to
+        
+    Returns:
+        tuple: (train_loader, test_data, eval_data)
+    """
+    # Generate train/test and eval splits
+    train_size = int(train_fraction * len(dataset.batch_indices))
+    if eval_fraction is None:
+        eval_size = int((1 - train_fraction) * len(dataset.batch_indices))
+    else:
+        eval_size = int(eval_fraction * len(dataset.batch_indices))
+    # Create train/test/eval indices, separate eval set with different random indices
+    traintest_indices = torch.randperm(len(dataset.batch_indices))
+    train_indices = traintest_indices[:train_size]
+    test_indices = traintest_indices[train_size:]
+    eval_indices = torch.randperm(len(dataset.batch_indices))[eval_size:]
+    # Create training data loader, send test and eval to device
+    train_loader = DataLoader(
+        dataset,
+        sampler=train_indices,
+        num_workers=0  # Adjust based on your system
+    )
+    # Get test and eval data as views. Batches are sorted to be presented in real data order
+    test_X, test_Y = dataset.get_multibatch(test_indices.sort()[0])
+    eval_X, eval_Y = dataset.get_multibatch(eval_indices.sort()[0])
+    # Transpose test and eval data
+    test_X, test_Y, eval_X, eval_Y = test_X.T, test_Y.T, eval_X.T, eval_Y.T
+    # Move test and eval data to device if specified
+    if device is not None:
+        test_X = test_X.to(device)
+        test_Y = test_Y.to(device)
+        eval_X = eval_X.to(device)
+        eval_Y = eval_Y.to(device)
+    return train_loader, (test_X, test_Y), (eval_X, eval_Y)
+
+
+# Read neuron and muscle data for one moth, return X and Y with specific binning
+def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000):
+    """
+    Processes spike data from a .npz file into neural (X) and muscle (Y) activity tensors.
+    
+    Parameters:
+        base_name (str): Base name of the files (e.g., '2025-03-21').
+            The function will look for '_data.npz' and '_labels.npz'.
+        bin_size (float, optional): Bin size in seconds. If None, returns raw spikes.
+        neuron_label_filter (str, optional): Filter neurons by label (e.g., "good").
+            Only used if a labels file is present.
+        sample_rate (float, 30000 Hz by default): The sampling rate for the data
+        
+    Returns:
+        X (numpy.ndarray): Neural activity tensor of shape (num_neurons, num_time_points).
+        Y (numpy.ndarray): Muscle activity tensor of shape (num_muscles, num_time_points).
+        neuron_labels (list): List of neuron labels corresponding to rows in X.
+        muscle_labels (list): List of muscle labels corresponding to rows in Y.
+    """
+    # Construct file paths
+    data_file = f"{base_name}_data.npz"
+    labels_file = f"{base_name}_labels.npz"
+    # Load the spike data
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"Data file '{data_file}' not found.")
+    data = np.load(data_file)
+    units = data.files  # List of unit labels
+    # Load the labels file if it exists
+    labels = {}
+    if os.path.exists(labels_file):
+        labels_data = np.load(labels_file)
+        labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+    # Separate neurons and muscles, applying filtering if needed
+    neuron_labels = []
+    muscle_labels = []
+    for unit in units:
+        if unit.isnumeric():  # Numeric labels are neurons
+            if labels:
+                label = labels.get(unit, None)
+                if neuron_label_filter is None or label == neuron_label_filter:
+                    neuron_labels.append(unit)
+            else:
+                neuron_labels.append(unit)  # No filtering if no labels file
+        else:  # Alphabetic labels are muscles
+            muscle_labels.append(unit)
+    # Find the maximum spike index to determine total time points
+    max_spike_index = max([data[unit].max() for unit in units])
+    if bin_size is None:
+        # Raw spike representation
+        num_time_points = max_spike_index + 1  # Include the last time step
+        # Initialize tensors for neural and muscle activity
+        X = np.zeros((len(neuron_labels), num_time_points))  # Neural activity
+        Y = np.zeros((len(muscle_labels), num_time_points))  # Muscle activity
+        # Create binary spike trains for neurons
+        for i, unit in enumerate(neuron_labels):
+            spike_indices = data[unit]
+            X[i, spike_indices] = 1  # Mark spikes as 1 at their respective indices
+        # Create binary spike trains for muscles
+        for i, unit in enumerate(muscle_labels):
+            spike_indices = data[unit]
+            Y[i, spike_indices] = 1  # Mark spikes as 1 at their respective indices
+    else:
+        # Binned spike representation
+        bin_samples = int(bin_size * sample_rate)  # Convert bin size to samples
+        num_bins = int(np.ceil(max_spike_index / bin_samples))  # Total number of bins
+        # Initialize tensors for neural and muscle activity
+        X = np.zeros((len(neuron_labels), num_bins))  # Neural activity
+        Y = np.zeros((len(muscle_labels), num_bins))  # Muscle activity
+        # Bin neural activity
+        for i, unit in enumerate(neuron_labels):
+            spike_indices = data[unit]
+            X[i] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
+        # Bin muscle activity
+        for i, unit in enumerate(muscle_labels):
+            spike_indices = data[unit]
+            Y[i] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
+    # Return results
+    return X, Y, neuron_labels, muscle_labels
