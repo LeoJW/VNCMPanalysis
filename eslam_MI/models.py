@@ -45,10 +45,10 @@ class DSIB(nn.Module):
     def forward(self, dataX, dataY):
         batch_size = dataX.shape[0]  # Dynamically infer batch size
         # Chunked version of sep infonce inference, if asked
-        if (self.params['chunk_size'] < batch_size and 
+        if ((self.params['chunk_size'] < batch_size) and 
             self.params['chunked_inference'] and 
-            self.params['mode'] == 'sep' and 
-            self.params['estimator'] == 'infonce'):
+            (self.params['mode'] == 'sep') and 
+            (self.params['estimator'] == 'infonce')):
             lossGout = estimate_full_mutual_information_infonce(self, dataX, dataY, chunk_size=self.params['chunk_size'])
             loss = -lossGout
             return loss

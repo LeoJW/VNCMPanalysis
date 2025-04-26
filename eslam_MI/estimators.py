@@ -248,54 +248,31 @@ def estimate_full_mutual_information_infonce(model, full_X, full_Y, chunk_size=1
     device = next(model.parameters()).device
     n_samples = len(full_X)
     n_chunks = (n_samples + chunk_size - 1) // chunk_size
-    
     # Step 1: Pre-compute all embeddings
-    all_ZX = []
-    all_ZY = []
-    
     with torch.no_grad():
-        for i in range(0, n_samples, chunk_size):
-            end_idx = min(i + chunk_size, n_samples)
-            batch_X = full_X[i:end_idx].to(device)
-            batch_Y = full_Y[i:end_idx].to(device)
-            
-            # Assuming model has methods to get ZX and ZY separately
-            # Adjust based on your actual model structure
-            ZX = model.encoder_x(batch_X)
-            ZY = model.encoder_y(batch_Y)
-            
-            all_ZX.append(ZX.cpu())
-            all_ZY.append(ZY.cpu())
-    
-    all_ZX = torch.cat(all_ZX, dim=0)
-    all_ZY = torch.cat(all_ZY, dim=0)
+        all_ZX = model.encoder_x(full_X)
+        all_ZY = model.encoder_y(full_Y)
     
     # Step 2: Compute InfoNCE in chunks
     diag_sum = 0
     logsumexp_sum = 0
-    
     for i in range(n_chunks):
         i_start = i * chunk_size
         i_end = min((i+1) * chunk_size, n_samples)
         ZY_chunk = all_ZY[i_start:i_end].to(device)
-        
         # For each row chunk, we need all columns for accurate logsumexp
         chunk_logsumexp = torch.zeros(i_end - i_start, device=device)
         chunk_diag = torch.zeros(i_end - i_start, device=device)
-        
         for j in range(n_chunks):
             j_start = j * chunk_size
             j_end = min((j+1) * chunk_size, n_samples)
             ZX_chunk = all_ZX[j_start:j_end].to(device)
-            
             # Compute partial scores
             scores_chunk = torch.matmul(ZY_chunk, ZX_chunk.t())  # size: [i_chunk_size, j_chunk_size]
-            
             # Update the diagonal sum (only when i==j)
             if i == j:
                 chunk_diag = scores_chunk.diag()
                 diag_sum += chunk_diag.sum().item()
-            
             # For logsumexp, we need to accumulate across chunks carefully
             # Using log-sum-exp trick for numerical stability
             if j == 0:
@@ -308,7 +285,6 @@ def estimate_full_mutual_information_infonce(model, full_X, full_Y, chunk_size=1
                     torch.exp(scores_chunk - max_vals.unsqueeze(1)).sum(dim=1)
                 ) + max_vals
                 chunk_max_vals = max_vals.unsqueeze(1)
-        
         logsumexp_sum += chunk_logsumexp.sum().item()
     
     # Calculate the final MI estimate
