@@ -103,6 +103,11 @@ def infonce_lower_bound(scores):
     mi = torch.tensor(scores.size(0)).float().log() + nll
     mi = mi.mean()
     return mi
+# def infonce_lower_bound(scores):
+#     nll = scores.diag().mean() - scores.logsumexp(dim=1)
+#     mi = torch.tensor(scores.size(0)).float().log() + nll
+#     mi = mi.mean()
+#     return mi
 
 
 def js_fgan_lower_bound(f):
@@ -244,16 +249,12 @@ def estimate_mutual_information(estimator, x, y, critic_fn, baseline_fn=None):
     return mi
 
 
-def estimate_full_mutual_information_infonce(model, full_X, full_Y, chunk_size=1000):
+def estimate_full_mutual_information_infonce(model, all_ZX, all_ZY, chunk_size=1000):
     device = next(model.parameters()).device
-    n_samples = len(full_X)
+    n_samples = np.maximum(all_ZX.shape[0], all_ZX.shape[1])
     n_chunks = (n_samples + chunk_size - 1) // chunk_size
-    # Step 1: Pre-compute all embeddings
-    with torch.no_grad():
-        all_ZX = model.encoder_x(full_X)
-        all_ZY = model.encoder_y(full_Y)
     
-    # Step 2: Compute InfoNCE in chunks
+    # Compute InfoNCE in chunks
     diag_sum = 0
     logsumexp_sum = 0
     for i in range(n_chunks):

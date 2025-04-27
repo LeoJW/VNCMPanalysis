@@ -73,6 +73,7 @@ class mlp(nn.Module):
             'tanh': nn.Tanh,
             'leaky_relu': nn.LeakyReLU,
             'silu': nn.SiLU,
+            'softplus': nn.Softplus,
         }[activation]
     
         # Initialize the layers list
@@ -235,26 +236,25 @@ class BatchedDataset(Dataset):
         self.Y = Y
         self.batch_size = batch_size
         # Create batch indices
-        self.all_indices = torch.arange(X.shape[1])
-        self.total_columns = X.shape[1]
-        self.total_batches = (self.total_columns + batch_size - 1) // batch_size
+        self.total_batches = (X.shape[1] + batch_size - 1) // batch_size
         # Pre-compute valid batch indices (those with non-zero X and Y)
         self.batch_indices = []
         for i in range(self.total_batches):
             start_idx = i * batch_size
-            end_idx = min(start_idx + batch_size, self.total_columns)
-            batch_inds = self.all_indices[start_idx:end_idx]
-            if torch.any(X[:, batch_inds] > 0) and torch.any(Y[:, batch_inds] > 0):
-                self.batch_indices.append(batch_inds)
+            end_idx = min(start_idx + batch_size, X.shape[1])
+            start_ind = start_idx
+            end_ind = end_idx
+            if torch.any(X[:, start_ind:end_ind] > 0) and torch.any(Y[:, start_ind:end_ind] > 0):
+                self.batch_indices.append((start_ind, end_ind))
     def __len__(self):
         return len(self.batch_indices)
     def __getitem__(self, idx):
         """Return a batch at the specified batch index."""
         indices = self.batch_indices[idx]
-        return self.X[:, indices], self.Y[:, indices]
+        return self.X[:, indices[0]:indices[1]], self.Y[:, indices[0]:indices[1]]
     def get_multibatch(self, idxlist):
         """Return a list of batch indices as one vector"""
-        indices = torch.concat([self.batch_indices[idx] for idx in idxlist])
+        indices = torch.concat([torch.arange(s,e) for s,e in [self.batch_indices[idx] for idx in idxlist]])
         return self.X[:, indices], self.Y[:, indices]
 
 
@@ -303,9 +303,10 @@ def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_fro
 
 
 # Read neuron and muscle data for one moth, return X and Y with specific binning
-def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000):
+def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, binarize=True, sample_rate=30000):
     """
     Processes spike data from a .npz file into neural (X) and muscle (Y) activity tensors.
+    Returns either uint8 or bool (if binarized)
     
     Parameters:
         base_name (str): Base name of the files (e.g., '2025-03-21').
@@ -314,6 +315,7 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sampl
         neuron_label_filter (str, optional): Filter neurons by label (e.g., "good").
             Only used if a labels file is present.
         sample_rate (float, 30000 Hz by default): The sampling rate for the data
+        binarize (bool): Whether to just return boolean of whether ANY spikes were in bin, rather than number
         
     Returns:
         X (numpy.ndarray): Neural activity tensor of shape (num_neurons, num_time_points).
@@ -321,6 +323,8 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sampl
         neuron_labels (list): List of neuron labels corresponding to rows in X.
         muscle_labels (list): List of muscle labels corresponding to rows in Y.
     """
+    # Type handling
+    use_dtype = np.bool if binarize else np.uint8
     # Construct file paths
     data_file = f"{base_name}_data.npz"
     labels_file = f"{base_name}_labels.npz"
@@ -353,8 +357,8 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sampl
         # Raw spike representation
         num_time_points = max_spike_index + 1  # Include the last time step
         # Initialize tensors for neural and muscle activity
-        X = np.zeros((len(neuron_labels), num_time_points))  # Neural activity
-        Y = np.zeros((len(muscle_labels), num_time_points))  # Muscle activity
+        X = np.zeros((len(neuron_labels), num_time_points), dtype=use_dtype)  # Neural activity
+        Y = np.zeros((len(muscle_labels), num_time_points), dtype=use_dtype)  # Muscle activity
         # Create binary spike trains for neurons
         for i, unit in enumerate(neuron_labels):
             spike_indices = data[unit]
@@ -364,19 +368,20 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, sampl
             spike_indices = data[unit]
             Y[i, spike_indices] = 1  # Mark spikes as 1 at their respective indices
     else:
+        # Convert indices at sample frequency to indices at new size, set to 1
         # Binned spike representation
         bin_samples = int(bin_size * sample_rate)  # Convert bin size to samples
         num_bins = int(np.ceil(max_spike_index / bin_samples))  # Total number of bins
         # Initialize tensors for neural and muscle activity
-        X = np.zeros((len(neuron_labels), num_bins))  # Neural activity
-        Y = np.zeros((len(muscle_labels), num_bins))  # Muscle activity
+        X = np.zeros((len(neuron_labels), num_bins), dtype=use_dtype)  # Neural activity
+        Y = np.zeros((len(muscle_labels), num_bins), dtype=use_dtype)  # Muscle activity
         # Bin neural activity
         for i, unit in enumerate(neuron_labels):
             spike_indices = data[unit]
-            X[i] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
+            X[i,:] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
         # Bin muscle activity
         for i, unit in enumerate(muscle_labels):
             spike_indices = data[unit]
-            Y[i] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
+            Y[i,:] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
     # Return results
     return X, Y, neuron_labels, muscle_labels

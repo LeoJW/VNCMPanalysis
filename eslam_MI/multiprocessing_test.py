@@ -38,9 +38,12 @@ print(f'Device: {device}')
 
 if __name__ == '__main__':
     mp.set_start_method('spawn')
+
+    # Main parameter: How many indepdent processes do you want
+    n_processes = 2
     
     data_dir = os.path.join(os.getcwd(), 'data_for_python')
-    X, Y, x_labels, y_labels = process_spike_data(os.path.join(data_dir, '2025-03-12_1'), 0.1)
+    X, Y, x_labels, y_labels = process_spike_data(os.path.join(data_dir, '2025-03-12_1'), 0.001)
     print(f"Neural Activity (X): {X.shape}")
     print(f"Muscle Activity (Y): {Y.shape}") 
     print("Neuron Labels:", x_labels)
@@ -79,34 +82,35 @@ if __name__ == '__main__':
     this_params = {**params, 'embed_dim': 1} # Choose dz
     mis, mis_test = train_model(DSIB, full_dataset, this_params)
     print(time.time() - start)
-    # torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
-    # input_queue = mp.Queue()
-    # results_queue = mp.Queue()
-    # # Package together iterator of run_trial arguments for every condition
-    # iter = []
-    # for dz in range(1, critic_params['max_dz']+1):
-    #     this_critic_params = {**critic_params, 'embed_dim': dz}
-    #     for j in range(opt_params['n_trials']):
-    #         iter.append((
-    #             j, DSIB, input_queue, results_queue, opt_params, this_critic_params, device
-    #         ))
+    input_queue = mp.Queue()
+    results_queue = mp.Queue()
+    # Package together iterator of run_trial arguments for every condition
+    iter = []
+    for dz in range(1, params['max_dz']+1):
+        for j in range(params['n_trials']):
+            this_params = {**params, 'embed_dim': dz}
+            iter.append((
+                j, DSIB, input_queue, results_queue, this_params, device
+            ))
+    # Split iterator up into 
 
-    # processes = []
-    # for i in iter:
-    #     # Set up each model process
-    #     p = mp.Process(target=run_trial, args=i)
-    #     p.start()
-    #     processes.append(p)
-    #     # Put input data into queue
-    #     input_queue.put(dataset)
+    processes = []
+    for i in iter:
+        # Set up each model process
+        p = mp.Process(target=run_trial, args=i)
+        p.start()
+        processes.append(p)
+        # Put input data into queue
+        input_queue.put(dataset)
     
-    # time.sleep(1)
+    time.sleep(1)
     
-    # for p in processes:
-    #     p.join()
+    for p in processes:
+        p.join()
 
-    # # Collect results
-    # results = []
-    # while not results_queue.empty():
-    #     results.append(results_queue.get())
+    # Collect results
+    results = []
+    while not results_queue.empty():
+        results.append(results_queue.get())

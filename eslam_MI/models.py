@@ -44,22 +44,18 @@ class DSIB(nn.Module):
 
     def forward(self, dataX, dataY):
         batch_size = dataX.shape[0]  # Dynamically infer batch size
-        # Chunked version of sep infonce inference, if asked
-        if ((self.params['chunk_size'] < batch_size) and 
-            self.params['chunked_inference'] and 
-            (self.params['mode'] == 'sep') and 
-            (self.params['estimator'] == 'infonce')):
-            lossGout = estimate_full_mutual_information_infonce(self, dataX, dataY, chunk_size=self.params['chunk_size'])
-            loss = -lossGout
-            return loss
-
         if self.params['mode'] in ["sep", "bi"]:
             zX = self.encoder_x(dataX)
             zY = self.encoder_y(dataY)
             if self.params['mode'] == "bi":
                 # Get the rotated version ready 
                 zX = self.bilinear(zX)
-            mi = self.info(zX, zY, batch_size)
+            if (self.params['chunked_inference'] and
+                (self.params['chunk_size'] < batch_size) and 
+                (self.params['estimator'] == 'infonce')):
+                mi = estimate_full_mutual_information_infonce(self, zX, zY, chunk_size=self.params['chunk_size'])
+            else:
+                mi = self.info(zX, zY, batch_size)
             lossGout = mi
         elif self.params['mode'] == "concat":
             x_expanded = dataX.repeat(batch_size, 1)  # Repeat batch_size times
@@ -103,10 +99,23 @@ class DVSIB(nn.Module):
 
     def forward(self, dataX, dataY):
         batch_size = dataX.shape[0]  # Dynamically infer batch size
+        # Chunked version of sep infonce inference, if asked
+        if (self.params['chunked_inference'] and
+            (self.params['mode'] == 'sep') and 
+            (self.params['chunk_size'] < batch_size) and 
+            (self.params['estimator'] == 'infonce')):
+            # Pre-compute all embeddings before running estimate in chunks
+            with torch.no_grad():
+                _, _, zX = self.encoder_x(dataX)
+                _, _, zY = self.encoder_y(dataY)
+            lossGin = self.encoder_x.kl_loss + self.encoder_y.kl_loss
+            lossGout = estimate_full_mutual_information_infonce(self, zX, zY, chunk_size=self.params['chunk_size'])
+            loss = lossGin - self.params['beta']*lossGout
+            return [loss, lossGin, lossGout]
 
         if self.params['mode'] in ["sep", "bi"]:
-            _,_,zX = self.encoder_x(dataX) # Samples
-            _,_,zY = self.encoder_y(dataY)
+            _, _, zX = self.encoder_x(dataX) # Samples
+            _, _, zY = self.encoder_y(dataY)
             if self.params['mode'] == "bi":
                 # Get the rotated version ready 
                 zX = self.bilinear(zX)
