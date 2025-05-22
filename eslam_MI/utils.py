@@ -67,21 +67,13 @@ class mlp(nn.Module):
     def __init__(self, dim, hidden_dim, output_dim, layers, activation):
         """Create an mlp from the configurations."""
         super(mlp, self).__init__()
-        activation_fn = {
-            'relu': nn.ReLU,
-            'sigmoid': nn.Sigmoid,
-            'tanh': nn.Tanh,
-            'leaky_relu': nn.LeakyReLU,
-            'silu': nn.SiLU,
-            'softplus': nn.Softplus,
-        }[activation]
     
         # Initialize the layers list
         seq = []
     
         # Input layer
         seq.append(nn.Linear(dim, hidden_dim))
-        seq.append(activation_fn())
+        seq.append(activation())
         nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
     
         # Hidden layers
@@ -89,7 +81,7 @@ class mlp(nn.Module):
             layer = nn.Linear(hidden_dim, hidden_dim)
             nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
-            seq.append(activation_fn())
+            seq.append(activation())
     
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
@@ -113,20 +105,13 @@ class var_mlp(nn.Module):
     def __init__(self, dim, hidden_dim, output_dim, layers, activation):
         """Create a variational mlp from the configurations."""
         super(var_mlp, self).__init__()
-        activation_fn = {
-            'relu': nn.ReLU,
-            'sigmoid': nn.Sigmoid,
-            'tanh': nn.Tanh,
-            'leaky_relu': nn.LeakyReLU,
-            'silu': nn.SiLU,
-        }[activation]
     
         # Initialize the layers list
         seq = []
     
         # Input layer
         seq.append(nn.Linear(dim, hidden_dim))
-        seq.append(activation_fn())
+        seq.append(activation())
         nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
     
         # Hidden layers
@@ -134,7 +119,7 @@ class var_mlp(nn.Module):
             layer = nn.Linear(hidden_dim, hidden_dim)
             nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
-            seq.append(activation_fn())
+            seq.append(activation())
     
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
@@ -186,6 +171,67 @@ class var_mlp(nn.Module):
         return [meanz, logVar, samples]
 
 
+class cnn_mlp(nn.Module):
+    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation):
+        """
+        Create a CNN-MLP hybrid model with batch normalization and strided convolutions.
+        
+        Args:
+            input_channels (int): Number of input channels (e.g., 3 for RGB images).
+            hidden_dim (int): Number of hidden units in fully connected layers.
+            output_dim (int): Dimensionality of the output embedding.
+            conv_layers (int): Number of convolutional layers.
+            fc_layers (int): Number of fully connected layers after GAP.
+            activation (str): Activation function to use (e.g., 'relu', 'tanh').
+        """
+        super(cnn_mlp, self).__init__()
+        
+        # Convolutional layers with strided convolutions and batch normalization
+        conv_seq = []
+        in_channels = input_channels
+        out_channels = 32  # Start with 32 filters
+        for i in range(conv_layers):
+            conv_seq.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if i > 0 else 1, padding=1))
+            conv_seq.append(nn.BatchNorm2d(out_channels))  # Add batch normalization
+            conv_seq.append(activation())
+            in_channels = out_channels
+            out_channels *= 2  # Double the number of filters in each layer
+        self.conv_network = nn.Sequential(*conv_seq)
+        # Global Average Pooling (GAP)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        # Fully connected layers
+        fc_seq = []
+        in_features = in_channels  # After GAP, the number of features equals the number of channels
+        for _ in range(fc_layers):
+            fc_seq.append(nn.Linear(in_features, hidden_dim))
+            fc_seq.append(activation())
+            in_features = hidden_dim
+        self.fc_network = nn.Sequential(*fc_seq)
+        # Output layer
+        self.out = nn.Linear(in_features, output_dim)
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Initialize weights using Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x):
+        # Pass through convolutional layers
+        x = self.conv_network(x)
+        # Apply global average pooling
+        x = self.global_avg_pool(x)
+        x = torch.flatten(x, 1)  # Flatten to [batch_size, num_features]
+        # Pass through fully connected layers
+        x = self.fc_network(x)
+        # Get output
+        out = self.out(x)
+        return out
+
 def log_prob_gaussian(x):
     return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
@@ -208,8 +254,8 @@ class decoder_INFO(nn.Module):
 
     def forward(self, dataZX, dataZY, batch_size=None):
         return estimate_mutual_information(
-            self.estimator, dataZX, dataZY,
-            lambda x, y: self.critic_fn(x, y, batch_size),
+            self.estimator, 
+            self.critic_fn(dataZX, dataZY, batch_size),
             baseline_fn=self.baseline_fn
         )
 

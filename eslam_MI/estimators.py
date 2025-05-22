@@ -178,34 +178,19 @@ def smile_lower_bound(f, clip=None):
     return js + dv_js
 
 
-def estimate_mutual_information(estimator, x, y, critic_fn, baseline_fn=None):
+def estimate_mutual_information(estimator, scores, log_baseline=None):
     """Estimate variational lower bounds on mutual information.
-
     Args:
     estimator: string specifying estimator, one of:
         'nwj', 'infonce', 'tuba', 'js', 'interpolated'
-    x: [batch_size, dim_x] Tensor
-    y: [batch_size, dim_y] Tensor
-    critic_fn: callable that takes x and y as input and outputs critic scores
-        output shape is a [batch_size, batch_size] matrix
+    scores: Tensor/matrix of critic scores, shape [batch_size, batch_size]
+    log_baseline: If not None, should be torch.squeeze(baseline_fn(y))
     baseline_fn (optional): callable that takes y as input 
         outputs a [batch_size]  or [batch_size, 1] vector
     alpha_logit (optional): logit(alpha) for interpolated bound, equivalent to momentum
-
     Returns:
     scalar estimate of mutual information
     """
-    x = x.to(device)
-    if y is not None:
-        y = y.to(device)
-        
-    scores = critic_fn(x, y)
-    
-    if baseline_fn is not None:
-        # Some baselines' output is (batch_size, 1) which we remove here.
-        log_baseline = torch.squeeze(baseline_fn(y))
-    else:
-        log_baseline = None
 
     if estimator == 'infonce':
         mi = infonce_lower_bound(scores)
