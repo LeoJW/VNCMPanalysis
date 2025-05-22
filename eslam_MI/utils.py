@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from estimators import estimate_mutual_information
 import os
 import json
@@ -285,7 +285,7 @@ def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_fro
     # Create training data loader, send test and eval to device
     train_loader = DataLoader(
         dataset,
-        sampler=train_indices,
+        sampler=SubsetRandomSampler(train_indices),
         num_workers=0  # Adjust based on your system
     )
     # Get test and eval data as views. Batches are sorted to be presented in real data order

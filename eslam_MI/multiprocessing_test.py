@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 
 from torch.utils.data import Dataset, DataLoader
+from itertools import islice
 
 warnings.filterwarnings("ignore")
 
@@ -34,6 +35,10 @@ else:
     device = "CPU"
 print(f'Device: {device}')
 
+# Partitioning function
+def chunk(it, size):
+    it = iter(it)
+    return iter(lambda: tuple(islice(it, size)), ())
 
 
 if __name__ == '__main__':
@@ -66,22 +71,21 @@ if __name__ == '__main__':
         'beta': 512,
         'max_dz': 10, # max value for embed_dim that we search for
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
-        'mode': 'sep' # Almost always we'll use separable
+        'mode': 'sep', # Almost always we'll use separable
+        # Parameters to vary across
+        'varyparams': ['']
     }
+    """
+    Need general iterator structure here. Likely will perform splits on a given dataset, collect, then move to next
+    Trying to share many datasets seems less necessary than just finishing each one faster
+    """
+
 
     # Make dataset into tensors
     X, Y = torch.tensor(X, dtype=torch.float32), torch.tensor(Y, dtype=torch.float32)
     dataset = BatchedDataset(X, Y, params['batch_size'])
     full_dataset = create_data_split(dataset, train_fraction=0.95, device=device)
 
-    torch.cuda.empty_cache()
-
-    # First do a vanilla run to get calibrated
-    print('-------------- Vanilla run -------------')
-    start = time.time()
-    this_params = {**params, 'embed_dim': 1} # Choose dz
-    mis, mis_test = train_model(DSIB, full_dataset, this_params)
-    print(time.time() - start)
     torch.cuda.empty_cache()
 
     input_queue = mp.Queue()
@@ -94,12 +98,13 @@ if __name__ == '__main__':
             iter.append((
                 j, DSIB, input_queue, results_queue, this_params, device
             ))
-    # Split iterator up into 
+    # Split iterator up into processes
+    process_iterator = chunk(iter, n_processes)
 
     processes = []
-    for i in iter:
+    for i in process_iterator:
         # Set up each model process
-        p = mp.Process(target=run_trial, args=i)
+        p = mp.Process(target=run_trainings, args=i)
         p.start()
         processes.append(p)
         # Put input data into queue
