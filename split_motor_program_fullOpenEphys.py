@@ -15,7 +15,7 @@ overwrite_previous = False
 # Settings
 chunk_size = 30000*20 # samples
 
-threshold_mult_pkpk = 3
+threshold_mult_pkpk = 10
 threshold_hp_cutoff = 2000 # hz
 general_bp_cutoff = [10, 1000] # hz
 
