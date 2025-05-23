@@ -256,7 +256,7 @@ class decoder_INFO(nn.Module):
         return estimate_mutual_information(
             self.estimator, 
             self.critic_fn(dataZX, dataZY, batch_size),
-            baseline_fn=self.baseline_fn
+            log_baseline=self.baseline_fn
         )
 
 def write_config(args):

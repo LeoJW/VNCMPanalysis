@@ -17,28 +17,35 @@ class DSIB(nn.Module):
         super(DSIB, self).__init__()
         self.params = params
         
-        if params['mode'] in ["sep", "bi"]:
-            # Create two encoders from |X/Y| to |Z_X/Y|
-            self.encoder_x = mlp(
-                dim=params['Nx'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                layers=params['layers'], activation=params['activation']
-            )
-            self.encoder_y = mlp(
-                dim=params['Ny'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                layers=params['layers'], activation=params['activation']
-            )
-            
+        # Create two encoders from |X/Y| to |Z_X/Y|
+        if params['mode'] in ['sep', 'bi']:
+            if params['data_form'] != 'image':
+                self.encoder_x = mlp(
+                    dim=params['Nx'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                    layers=params['layers'], activation=params['activation']
+                )
+                self.encoder_y = mlp(
+                    dim=params['Ny'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                    layers=params['layers'], activation=params['activation']
+                )
+            else:
+                self.encoder_x = cnn_mlp(
+                    input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                    conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation']
+                )
+                self.encoder_y = cnn_mlp(
+                    input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                    conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation']
+                )
         if params['mode'] == "bi":
             # Add additional layer to the separable if bilinear
             self.bilinear = nn.Linear(params['embed_dim'], params['embed_dim'], bias=False)
-
-        if params['mode'] == "concat":
+        elif params['mode'] == "concat":
             # Create one encoder that takes |X|+|Y| and outputs 1, it has twice the width as the seprable/bilinear
             self.encoder_xy = mlp(
                 dim=params['Nx'] + params['Ny'], hidden_dim=params['hidden_dim'], output_dim=1,
                 layers=params['layers'], activation=params['activation']
             )
-        
         # Estimator
         self.info = decoder_INFO(params['estimator'], params['mode'], baseline_fn)
 
@@ -50,6 +57,7 @@ class DSIB(nn.Module):
             if self.params['mode'] == "bi":
                 # Get the rotated version ready 
                 zX = self.bilinear(zX)
+            # Chunked vs regular version
             if (self.params['chunked_inference'] and
                 (self.params['chunk_size'] < batch_size) and 
                 (self.params['estimator'] == 'infonce')):

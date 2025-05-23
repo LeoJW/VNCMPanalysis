@@ -103,11 +103,6 @@ def infonce_lower_bound(scores):
     mi = torch.tensor(scores.size(0)).float().log() + nll
     mi = mi.mean()
     return mi
-# def infonce_lower_bound(scores):
-#     nll = scores.diag().mean() - scores.logsumexp(dim=1)
-#     mi = torch.tensor(scores.size(0)).float().log() + nll
-#     mi = mi.mean()
-#     return mi
 
 
 def js_fgan_lower_bound(f):

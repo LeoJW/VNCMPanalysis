@@ -45,12 +45,15 @@ def train_model(model_func, full_dataset, params, device=device):
     estimates_mi_test = []
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
-
     for epoch in range(epochs):
         start = time.time()
         for i, (x, y) in enumerate(iter(train_data)):
             # Squeeze to remove batch dim. BatchedDataset handles batches, so it's always just 1
-            x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
+            # If using CNN (treating whole batch as image), keep batch index as conv2d wants 3d arrays
+            if params['data_form'] != 'image':
+                x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
+            else:
+                x, y = x.unsqueeze(0).to(device), y.unsqueeze(0).to(device)
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":
@@ -126,6 +129,10 @@ def train_model_no_eval(model_func, full_dataset, params, model_save_dir, device
     train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["batch_size"]}_' + str(uuid.uuid4())
     # Pull out data loaders
     train_data, (test_X, test_Y), _ = full_dataset
+    # If image model, change shape of test data
+    if params['data_form'] == 'image':
+        test_X = test_X.T.unsqueeze(0).unsqueeze(0)
+        test_Y = test_Y.T.unsqueeze(0).unsqueeze(0)
     # Initialize variables
     epochs = params['epochs']
     opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
@@ -136,7 +143,11 @@ def train_model_no_eval(model_func, full_dataset, params, model_save_dir, device
         start = time.time()
         for i, (x, y) in enumerate(iter(train_data)):
             # Squeeze to remove batch dim. BatchedDataset handles batches, so it's always just 1
-            x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
+            # If using CNN (treating whole batch as image), keep batch index as conv2d wants 3d arrays
+            if params['data_form'] != 'image':
+                x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
+            else:
+                x, y = x.unsqueeze(0).to(device), y.unsqueeze(0).to(device)
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":
@@ -183,38 +194,6 @@ def train_model_no_eval(model_func, full_dataset, params, model_save_dir, device
             break
     return np.array(estimates_mi_test), train_id
 
-
-# def extract_unique_ids_by_time(directory_path):
-#     """Quick function to extract unique timestamps from model cache directory"""
-#     # Pattern to match the timestamp part in filename format
-#     # This will capture the datetime part: 'Thu_24-04-25_20-42-11'
-#     pattern = r'.*?([a-zA-Z]{3}_\d{2}-\d{2}-\d{2,4}_\d{2}-\d{2}-\d{2}).*?\.pt$'
-#     # Dictionary to store unique timestamps and their datetime objects
-#     unique_timestamps = {}
-#     valid_files = []
-#     # Iterate through all files in the directory
-#     for filename in os.listdir(directory_path):
-#         match = re.search(pattern, filename)
-#         if match:
-#             valid_files.append(filename)
-#             timestamp_str = match.group(1)
-#             # Parse the timestamp string into a datetime object
-#             # Format: '%a_%d/%m/%y_%H-%M-%S'
-#             try:
-#                 dt_obj = datetime.strptime(timestamp_str, '%a_%d-%m-%y_%H-%M-%S')
-#                 unique_timestamps[timestamp_str] = dt_obj
-#             except ValueError:
-#                 # If parsing fails, try with full year format
-#                 try:
-#                     dt_obj = datetime.strptime(timestamp_str, '%a_%d-%m-%Y_%H-%M-%S')
-#                     unique_timestamps[timestamp_str] = dt_obj
-#                 except ValueError:
-#                     print(f"Could not parse timestamp in file: {filename}")
-#     # Sort timestamps by datetime objects (newest first)
-#     sorted_timestamps = sorted(unique_timestamps.keys(), 
-#         key=lambda x: unique_timestamps[x], 
-#         reverse=True)
-#     return sorted_timestamps, valid_files
 
 def retrieve_best_model(model_save_dir, mi_test, train_id=None, remove_others=True, burn_in=4, smooth=True, sigma=1):
     """
