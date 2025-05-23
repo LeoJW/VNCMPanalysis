@@ -128,6 +128,36 @@ function read_binary_open_ephys(recording_folder, stream_indices)
     return time, data
 end
 
+# Function to read DIGITAL stream(s?) from a given RecordNode/experiment/recording. Must pass in experiment folder! 
+function read_binary_open_ephys(recording_folder)
+    dir_contents = readdir(recording_folder)
+    # Find and read structure.oebin
+    structure_file = dir_contents .== "structure.oebin"
+    if !any(structure_file)
+        println("WARNING: No structure.oebin file found, exiting without read")
+        return
+    end
+    oebin = JSON.parsefile(joinpath(recording_folder, dir_contents[findfirst(structure_file)]))
+    # NOTE: The [1] just grabs whichever continuous stream is first. Won't work with more than 1 stream
+    continuous_dir = joinpath(recording_folder, "continuous", oebin["continuous"][1]["folder_name"])
+    # Read time first
+    time = npzread(joinpath(continuous_dir, "timestamps.npy"))
+    # Read all channels into matrix
+    N = length(time)
+    num_channels = oebin["continuous"][1]["num_channels"]
+    data = zeros(Float64, N, num_channels)
+    # NOTE: open-ephys binary format uses Int16 in little endian. Not sure this will work on any system
+    fid = open(joinpath(continuous_dir, "continuous.dat"))
+    datamap = mmap(fid, Matrix{Int16}, (num_channels, N))
+    for (i,ch) in enumerate(oebin["continuous"][1]["channels"])
+        data[:,i] .= datamap[i,:] .* ch["bit_volts"]
+    end
+    close(fid)
+    # First entry of channels is somehow always zero. Set to identical to 2nd value to make smoother
+    data[1,:] = data[2,:]
+    return time, data
+end
+
 
 
 # Assumes oep_events and rhd_events already store the first known event
