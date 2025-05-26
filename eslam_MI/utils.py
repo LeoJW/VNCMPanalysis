@@ -348,8 +348,8 @@ def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_fro
     return train_loader, (test_X, test_Y), (eval_X, eval_Y)
 
 
-# Read neuron and muscle data for one moth, return X and Y with specific binning
-def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, binarize=True, sample_rate=30000):
+# HISTORICAL FUNCTION. Kept in case of future need. Use read_spike_data, much faster (though only binarizes)
+def process_spike_data_old(base_name, bin_size=None, neuron_label_filter=None, binarize=True, sample_rate=30000):
     """
     Processes spike data from a .npz file into neural (X) and muscle (Y) activity tensors.
     Returns either uint8 or bool (if binarized)
@@ -370,7 +370,7 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, binar
         muscle_labels (list): List of muscle labels corresponding to rows in Y.
     """
     # Type handling
-    use_dtype = np.bool if binarize else np.uint8
+    use_dtype = bool if binarize else np.uint8
     # Construct file paths
     data_file = f"{base_name}_data.npz"
     labels_file = f"{base_name}_labels.npz"
@@ -431,3 +431,111 @@ def process_spike_data(base_name, bin_size=None, neuron_label_filter=None, binar
             Y[i,:] = np.histogram(spike_indices, bins=num_bins, range=(0, max_spike_index))[0]
     # Return results
     return X, Y, neuron_labels, muscle_labels
+
+
+# Read neuron and muscle data for one moth, return X and Y with specific binning
+def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000):
+    """
+    Processes spike data from a .npz file into neural (X) and muscle (Y) activity tensors.
+    Returns bool, always binarizes. If a bin has multiple spikes occur, will just appear as 1
+    
+    Parameters:
+        base_name (str): Base name of the files (e.g., '2025-03-21').
+            The function will look for '_data.npz' and '_labels.npz'.
+        bin_size (float, optional): Bin size in seconds. If None, returns spikes at sample rate
+        neuron_label_filter (str, optional): Filter neurons by label (e.g., "good").
+            Only used if a labels file is present.
+        sample_rate (float, 30000 Hz by default): The sampling rate for the data
+        
+    Returns:
+        X (numpy.ndarray): Neural activity tensor of shape (num_neurons, num_time_points).
+        Y (numpy.ndarray): Muscle activity tensor of shape (num_muscles, num_time_points).
+        neuron_labels (list): List of neuron labels corresponding to rows in X.
+        muscle_labels (list): List of muscle labels corresponding to rows in Y.
+    """
+    # Type handling
+    use_dtype = torch.bool
+    # Construct file paths
+    data_file = f"{base_name}_data.npz"
+    labels_file = f"{base_name}_labels.npz"
+    # Load the spike data
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"Data file '{data_file}' not found.")
+    data = np.load(data_file)
+    units = data.files  # List of unit labels
+    # Load the labels file if it exists
+    labels = {}
+    if os.path.exists(labels_file):
+        labels_data = np.load(labels_file)
+        labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+    # Separate neurons and muscles, applying filtering if needed
+    neuron_labels = []
+    muscle_labels = []
+    for unit in units:
+        if unit.isnumeric():  # Numeric labels are neurons
+            if labels:
+                label = labels.get(unit, None)
+                if neuron_label_filter is None or label == neuron_label_filter:
+                    neuron_labels.append(unit)
+            else:
+                neuron_labels.append(unit)  # No filtering if no labels file
+        else:  # Alphabetic labels are muscles
+            muscle_labels.append(unit)
+    # Scale factor if downsampling needed
+    scale = bin_size * sample_rate if bin_size is not None else 1
+    # Find the maximum spike index to determine total time points
+    max_spike_index = int(max([data[unit].max() for unit in units]) / scale)
+    # Initialize tensors for neural and muscle activity
+    X = torch.zeros((len(neuron_labels), max_spike_index + 1), dtype=use_dtype)  # Neural activity
+    Y = torch.zeros((len(muscle_labels), max_spike_index + 1), dtype=use_dtype)  # Muscle activity
+    # Create binary spike trains for neurons
+    for i, unit in enumerate(neuron_labels):
+        if bin_size is None:
+            indices = data[unit]
+        else:
+            indices = np.rint(data[unit] / scale)
+        X[i, indices] = 1
+    # Create binary spike trains for muscles
+    for i, unit in enumerate(muscle_labels):
+        if bin_size is None:
+            indices = data[unit]
+        else:
+            indices = np.rint(data[unit] / scale)
+        Y[i, indices] = 1
+    # Return results
+    return X, Y, neuron_labels, muscle_labels
+
+
+"""
+Function workflow designed for performance, with precision estimation in mind
+Involves getting spike indices from data first with get_spike_indices
+New datasets are generated from indices instead of vectors
+"""
+def get_spike_indices(base_name, neuron_label_filter=None):
+    # File names
+    data_file = base_name + "_data.npz"
+    labels_file = base_name + "_labels.npz"
+    # Load the spike data
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"Data file '{data_file}' not found.")
+    data = np.load(data_file)
+    units = data.files  # List of unit labels
+    # Load the labels file if it exists
+    labels = {}
+    if os.path.exists(labels_file):
+        labels_data = np.load(labels_file)
+        labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+    # Separate neurons and muscles, applying filtering if needed
+    neuron_labels = []
+    muscle_labels = []
+    for unit in units:
+        if unit.isnumeric():  # Numeric labels are neurons
+            if labels:
+                label = labels.get(unit, None)
+                if neuron_label_filter is None or label == neuron_label_filter:
+                    neuron_labels.append(unit)
+            else:
+                neuron_labels.append(unit)  # No filtering if no labels file
+        else:  # Alphabetic labels are muscles
+            muscle_labels.append(unit)
+    return data, neuron_labels, muscle_labels
