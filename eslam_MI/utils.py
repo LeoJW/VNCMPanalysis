@@ -347,6 +347,42 @@ def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_fro
         eval_Y = eval_Y.to(device)
     return train_loader, (test_X, test_Y), (eval_X, eval_Y)
 
+def create_cnn_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=None, eval_from_train=True, device=None):
+    """
+    Creates train loader and test/eval data views
+    Args:
+        dataset (FullAndBatchedDataset): The dataset containing all data
+        train_fraction (float): Fraction of batches to use for training
+        device (torch.device): Device to move test/eval data to
+        
+    Returns:
+        tuple: (train_loader, test_data, eval_data)
+    """
+    # Generate train/test splits
+    train_size = int(train_fraction * len(dataset.batch_indices))
+    # Create train/test/eval indices, separate eval set with different random indices
+    traintest_indices = torch.randperm(len(dataset.batch_indices))
+    train_indices = traintest_indices[:train_size]
+    test_indices = traintest_indices[train_size:]
+    # Generate eval split, either from train subset or independently
+    eval_fraction = (1 - train_fraction) if eval_fraction is None else eval_fraction
+    eval_size = int(eval_fraction * len(dataset.batch_indices))
+    if eval_from_train:
+        eval_indices = traintest_indices[:eval_size]
+    else:
+        eval_indices = torch.randperm(len(dataset.batch_indices))[:eval_size]
+    # Create training data loader
+    train_loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=SubsetRandomSampler(train_indices),
+        num_workers=0  # Adjust based on your system
+    )
+    # Get test and eval data as views. Batches are presented in a random order (but that shouldn't matter)
+    test_loader = DataLoader(dataset, batch_size=len(test_indices), sampler=SubsetRandomSampler(test_indices))
+    eval_loader = DataLoader(dataset, batch_size=len(eval_indices), sampler=SubsetRandomSampler(eval_indices))
+    return train_loader, test_loader, eval_loader
+
 
 # HISTORICAL FUNCTION. Kept in case of future need. Use read_spike_data, much faster (though only binarizes)
 def process_spike_data_old(base_name, bin_size=None, neuron_label_filter=None, binarize=True, sample_rate=30000):
