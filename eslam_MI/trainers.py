@@ -37,13 +37,11 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
     model_name = model_func.__name__
     model = model_func(params)
     model.to(device)  # Ensure model is on GPU
-    # Pull out data loaders
-    train_data, test_loader, eval_loader = full_dataset
-    # Pull out test, eval data. Loader just constructs a giant single batch
-    test_X, test_Y = list(iter(test_loader))[0]
-    test_X, test_Y = test_X.unsqueeze(1).to(device), test_Y.unsqueeze(1).to(device)
-    eval_X, eval_Y = list(iter(eval_loader))[0]
-    eval_X, eval_Y = eval_X.unsqueeze(1).to(device), eval_Y.unsqueeze(1).to(device)
+    # Create training dataloader, get indices for test and eval sets
+    train_loader, test_indices, eval_indices = create_cnn_data_split(full_dataset, params['batch_size'], params['train_fraction'])
+    # Pull out test, eval data. Not using a loader as model just needs to do single pass over block of data
+    test_X, test_Y = full_dataset.X[test_indices,:,:,:], full_dataset.Y[test_indices,:,:,:]
+    eval_X, eval_Y = full_dataset.X[eval_indices,:,:,:], full_dataset.Y[eval_indices,:,:,:]
     # Initialize variables
     epochs = params['epochs']
     opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
@@ -52,10 +50,11 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
     for epoch in range(epochs):
+        print(f'Memory allocated = {torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated}')
+        continue
+        torch.cuda.synchronize()
         start = time.time()
-        for i, (x, y) in enumerate(iter(train_data)):
-            # Add extra dim to represent number of channels (1 because "images" are one-hot encoded, no RGB)
-            x, y = x.unsqueeze(1), y.unsqueeze(1)
+        for i, (x, y) in enumerate(iter(train_loader)):
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":
@@ -66,15 +65,20 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
                 raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
             loss.backward()
             opt.step()
+        torch.cuda.synchronize()
         print(f'Train time = {time.time() - start}')
         # Test model at every epoch
         with torch.no_grad():
             if model_name == "DSIB":
+                torch.cuda.synchronize()
                 start = time.time()
                 estimator_tr = -model(eval_X, eval_Y)
+                torch.cuda.synchronize()
                 print(f'Eval time = {time.time() - start}')
+                torch.cuda.synchronize()
                 start = time.time()
                 estimator_ts = -model(test_X, test_Y)
+                torch.cuda.synchronize()
                 print(f'Test time = {time.time() - start}')
             elif model_name == "DVSIB": # Get lossGout, that is the mi value
                 _, _, estimator_ts = model(test_X, test_Y)
@@ -121,12 +125,10 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
     model.to(device)  # Ensure model is on GPU
     # Make save directory if it doesn't exist, generate unique model id
     os.makedirs(model_save_dir, exist_ok=True)
-    train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["batch_size"]}_' + str(uuid.uuid4())
-    # Pull out data loaders
-    train_data, test_loader, _ = full_dataset
-    # Pull out test data. Loader just constructs a giant single batch
-    test_X, test_Y = list(iter(test_loader))[0]
-    test_X, test_Y = test_X.unsqueeze(1).to(device), test_Y.unsqueeze(1).to(device)
+    train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["window_size"]}_' + str(uuid.uuid4())
+    # Create training dataloader, get indices for test set
+    train_loader, test_indices, _ = create_cnn_data_split(full_dataset, params['batch_size'], params['train_fraction'])
+    test_X, test_Y = full_dataset.X[test_indices,:,:,:], full_dataset.Y[test_indices,:,:,:]
     # Initialize variables
     epochs = params['epochs']
     opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
@@ -134,10 +136,9 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
     for epoch in range(epochs):
+        torch.cuda.synchronize()
         start = time.time()
-        for i, (x, y) in enumerate(iter(train_data)):
-            # Add extra dim to represent number of channels (1 because "images" are one-hot encoded, no RGB)
-            x, y = x.unsqueeze(1).to(device), y.unsqueeze(1).to(device)
+        for i, (x, y) in enumerate(iter(train_loader)):
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":
@@ -148,187 +149,15 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
                 raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
             loss.backward()
             opt.step()
+        torch.cuda.synchronize()
         print(f'Train time = {time.time() - start}')
         # Test model at every epoch
         with torch.no_grad():
             if model_name == "DSIB":
+                torch.cuda.synchronize()
                 start = time.time()
                 estimator_ts = -model(test_X, test_Y)
-                print(f'Test time = {time.time() - start}')
-            elif model_name == "DVSIB": # Get lossGout, that is the mi value
-                _, _, estimator_ts = model(test_X, test_Y)
-            estimator_ts = estimator_ts.to('cpu').detach().numpy()
-            estimates_mi_test.append(estimator_ts)
-        print(f"Epoch: {epoch+1}, {model_name}, test: {estimator_ts}", flush=True)
-        # Save snapshot of model
-        torch.save(
-            model, 
-            os.path.join(model_save_dir, f'epoch{epoch}_' + train_id + '.pt')
-        )
-        # Check for improvement, negative values, or nans
-        if np.isnan(estimator_ts):
-            print('Early stop due to nan outputs')
-            break
-        if estimator_ts < 0:
-            no_improvement_count += 1
-        elif estimator_ts > best_estimator_ts + params['min_delta']:
-            # We have an improvement
-            best_estimator_ts = estimator_ts
-            no_improvement_count = 0
-        else:
-            # No significant improvement
-            no_improvement_count += 1
-        # Check if we should stop early
-        if no_improvement_count >= params['patience']:
-            print(f"Early stopping triggered after {epoch+1} epochs. Best estimator_ts: {best_estimator_ts}")
-            break
-    return np.array(estimates_mi_test), train_id
-
-
-# Train function with early stopping
-def train_model(model_func, full_dataset, params, device=device):
-    """
-    Generalized training function for DSIB and DVSIB models with early stopping.
-    Args:
-        model: The model to train (DSIB or DVSIB).
-        data: Tuple of (train, test, eval) dataloaders. 
-            Assumes uses BatchSubsetDataset with custom sampler
-            Assumes loaders return X, Y of shapes (M_x, N) and (M_y, N)
-    Returns:
-        A tuple (train_estimates, test_estimates) containing mutual information estimates.
-    """
-    # Initialize model
-    model_name = model_func.__name__
-    model = model_func(params)
-    model.to(device)  # Ensure model is on GPU
-    # Pull out data loaders
-    train_data, (test_X, test_Y), (eval_X, eval_Y) = full_dataset
-    # Initialize variables
-    epochs = params['epochs']
-    opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
-    estimates_mi_train = []
-    estimates_mi_test = []
-    best_estimator_ts = float('-inf')  # Initialize with negative infinity
-    no_improvement_count = 0
-    for epoch in range(epochs):
-        start = time.time()
-        for i, (x, y) in enumerate(iter(train_data)):
-            # Squeeze to remove batch dim. BatchedDataset handles batches, so it's always just 1
-            # If using CNN (treating whole batch as image), keep batch index as conv2d wants 3d arrays
-            if params['data_form'] != 'image':
-                x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
-            else:
-                x, y = x.unsqueeze(0).to(device), y.unsqueeze(0).to(device)
-            opt.zero_grad()
-            # Compute loss based on model type
-            if model_name == "DSIB":
-                loss = model(x, y)  # DSIB returns a single loss
-            elif model_name == "DVSIB":
-                loss, _, _ = model(x, y)  # DVSIB returns three outputs
-            else:
-                raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
-            loss.backward()
-            opt.step()
-        print(f'Train time = {time.time() - start}')
-        # Evaluate the model at every epoch
-        with torch.no_grad():
-            if model_name == "DSIB":
-                start = time.time()
-                estimator_tr = -model(eval_X, eval_Y)
-                print(f'Eval time = {time.time() - start}')
-                start = time.time()
-                estimator_ts = -model(test_X, test_Y)
-                print(f'Test time = {time.time() - start}')
-            elif model_name == "DVSIB": # Get lossGout, that is the mi value
-                start = time.time()
-                _, _, estimator_tr = model(eval_X, eval_Y)
-                print(f'Eval time = {time.time() - start}')
-                start = time.time()
-                _, _, estimator_ts = model(test_X, test_Y)
-                print(f'Test time = {time.time() - start}')
-            estimator_tr = estimator_tr.to('cpu').detach().numpy()
-            estimator_ts = estimator_ts.to('cpu').detach().numpy()
-            estimates_mi_train.append(estimator_tr)
-            estimates_mi_test.append(estimator_ts)
-        print(f"Epoch: {epoch+1}, {model_name}, train: {estimator_tr}, test: {estimator_ts}", flush=True)
-        # Check for improvement, negative values, or nans
-        if np.isnan(estimator_tr) and np.isnan(estimator_ts):
-            print('Early stop due to nan outputs')
-            break
-        if estimator_ts < 0:
-            no_improvement_count += 1
-        elif estimator_ts > best_estimator_ts + params['min_delta']:
-            # We have an improvement
-            best_estimator_ts = estimator_ts
-            no_improvement_count = 0
-        else:
-            # No significant improvement
-            no_improvement_count += 1
-        # Check if we should stop early
-        if no_improvement_count >= params['patience']:
-            print(f"Early stopping triggered after {epoch+1} epochs. Best estimator_ts: {best_estimator_ts}")
-            break
-    
-    return np.array(estimates_mi_train), np.array(estimates_mi_test)
-
-
-
-def train_model_no_eval(model_func, full_dataset, params, model_save_dir, device=device):
-    """
-    Generalized training function for DSIB and DVSIB models with early stopping.
-    Version that does not run evaluation! Skimps on that to save time, returns only mi values from test
-    Args:
-        model: The model to train (DSIB or DVSIB).
-        data: Tuple of (train, test, eval) dataloaders. 
-            Assumes uses BatchSubsetDataset with custom sampler
-            Assumes loaders return X, Y of shapes (M_x, N) and (M_y, N)
-    Returns:
-        An array test_estimates containing mutual information estimates of TEST SET ONLY
-    """
-    # Initialize model
-    model_name = model_func.__name__
-    model = model_func(params)
-    model.to(device)  # Ensure model is on GPU
-    # Make save directory if it doesn't exist, generate unique model id
-    os.makedirs(model_save_dir, exist_ok=True)
-    train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["batch_size"]}_' + str(uuid.uuid4())
-    # Pull out data loaders
-    train_data, (test_X, test_Y), _ = full_dataset
-    # If image model, change shape of test data
-    if params['data_form'] == 'image':
-        test_X = test_X.T.unsqueeze(0).unsqueeze(0)
-        test_Y = test_Y.T.unsqueeze(0).unsqueeze(0)
-    # Initialize variables
-    epochs = params['epochs']
-    opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
-    estimates_mi_test = []
-    best_estimator_ts = float('-inf')  # Initialize with negative infinity
-    no_improvement_count = 0
-    for epoch in range(epochs):
-        start = time.time()
-        for i, (x, y) in enumerate(iter(train_data)):
-            # Squeeze to remove batch dim. BatchedDataset handles batches, so it's always just 1
-            # If using CNN (treating whole batch as image), keep batch index as conv2d wants 3d arrays
-            if params['data_form'] != 'image':
-                x, y = x.squeeze(dim=0).T.to(device), y.squeeze(dim=0).T.to(device)
-            else:
-                x, y = x.unsqueeze(0).to(device), y.unsqueeze(0).to(device)
-            opt.zero_grad()
-            # Compute loss based on model type
-            if model_name == "DSIB":
-                loss = model(x, y)  # DSIB returns a single loss
-            elif model_name == "DVSIB":
-                loss, _, _ = model(x, y)  # DVSIB returns three outputs
-            else:
-                raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
-            loss.backward()
-            opt.step()
-        print(f'Train time = {time.time() - start}')
-        # Test model at every epoch
-        with torch.no_grad():
-            if model_name == "DSIB":
-                start = time.time()
-                estimator_ts = -model(test_X, test_Y)
+                torch.cuda.synchronize()
                 print(f'Test time = {time.time() - start}')
             elif model_name == "DVSIB": # Get lossGout, that is the mi value
                 _, _, estimator_ts = model(test_X, test_Y)
@@ -396,27 +225,27 @@ def retrieve_best_model(model_save_dir, mi_test, train_id=None, remove_others=Tr
 
 
 
-def run_trial(j, model_func, input_queue, results_queue, params, device):
-    """
-    Run a single trial j (and possibly other conditions in opt_params, critic_params, etc)
+# def run_trial(j, model_func, input_queue, results_queue, params, device):
+#     """
+#     Run a single trial j (and possibly other conditions in opt_params, critic_params, etc)
     
-    Parameters:
-        j (int): Trial index.
-        input_queue: multiprocessing queue to retrieve dataset from
-        results_queue: multiprocessing queue to send result MI values to
-        params (dict): Optimization and critic parameters
-        device: Device to use (e.g., 'cuda', 'mps', 'cpu').
-    Returns:
-        tuple: Results for this trial (key, mis, mis_test).
-    """
-    # Set device explicitly for this process (?)
-    # torch.cuda.empty_cache()  # Clear cache before starting
-    torch.device(device)
-    # Get dataset from queue, create dataloader for train, split out eval and test
-    dataset = input_queue.get()
-    full_dataset = create_data_split(dataset, train_fraction=0.95, device=device)
-    # Initialize and train the model
-    mis, mis_test = train_model(model_func, full_dataset, params)
-    # Return results as a tuple
-    results_queue.put((f"trial_{j}_dz_{params['embed_dim']}", mis, mis_test))
-    # return f"trial_{j}_dz_{dz}", mis, mis_test
+#     Parameters:
+#         j (int): Trial index.
+#         input_queue: multiprocessing queue to retrieve dataset from
+#         results_queue: multiprocessing queue to send result MI values to
+#         params (dict): Optimization and critic parameters
+#         device: Device to use (e.g., 'cuda', 'mps', 'cpu').
+#     Returns:
+#         tuple: Results for this trial (key, mis, mis_test).
+#     """
+#     # Set device explicitly for this process (?)
+#     # torch.cuda.empty_cache()  # Clear cache before starting
+#     torch.device(device)
+#     # Get dataset from queue, create dataloader for train, split out eval and test
+#     dataset = input_queue.get()
+#     full_dataset = create_data_split(dataset, train_fraction=0.95, device=device)
+#     # Initialize and train the model
+#     mis, mis_test = train_model(model_func, full_dataset, params)
+#     # Return results as a tuple
+#     results_queue.put((f"trial_{j}_dz_{params['embed_dim']}", mis, mis_test))
+#     # return f"trial_{j}_dz_{dz}", mis, mis_test

@@ -105,65 +105,51 @@ class var_mlp(nn.Module):
     def __init__(self, dim, hidden_dim, output_dim, layers, activation):
         """Create a variational mlp from the configurations."""
         super(var_mlp, self).__init__()
-    
         # Initialize the layers list
         seq = []
-    
         # Input layer
         seq.append(nn.Linear(dim, hidden_dim))
         seq.append(activation())
         nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
-    
         # Hidden layers
         for _ in range(layers):
             layer = nn.Linear(hidden_dim, hidden_dim)
             nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
             seq.append(activation())
-    
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
-    
         # Two heads for means and log variances
         self.fc_mu = nn.Linear(hidden_dim, output_dim)
         self.fc_logvar = nn.Linear(hidden_dim, output_dim)
-        
         # Initialize the heads with Xavier initialization
         nn.init.xavier_uniform_(self.fc_mu.weight)
         nn.init.xavier_uniform_(self.fc_logvar.weight)
-        
         # Normal distribution for sampling
         self.N = torch.distributions.Normal(0, 1)
         self.N.loc = self.N.loc.to(device)
         self.N.scale = self.N.scale.to(device)
-        
         # KL Divergence loss initialized to zero
         self.kl_loss = 0.0
-        
         # Set limits for numerical stability
         self.logvar_min = -20  # Lower bound for logVar
         self.logvar_max = 20   # Upper bound for logVar
 
     def forward(self, x):
         x = self.base_network(x)
-        
         # Get mean and log variance
         meanz = self.fc_mu(x)
         logVar = self.fc_logvar(x)
-
         # Clamp logVar to prevent extreme values
         logVar = torch.clamp(logVar, min=self.logvar_min, max=self.logvar_max)
-        
         # Compute KL divergence loss
         kl_terms = 0.5 * (torch.square(meanz) + torch.exp(logVar) - 1 - logVar)
         self.kl_loss = torch.mean(torch.sum(kl_terms, dim=1))
-
         # Check for NaN in KL loss
         if torch.isnan(self.kl_loss):
             print("NaN detected in KL loss!")
             # Use a small default value instead of NaN
             self.kl_loss = torch.tensor(0.1, device=device, requires_grad=True)
-        
         # Reparameterization trick
         epsilon = self.N.sample(meanz.shape)
         std = torch.exp(0.5 * logVar)
@@ -236,6 +222,100 @@ def log_prob_gaussian(x):
     return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
 
+class var_cnn_mlp(nn.Module):
+    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation):
+        """
+        Create a variational CNN-MLP hybrid model from the configurations.
+        
+        Args:
+            input_channels (int): Number of input channels (e.g., 3 for RGB images).
+            hidden_dim (int): Number of hidden units in fully connected layers.
+            output_dim (int): Dimensionality of the latent space (mean and log variance).
+            conv_layers (int): Number of convolutional layers.
+            fc_layers (int): Number of fully connected layers after GAP.
+            activation (str): Activation function to use (e.g., 'relu', 'tanh').
+        """
+        super(var_cnn_mlp, self).__init__()
+        
+        # Define activation functions
+        activation_fn = {
+            'relu': nn.ReLU,
+            'sigmoid': nn.Sigmoid,
+            'tanh': nn.Tanh,
+            'leaky_relu': nn.LeakyReLU,
+            'silu': nn.SiLU,
+        }[activation]
+        
+        # Convolutional layers
+        conv_seq = []
+        in_channels = input_channels
+        out_channels = 32  # Start with 32 filters
+        for _ in range(conv_layers):
+            conv_seq.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
+            conv_seq.append(activation_fn())
+            conv_seq.append(nn.MaxPool2d(kernel_size=2, stride=2))  # Downsample spatial dimensions
+            in_channels = out_channels
+            out_channels *= 2  # Double the number of filters in each layer
+        self.conv_network = nn.Sequential(*conv_seq)
+        # Global Average Pooling (GAP)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        # Fully connected layers
+        fc_seq = []
+        in_features = in_channels  # After GAP, the number of features equals the number of channels
+        for _ in range(fc_layers):
+            fc_seq.append(nn.Linear(in_features, hidden_dim))
+            fc_seq.append(activation_fn())
+            in_features = hidden_dim
+        self.fc_network = nn.Sequential(*fc_seq)
+        # Two heads for mean and log variance
+        self.fc_mu = nn.Linear(in_features, output_dim)
+        self.fc_logvar = nn.Linear(in_features, output_dim)
+        # Initialize weights
+        self._initialize_weights()
+        # Normal distribution for sampling
+        self.N = torch.distributions.Normal(0, 1)
+        self.N.loc = self.N.loc.to(device)  # Move to the appropriate device
+        self.N.scale = self.N.scale.to(device)
+        # KL Divergence loss initialized to zero
+        self.kl_loss = 0.0
+        # Set limits for numerical stability
+        self.logvar_min = -20  # Lower bound for logVar
+        self.logvar_max = 20   # Upper bound for logVar
+
+    def _initialize_weights(self):
+        """Initialize weights using Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+
+    def forward(self, x):
+        # Pass through convolutional layers
+        x = self.conv_network(x)
+        # Apply global average pooling
+        x = self.global_avg_pool(x)
+        x = torch.flatten(x, 1)  # Flatten to [batch_size, num_features]
+        # Pass through fully connected layers
+        x = self.fc_network(x)
+        # Get mean and log variance
+        meanz = self.fc_mu(x)
+        logVar = self.fc_logvar(x)
+        # Clamp logVar to prevent extreme values
+        logVar = torch.clamp(logVar, min=self.logvar_min, max=self.logvar_max)
+        # Compute KL divergence loss
+        kl_terms = 0.5 * (torch.square(meanz) + torch.exp(logVar) - 1 - logVar)
+        self.kl_loss = torch.mean(torch.sum(kl_terms, dim=1))
+        # Check for NaN in KL loss
+        if torch.isnan(self.kl_loss):
+            print("NaN detected in KL loss!")
+            # Use a small default value instead of NaN
+            self.kl_loss = torch.tensor(0.1, device=device, requires_grad=True)
+        # Reparameterization trick
+        epsilon = self.N.sample(meanz.shape)
+        std = torch.exp(0.5 * logVar)
+        samples = meanz + std * epsilon
+        return [meanz, logVar, samples]
+
+
 class decoder_INFO(nn.Module):
     def __init__(self, typeEstimator, mode="sep", baseline_fn=None):
         super(decoder_INFO, self).__init__()
@@ -269,17 +349,16 @@ def write_config(args):
 class BatchedDataset(Dataset):
     """
     Dataset that supports both batch-wise and full data access.
-    Maintains only one copy of data in memory, supposedly
+    Maintains only one copy of data in memory
+    Simpler, lighter weight version than BatchedDatasetWithNoise
     """
-    def __init__(self, X, Y, batch_size):
+    def __init__(self, X, Y, batch_size, check_activity=False):
         """
         Args:
             X (torch.Tensor): First time series data of shape [M_x, N]
             Y (torch.Tensor): Second time series data of shape [M_y, N]
-            batch_size (int): Size of each batch
+            batch_size (int): Size of each window
         """
-        self.X = X
-        self.Y = Y
         self.batch_size = batch_size
         # Create batch indices
         self.total_batches = (X.shape[1] + batch_size - 1) // batch_size
@@ -287,21 +366,113 @@ class BatchedDataset(Dataset):
         self.batch_indices = []
         for i in range(self.total_batches):
             start_idx = i * batch_size
-            end_idx = min(start_idx + batch_size, X.shape[1])
-            start_ind = start_idx
-            end_ind = end_idx
-            if torch.any(X[:, start_ind:end_ind] > 0) and torch.any(Y[:, start_ind:end_ind] > 0):
-                self.batch_indices.append((start_ind, end_ind))
+            end_idx = start_idx + batch_size
+            # Windows must all be same size, ignore last one if too small
+            if end_idx > X.shape[1]:
+                continue
+            # If asked, check if activity in X and Y for this window. Can be slow
+            if check_activity:
+                should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
+                if not should_append:
+                    continue
+            self.batch_indices.append((start_idx, end_idx))
+        self.n_batches = len(self.batch_indices)
+        # Store X, Y in pre-chunked form
+        self.X = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
+        self.Y = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
+        for i in range(self.n_batches):
+            indices = self.batch_indices[i]
+            self.X[i,0,:,:] = X[:, indices[0]:indices[1]]
+            self.Y[i,0,:,:] = Y[:, indices[0]:indices[1]]
     def __len__(self):
-        return len(self.batch_indices)
+        return self.n_batches
     def __getitem__(self, idx):
         """Return a batch at the specified batch index."""
-        indices = self.batch_indices[idx]
-        return self.X[:, indices[0]:indices[1]], self.Y[:, indices[0]:indices[1]]
-    def get_multibatch(self, idxlist):
-        """Return a list of batch indices as one vector"""
-        indices = torch.concat([torch.arange(s,e) for s,e in [self.batch_indices[idx] for idx in idxlist]])
-        return self.X[:, indices], self.Y[:, indices]
+        return self.X[idx,:,:,:], self.Y[idx,:,:,:]
+
+
+class BatchedDatasetWithNoise(Dataset):
+    """
+    Dataset that supports both batch-wise and full data access.
+    Maintains master copy of data in memory, as well as duplicate on which noise can be applied to spike timings
+    Will always return Xnoise, to protect master copy X. 
+    X will also always be preserved in [nchannels x ntimepoints] shape, whereas Xnoise is set to chunked/windowed form
+    """
+    def __init__(self, X, Y, batch_size, check_activity=False):
+        """
+        Args:
+            X (torch.Tensor): First time series data of shape [M_x, N]
+            Y (torch.Tensor): Second time series data of shape [M_y, N]
+            batch_size (int): Size of each window
+        """
+        self.batch_size = batch_size
+        # Create batch indices
+        self.total_batches = (X.shape[1] + batch_size - 1) // batch_size
+        # Pre-compute valid batch indices (those with non-zero X and Y)
+        self.batch_indices = []
+        for i in range(self.total_batches):
+            start_idx = i * batch_size
+            end_idx = start_idx + batch_size
+            # Windows must all be same size, ignore last one if too small
+            if end_idx > X.shape[1]:
+                continue
+            # If asked, check if activity in X and Y for this window. Can be slow
+            if check_activity:
+                should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
+                if not should_append:
+                    continue
+            self.batch_indices.append((start_idx, end_idx))
+        self.n_batches = len(self.batch_indices)
+        # Store X, Y in un-chunked form, noise-equivalent versions in pre-chunked form
+        self.X = X
+        self.Y = Y
+        self.Xnoise = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
+        self.Ynoise = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
+        for i in range(self.n_batches):
+            indices = self.batch_indices[i]
+            self.Xnoise[i,0,:,:] = X[:, indices[0]:indices[1]]
+            self.Ynoise[i,0,:,:] = Y[:, indices[0]:indices[1]]
+        # Get spike indices
+        self.spike_indices = torch.where(self.Xnoise)
+        self.spike_indices_Y = torch.where(self.Ynoise)
+    def __len__(self):
+        return self.n_batches
+    def __getitem__(self, idx):
+        """Return a batch at the specified batch index."""
+        return self.Xnoise[idx,:,:,:], self.Ynoise[idx,:,:,:]
+    def apply_noise(self, amplitude):
+        """
+        Apply noise to spike times of noisy version of X. 
+        Amplitude is in units of samples
+        """
+        self.Xnoise.zero_()
+        noise = torch.rand(self.spike_indices[3].shape, device=device)
+        noise.mul_(amplitude).round_()  # In-place operations
+        new_indices = torch.clip(self.spike_indices[3] + noise.int(), 0, self.Xnoise.shape[3] - 1)
+        self.Xnoise[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], new_indices] = 1
+    def apply_noise_Y(self, amplitude):
+        """
+        Apply noise to spike times of noisy version of Y. 
+        Amplitude is in units of samples
+        """
+        self.Ynoise.zero_()
+        noise = torch.rand(self.spike_indices[3].shape, device=device)
+        noise.mul_(amplitude).round_()  # In-place operations
+        new_indices = torch.clip(self.spike_indices[3] + noise.int(), 0, self.Ynoise.shape[3] - 1)
+        self.Ynoise[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], new_indices] = 1
+    def time_lag(self, lag, channels=None):
+        """
+        Apply time lag to spike times of all (or specific) neurons/muscles 
+        Positive lag shifts entries rightward (forward in time), negative the opposite
+        """
+        if channels is None:
+            channels = torch.arange(self.X.shape[0])
+        # Re-make Xnoise from rolled copy of X
+        tempX = self.X.detach().clone()
+        tempX[channels,:] = torch.roll(tempX[channels,:], lag)
+        for i in range(self.n_batches):
+            indices = self.batch_indices[i]
+            self.Xnoise[i,0,:,:] = tempX[:, indices[0]:indices[1]]
 
 
 def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_from_train=True, device=None):
@@ -347,16 +518,14 @@ def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_fro
         eval_Y = eval_Y.to(device)
     return train_loader, (test_X, test_Y), (eval_X, eval_Y)
 
-def create_cnn_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=None, eval_from_train=True, device=None):
+def create_cnn_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=None, eval_from_train=True):
     """
     Creates train loader and test/eval data views
     Args:
         dataset (FullAndBatchedDataset): The dataset containing all data
         train_fraction (float): Fraction of batches to use for training
-        device (torch.device): Device to move test/eval data to
-        
     Returns:
-        tuple: (train_loader, test_data, eval_data)
+        tuple: (train_loader, test_indices, eval_indices)
     """
     # Generate train/test splits
     train_size = int(train_fraction * len(dataset.batch_indices))
@@ -378,10 +547,7 @@ def create_cnn_data_split(dataset, batch_size, train_fraction=0.95, eval_fractio
         sampler=SubsetRandomSampler(train_indices),
         num_workers=0  # Adjust based on your system
     )
-    # Get test and eval data as views. Batches are presented in a random order (but that shouldn't matter)
-    test_loader = DataLoader(dataset, batch_size=len(test_indices), sampler=SubsetRandomSampler(test_indices))
-    eval_loader = DataLoader(dataset, batch_size=len(eval_indices), sampler=SubsetRandomSampler(eval_indices))
-    return train_loader, test_loader, eval_loader
+    return train_loader, test_indices, eval_indices
 
 
 # HISTORICAL FUNCTION. Kept in case of future need. Use read_spike_data, much faster (though only binarizes)
@@ -472,8 +638,10 @@ def process_spike_data_old(base_name, bin_size=None, neuron_label_filter=None, b
 # Read neuron and muscle data for one moth, return X and Y with specific binning
 def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000):
     """
-    Processes spike data from a .npz file into neural (X) and muscle (Y) activity tensors.
+    Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
     Returns bool, always binarizes. If a bin has multiple spikes occur, will just appear as 1
+    Requires a data, labels, and bouts file for each moth. 
+    Assumes no spike data occurs outside of bouts
     
     Parameters:
         base_name (str): Base name of the files (e.g., '2025-03-21').
@@ -491,9 +659,12 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
     """
     # Type handling
     use_dtype = torch.bool
+    # Scale factor if downsampling needed
+    scale = bin_size * sample_rate if bin_size is not None else 1
     # Construct file paths
     data_file = f"{base_name}_data.npz"
     labels_file = f"{base_name}_labels.npz"
+    bouts_file = f"{base_name}_bouts.npz"
     # Load the spike data
     if not os.path.exists(data_file):
         raise FileNotFoundError(f"Data file '{data_file}' not found.")
@@ -504,6 +675,11 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
     if os.path.exists(labels_file):
         labels_data = np.load(labels_file)
         labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+    # Load bout start and end indices, rescale by scale factor. (-1 is b/c coming from 1-index Julia)
+    bouts = np.load(bouts_file)
+    starts, ends = bouts['starts'], bouts['ends']
+    starts = np.rint((starts - 1) / scale).astype(int)
+    ends = np.rint((ends - 1) / scale).astype(int)
     # Separate neurons and muscles, applying filtering if needed
     neuron_labels = []
     muscle_labels = []
@@ -517,10 +693,8 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
                 neuron_labels.append(unit)  # No filtering if no labels file
         else:  # Alphabetic labels are muscles
             muscle_labels.append(unit)
-    # Scale factor if downsampling needed
-    scale = bin_size * sample_rate if bin_size is not None else 1
     # Find the maximum spike index to determine total time points
-    max_spike_index = int(max([data[unit].max() for unit in units]) / scale)
+    max_spike_index = ends[-1]
     # Initialize tensors for neural and muscle activity
     X = torch.zeros((len(neuron_labels), max_spike_index + 1), dtype=use_dtype)  # Neural activity
     Y = torch.zeros((len(muscle_labels), max_spike_index + 1), dtype=use_dtype)  # Muscle activity
@@ -538,6 +712,10 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
         else:
             indices = np.rint(data[unit] / scale)
         Y[i, indices] = 1
+    # Trim to only bouts
+    indices = torch.concat([torch.arange(s,e, dtype=int) for s,e in zip(starts, ends)])
+    X = X[:,indices]
+    Y = Y[:,indices]
     # Return results
     return X, Y, neuron_labels, muscle_labels
 
