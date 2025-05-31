@@ -50,9 +50,7 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
     for epoch in range(epochs):
-        print(f'Memory allocated = {torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated}')
-        continue
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
         start = time.time()
         for i, (x, y) in enumerate(iter(train_loader)):
             opt.zero_grad()
@@ -65,20 +63,20 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
                 raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
             loss.backward()
             opt.step()
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
         print(f'Train time = {time.time() - start}')
         # Test model at every epoch
         with torch.no_grad():
             if model_name == "DSIB":
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 start = time.time()
                 estimator_tr = -model(eval_X, eval_Y)
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 print(f'Eval time = {time.time() - start}')
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 start = time.time()
                 estimator_ts = -model(test_X, test_Y)
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 print(f'Test time = {time.time() - start}')
             elif model_name == "DVSIB": # Get lossGout, that is the mi value
                 _, _, estimator_ts = model(test_X, test_Y)
@@ -136,7 +134,7 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
     for epoch in range(epochs):
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
         start = time.time()
         for i, (x, y) in enumerate(iter(train_loader)):
             opt.zero_grad()
@@ -149,15 +147,15 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
                 raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
             loss.backward()
             opt.step()
-        torch.cuda.synchronize()
+        torch.mps.synchronize()
         print(f'Train time = {time.time() - start}')
         # Test model at every epoch
         with torch.no_grad():
             if model_name == "DSIB":
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 start = time.time()
                 estimator_ts = -model(test_X, test_Y)
-                torch.cuda.synchronize()
+                torch.mps.synchronize()
                 print(f'Test time = {time.time() - start}')
             elif model_name == "DVSIB": # Get lossGout, that is the mi value
                 _, _, estimator_ts = model(test_X, test_Y)

@@ -51,23 +51,31 @@ class DSIB(nn.Module):
 
     def forward(self, dataX, dataY):
         batch_size = dataX.shape[0]  # Dynamically infer batch size
-        if self.params['mode'] in ["sep", "bi"]:
-            zX = self.encoder_x(dataX)
-            zY = self.encoder_y(dataY)
-            if self.params['mode'] == "bi":
-                # Get the rotated version ready 
-                zX = self.bilinear(zX)
-            mi = self.info(zX, zY, batch_size)
-            lossGout = mi
-        elif self.params['mode'] == "concat":
+        # Concat version
+        if self.params['mode'] == "concat":
             x_expanded = dataX.repeat(batch_size, 1)  # Repeat batch_size times
             y_expanded = dataY.repeat_interleave(batch_size, dim=0)  # Repeat within batch
             xy_pairs = torch.cat((x_expanded, y_expanded), dim=1)  # Concatenate along feature dim
             scores = self.encoder_xy(xy_pairs)
-            mi = self.info(scores, None, batch_size)  # scores is in the place of zX
-            lossGout = mi
-        loss = -lossGout
-        return loss
+            lossGout = self.info(scores, None, batch_size)  # scores is in the place of zX
+            return -lossGout
+        # Otherwise sep or bi
+        # If input is too large, run mini batches
+        if batch_size > self.params['max_n_batches']:
+            zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
+            zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
+            for i in range(0, batch_size, self.params['batch_size']):
+                end_idx = min(i + self.params['batch_size'], batch_size)
+                zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:,:])
+                zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:,:])
+        else:
+            zX = self.encoder_x(dataX)
+            zY = self.encoder_y(dataY)
+        if self.params['mode'] == "bi":
+            # Get the rotated version ready 
+            zX = self.bilinear(zX)
+        lossGout = self.info(zX, zY, batch_size)
+        return -lossGout
 
 class DVSIB(nn.Module):
     def __init__(self, params, baseline_fn=None):

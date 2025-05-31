@@ -177,7 +177,12 @@ class cnn_mlp(nn.Module):
         in_channels = input_channels
         out_channels = 32  # Start with 32 filters
         for i in range(conv_layers):
-            conv_seq.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if i > 0 else 1, padding=1))
+            conv_seq.append(nn.Conv2d(in_channels, out_channels, 
+                kernel_size=(1,3) if i == 0 else 3, 
+                stride=2 if i > 0 else 1, 
+                padding=1, 
+                # dilation=3, 
+                bias=False))
             conv_seq.append(nn.BatchNorm2d(out_channels))  # Add batch normalization
             conv_seq.append(activation())
             in_channels = out_channels
@@ -443,7 +448,8 @@ class BatchedDatasetWithNoise(Dataset):
     def apply_noise(self, amplitude):
         """
         Apply noise to spike times of noisy version of X. 
-        Amplitude is in units of samples
+        Args: 
+            amplitude: added uniform noise amplitude, units of samples
         """
         self.Xnoise.zero_()
         noise = torch.rand(self.spike_indices[3].shape, device=device)
