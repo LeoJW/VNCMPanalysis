@@ -21,7 +21,7 @@ else:
     device = "cpu"
 
 # Train functions specific to CNN model architecture
-def train_cnn_model(model_func, full_dataset, params, device=device):
+def train_cnn_model(full_dataset, params, device=device):
     """
     Generalized training function for DSIB and DVSIB models with early stopping.
     This version does run evaluation! Run time is slower as a result, but more straightforward
@@ -34,9 +34,8 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
         An array test_estimates containing mutual information estimates of TEST SET ONLY
     """
     # Initialize model
-    model_name = model_func.__name__
-    model = model_func(params)
-    model.to(device)  # Ensure model is on GPU
+    model_name = params['model_func'].__name__
+    model = params['model_func'](params).to(device)
     # Create training dataloader, get indices for test and eval sets
     train_loader, test_indices, eval_indices = create_cnn_data_split(full_dataset, params['batch_size'], params['train_fraction'])
     # Pull out test, eval data. Not using a loader as model just needs to do single pass over block of data
@@ -105,7 +104,7 @@ def train_cnn_model(model_func, full_dataset, params, device=device):
     return np.array(estimates_mi_train), np.array(estimates_mi_test), model
 
 
-def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, device=device):
+def train_cnn_model_no_eval(full_dataset, params, model_save_dir, device=device):
     """
     Generalized training function for DSIB and DVSIB models with early stopping.
     Version that does not run evaluation! Skimps on that to save time, returns only mi values from test
@@ -118,9 +117,8 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
         An array test_estimates containing mutual information estimates of TEST SET ONLY
     """
     # Initialize model
-    model_name = model_func.__name__
-    model = model_func(params)
-    model.to(device)  # Ensure model is on GPU
+    model_name = params['model_func'].__name__
+    model = params['model_func'](params).to(device)
     # Make save directory if it doesn't exist, generate unique model id
     os.makedirs(model_save_dir, exist_ok=True)
     train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["window_size"]}_' + str(uuid.uuid4())
@@ -164,7 +162,7 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
         print(f"Epoch: {epoch+1}, {model_name}, test: {estimator_ts}", flush=True)
         # Save snapshot of model
         torch.save(
-            model, 
+            model.state_dict(), 
             os.path.join(model_save_dir, f'epoch{epoch}_' + train_id + '.pt')
         )
         # Check for improvement, negative values, or nans
@@ -187,15 +185,15 @@ def train_cnn_model_no_eval(model_func, full_dataset, params, model_save_dir, de
     return np.array(estimates_mi_test), train_id
 
 
-def retrieve_best_model(model_save_dir, mi_test, train_id=None, remove_others=True, burn_in=4, smooth=True, sigma=1):
+def retrieve_best_model(model_save_dir, mi_test, params, train_id=None, remove_others=True, smooth=True, sigma=1, device=device):
     """
     Given a directory for a training run and test MI/loss, loads the model of the best epoch
     Deletes the rest of the model files
     Parameters:
         model_save_dir (string/path): Directory model files are stored in
         mi_test (np vector): Vector of test MI at each epoch 
+        params (dict): Dictionary of standard model parameters, should match params used during training run. Used for creating model
         train_id (string): Timestamp unique identifier for that training run. Inferred if not provided
-        burn_in (int): Number of initial epochs to ignore. No way it gets it on the first try, right?
     """
     # Get unique training ids
     valid_files = [f for f in os.listdir(model_save_dir) if '.pt' in f]
@@ -208,7 +206,7 @@ def retrieve_best_model(model_save_dir, mi_test, train_id=None, remove_others=Tr
     if smooth:
         mi_test = gaussian_filter1d(mi_test, sigma=sigma)
     # Grab best epoch
-    best_epoch = np.argmax(mi_test[burn_in:]) + burn_in
+    best_epoch = np.argmax(mi_test)
     # Get all files associated with this id, load good one and trash the rest
     match_files = [f for f in valid_files if train_id in f]
     good_file_idx = [idx for idx,s in enumerate(match_files) if f'epoch{best_epoch}' in s][0]
@@ -217,7 +215,8 @@ def retrieve_best_model(model_save_dir, mi_test, train_id=None, remove_others=Tr
         for file in match_files:
             os.remove(os.path.join(model_save_dir, file))
     # Determine model class, instantiate and load
-    model = torch.load(os.path.join(model_save_dir, good_file), weights_only=False)
+    model = params['model_func'](params).to(device)
+    model.load_state_dict(torch.load(os.path.join(model_save_dir, good_file), weights_only=True, map_location=device))
     model.eval()
     return model
 
