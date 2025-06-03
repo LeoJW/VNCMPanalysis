@@ -99,8 +99,7 @@ def nwj_lower_bound(scores):
 
 
 def infonce_lower_bound(scores):
-    nll = scores.diag().mean() - scores.logsumexp(dim=1)
-    mi = torch.tensor(scores.size(0)).float().log() + nll
+    mi = scores.diag().mean() - scores.logsumexp(dim=1) + torch.as_tensor(scores.size(0)).log()
     mi = mi.mean()
     return mi
 
