@@ -158,7 +158,7 @@ class var_mlp(nn.Module):
 
 
 class cnn_mlp(nn.Module):
-    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation):
+    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation, stride):
         """
         Create a CNN-MLP hybrid model with batch normalization and strided convolutions.
         
@@ -177,14 +177,11 @@ class cnn_mlp(nn.Module):
         in_channels = input_channels
         out_channels = 32  # Start with 32 filters
         for i in range(conv_layers):
-            conv_seq.append(nn.Conv2d(in_channels, out_channels, 
-                kernel_size=(1,3) if i == 0 else 3, 
-                stride=2 if i > 0 else 1, 
-                padding=1, 
-                # dilation=3, 
-                bias=False))
-            conv_seq.append(nn.BatchNorm2d(out_channels))  # Add batch normalization
-            conv_seq.append(activation())
+            conv_seq.append(nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride if i > 0 else 1, padding=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                activation()
+            ))
             in_channels = out_channels
             out_channels *= 2  # Double the number of filters in each layer
         self.conv_network = nn.Sequential(*conv_seq)
@@ -223,8 +220,117 @@ class cnn_mlp(nn.Module):
         out = self.out(x)
         return out
 
-def log_prob_gaussian(x):
-    return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
+
+class MultiScaleConvBlock(nn.Module):
+    """
+    A multi-scale convolutional block with parallel branches of different kernel sizes.
+    Captures features at multiple scales and concatenates them.
+    """
+    def __init__(self, in_channels, out_channels, stride=1, activation=nn.ReLU):
+        super(MultiScaleConvBlock, self).__init__()
+        # Calculate channels for each branch (distribute output channels more flexibly)
+        # Strategy: Give larger branches slightly more channels
+        base_channels = out_channels // 2
+        remainder = out_channels % 2
+        # Distribute remainder channels to branches (prioritize faster branches)
+        branch1_channels = base_channels + remainder  # 3x3 conv  
+        branch2_channels = base_channels + remainder  # 5x5 conv
+        # Branch 1: 3x3 conv (standard receptive field)
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_channels, branch1_channels, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(branch1_channels),
+            activation()
+        )
+        # Branch 2: 3x3 conv with dilation (larger receptive field)
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(in_channels, branch2_channels, kernel_size=3, stride=stride, dilation=2, padding=2, bias=False),
+            nn.BatchNorm2d(branch2_channels),
+            activation()
+        )
+    
+    def forward(self, x):
+        # Process through all branches in parallel
+        branch1_out = self.branch1(x)
+        branch2_out = self.branch2(x)
+        # Concatenate all branches along channel dimension to get out_channels outputs
+        return torch.cat([branch1_out, branch2_out], dim=1)
+
+class multi_cnn_mlp(nn.Module):
+    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation, stride, n_filters, branch_layout):
+        """
+        Create a CNN-MLP hybrid model with batch normalization and strided convolutions.
+        
+        Args:
+            input_channels (int): Number of input channels (e.g., 3 for RGB images).
+            hidden_dim (int): Number of hidden units in fully connected layers.
+            output_dim (int): Dimensionality of the output embedding.
+            conv_layers (int): Number of convolutional layers.
+            fc_layers (int): Number of fully connected layers after GAP.
+            activation (str): Activation function to use (e.g., 'relu', 'tanh').
+        """
+        super(multi_cnn_mlp, self).__init__()
+        
+        # Multi-scale convolutional layers with strided convolutions and batch normalization
+        conv_seq = []
+        in_channels = input_channels
+        out_channels = n_filters
+        # Please re-write this to not be insane
+        for i in range(conv_layers):
+            if branch_layout is None:
+                conv_seq.append(nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1 if i == 0 else stride, padding=1, bias=False),
+                    nn.BatchNorm2d(out_channels),
+                    activation()
+                ))
+            elif branch_layout is '1':
+                if i == 0:
+                    conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1, activation=activation))
+                else:
+                    conv_seq.append(nn.Sequential(
+                        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1 if i == 0 else stride, padding=1, bias=False),
+                        nn.BatchNorm2d(out_channels),
+                        activation()
+                    ))
+            else:
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, activation=activation))
+            # Double the number of filters in each layer
+            in_channels = out_channels
+            out_channels *= 2
+        self.conv_network = nn.Sequential(*conv_seq)
+        # Global Average Pooling (GAP)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        # Fully connected layers
+        fc_seq = []
+        in_features = in_channels  # After GAP, the number of features equals the number of channels
+        for _ in range(fc_layers):
+            fc_seq.append(nn.Linear(in_features, hidden_dim))
+            fc_seq.append(activation())
+            in_features = hidden_dim
+        self.fc_network = nn.Sequential(*fc_seq)
+        # Output layer
+        self.out = nn.Linear(in_features, output_dim)
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Initialize weights using Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x):
+        # Pass through branches of convolutional layers
+        x = self.conv_network(x)
+        # Concatenate along channel dimension, apply global average pooling
+        x = self.global_avg_pool(x)
+        x = torch.flatten(x, 1)  # Flatten to [batch_size, num_features]
+        # Pass through fully connected layers
+        x = self.fc_network(x)
+        # Get output
+        out = self.out(x)
+        return out
 
 
 class var_cnn_mlp(nn.Module):
@@ -350,6 +456,8 @@ def write_config(args):
     with open(out_fp, 'w') as fh:
         json.dump(vars(args), fh)
 
+def log_prob_gaussian(x):
+    return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
 class BatchedDataset(Dataset):
     """
@@ -429,56 +537,61 @@ class BatchedDatasetWithNoise(Dataset):
             self.batch_indices.append((start_idx, end_idx))
         self.n_batches = len(self.batch_indices)
         # Store X, Y in un-chunked form, noise-equivalent versions in pre-chunked form
-        self.X = X
-        self.Y = Y
-        self.Xnoise = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
-        self.Ynoise = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
+        self.Xmain = X
+        self.Ymain = Y
+        self.X = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
+        self.Y = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
         for i in range(self.n_batches):
             indices = self.batch_indices[i]
-            self.Xnoise[i,0,:,:] = X[:, indices[0]:indices[1]]
-            self.Ynoise[i,0,:,:] = Y[:, indices[0]:indices[1]]
+            self.X[i,0,:,:] = X[:, indices[0]:indices[1]]
+            self.Y[i,0,:,:] = Y[:, indices[0]:indices[1]]
         # Get spike indices
-        self.spike_indices = torch.where(self.Xnoise)
-        self.spike_indices_Y = torch.where(self.Ynoise)
+        self.spike_indices = torch.where(self.X)
+        self.spike_indices_Y = torch.where(self.Y)
+        # Intermediate tensor for holding noise indices
+        self.new_indices = torch.zeros_like(self.spike_indices[3], device=device, dtype=int)
     def __len__(self):
         return self.n_batches
     def __getitem__(self, idx):
         """Return a batch at the specified batch index."""
-        return self.Xnoise[idx,:,:,:], self.Ynoise[idx,:,:,:]
+        return self.X[idx,:,:,:], self.Y[idx,:,:,:]
     def apply_noise(self, amplitude):
         """
         Apply noise to spike times of noisy version of X. 
         Args: 
             amplitude: added uniform noise amplitude, units of samples
         """
-        self.Xnoise.zero_()
-        noise = torch.rand(self.spike_indices[3].shape, device=device)
-        noise.mul_(amplitude).round_()  # In-place operations
-        new_indices = torch.clip(self.spike_indices[3] + noise.int(), 0, self.Xnoise.shape[3] - 1)
-        self.Xnoise[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], new_indices] = 1
+        self.X.zero_()
+        self.new_indices = torch.clip(
+            self.spike_indices[3] + torch.rand(self.spike_indices[3].shape, device=device).mul_(amplitude).round_().int(), 
+            0, 
+            self.X.shape[3] - 1)
+        self.X[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], self.new_indices] = 1
     def apply_noise_Y(self, amplitude):
         """
         Apply noise to spike times of noisy version of Y. 
         Amplitude is in units of samples
         """
-        self.Ynoise.zero_()
-        noise = torch.rand(self.spike_indices[3].shape, device=device)
-        noise.mul_(amplitude).round_()  # In-place operations
-        new_indices = torch.clip(self.spike_indices[3] + noise.int(), 0, self.Ynoise.shape[3] - 1)
-        self.Ynoise[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], new_indices] = 1
+        self.Y.zero_()
+        self.new_indices = torch.clip(
+            self.spike_indices_Y[3] + torch.rand(self.spike_indices_Y[3].shape, device=device).mul_(amplitude).round_().int(), 
+            0, 
+            self.Y.shape[3] - 1)
+        self.Y[self.spike_indices_Y[0], self.spike_indices_Y[1], self.spike_indices_Y[2], self.new_indices] = 1
     def time_lag(self, lag, channels=None):
         """
         Apply time lag to spike times of all (or specific) neurons/muscles 
         Positive lag shifts entries rightward (forward in time), negative the opposite
         """
         if channels is None:
-            channels = torch.arange(self.X.shape[0])
-        # Re-make Xnoise from rolled copy of X
-        tempX = self.X.detach().clone()
+            channels = torch.arange(self.Xmain.shape[0])
+        # Re-make X from rolled copy of Xmain
+        tempX = self.Xmain.detach().clone()
         tempX[channels,:] = torch.roll(tempX[channels,:], lag)
         for i in range(self.n_batches):
             indices = self.batch_indices[i]
-            self.Xnoise[i,0,:,:] = tempX[:, indices[0]:indices[1]]
+            self.X[i,0,:,:] = tempX[:, indices[0]:indices[1]]
+        del tempX
 
 
 def create_data_split(dataset, train_fraction=0.95, eval_fraction=None, eval_from_train=True, device=None):

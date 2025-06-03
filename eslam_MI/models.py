@@ -19,24 +19,16 @@ class DSIB(nn.Module):
         
         # Create two encoders from |X/Y| to |Z_X/Y|
         if params['mode'] in ['sep', 'bi']:
-            if params['data_form'] != 'image':
-                self.encoder_x = mlp(
-                    dim=params['Nx'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                    layers=params['layers'], activation=params['activation']
-                )
-                self.encoder_y = mlp(
-                    dim=params['Ny'], hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                    layers=params['layers'], activation=params['activation']
-                )
-            else:
-                self.encoder_x = cnn_mlp(
-                    input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                    conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation']
-                )
-                self.encoder_y = cnn_mlp(
-                    input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                    conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation']
-                )
+            self.encoder_x = multi_cnn_mlp(
+                input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation'], 
+                stride=params['stride'], n_filters=params['n_filters'], branch_layout=params['branch']
+            )
+            self.encoder_y = multi_cnn_mlp(
+                input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
+                conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation'], 
+                stride=params['stride'], n_filters=params['n_filters'], branch_layout=params['branch']
+            )
         if params['mode'] == "bi":
             # Add additional layer to the separable if bilinear
             self.bilinear = nn.Linear(params['embed_dim'], params['embed_dim'], bias=False)
