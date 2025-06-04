@@ -277,7 +277,7 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
 
 
 
-def save_dicts_to_hdf5(dicts, filename):
+def save_dicts_to_h5(dicts, filename):
     with h5py.File(filename, 'w') as f:
         for i, d in enumerate(dicts):
             group = f.create_group(f'dict_{i}')
@@ -288,7 +288,8 @@ def save_dicts_to_hdf5(dicts, filename):
                 else:
                     # Store strings as fixed-length or variable-length
                     group.create_dataset(key, data=value)
-def load_dicts_from_hdf5(filename):
+
+def load_dicts_from_h5(filename):
     dicts = []
     with h5py.File(filename, 'r') as f:
         for group_name in f.keys():

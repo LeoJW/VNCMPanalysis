@@ -28,7 +28,6 @@ if sys.platform == 'linux':
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
-    print('The linux part totally worked')
 # Home version
 else:
     main_dir = os.getcwd()
@@ -158,12 +157,11 @@ for n_filters, n_layers, n_stride, branch_layout, rep in product(filter_range, l
         models[key_all] = mod_all
         precision_curves[key_all] = precision_mi_all
         time_per_epoch[key_all] = thistime_all / len(mis_test_all)
-    break
 
 
 
 # Save output
-save_dicts_to_hdf5(
+save_dicts_to_h5(
     [train_ids, precision_curves, time_per_epoch],
-    os.path.join(result_dir, 'network_arch_comparison_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+    os.path.join(result_dir, 'network_arch_comparison_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
 )

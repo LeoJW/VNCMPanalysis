@@ -10,6 +10,7 @@ from itertools import product
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from estimators import estimate_mutual_information
 from datatools import *
+from trainers import *
 
 
 # Check if CUDA or MPS is running
