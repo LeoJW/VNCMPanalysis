@@ -22,7 +22,7 @@ from trainers import *
 # PACE version
 if sys.platform == 'linux':
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata')
+    data_dir = os.path.join(main_dir, '..', '..', 'localdata')
     tmpdir = os.environ.get('TMPDIR')
     model_cache_dir = os.path.join(tmpdir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
@@ -124,18 +124,18 @@ for n_filters, n_layers, n_stride, branch_layout, rep in product(filter_range, l
     this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
     # Train model on single neuron
     print(key_neuron)
-    torch.mps.synchronize()
+    synchronize()
     tic = time.time()
     mis_test, train_id = train_cnn_model_no_eval(dataset_neuron, this_params)
-    torch.mps.synchronize()
+    synchronize()
     thistime = time.time() - tic
     mod = retrieve_best_model(mis_test, this_params, train_id=train_id)
     # Train model on whole dataset
     print(key_all)
-    torch.mps.synchronize()
+    synchronize()
     tic = time.time()
     mis_test_all, train_id_all = train_cnn_model_no_eval(dataset_all, this_params)
-    torch.mps.synchronize()
+    synchronize()
     thistime_all = time.time() - tic
     mod_all = retrieve_best_model(mis_test_all, this_params, train_id=train_id_all)
     with torch.no_grad():
