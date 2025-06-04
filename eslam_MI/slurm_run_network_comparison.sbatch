@@ -10,6 +10,7 @@
 #SBATCH --mail-type=BEGIN,END,FAIL              # Mail preferences
 #SBATCH --mail-user=leo.w@gatech.edu            # E-mail address for notifications
 cd $SLURM_SUBMIT_DIR                            # Change to working directory
-
+module purge
+module load cuda/12.1.1
 module load pytorch/2.1.0                       # Load module dependencies
-srun python run_network_comparison.py
+srun apptainer exec --nv $PYTORCH_2_1_0_SIF python run_network_comparison.py
