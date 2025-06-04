@@ -1,23 +1,5 @@
 import sys
 import os
-import subprocess
-
-try:
-    import numpy as np
-except ImportError as e:
-    print('numpy not on here, for some reason')
-    pass
-try:
-    import h5py
-except ImportError as e:
-    print('h5py not on here')
-    pass
-
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-install('numpy')
-install('h5py')
 
 import torch
 import time
@@ -40,7 +22,7 @@ from trainers import *
 # PACE version
 if sys.platform == 'linux':
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata', 'data_for_python')
+    data_dir = os.path.join(main_dir, '..', 'localdata')
     tmpdir = os.environ.get('TMPDIR')
     model_cache_dir = os.path.join(tmpdir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
