@@ -4,7 +4,7 @@
 #SBATCH -N1                                     # Number of nodes and cores per node required
 #SBATCH --gres=gpu:1                            # GPU type (any) and number of GPUs
 #SBATCH --mem-per-gpu=30G                       # Memory per GPU
-#SBATCH -t500                                   # Duration of the job in minutes
+#SBATCH -t800                                   # Duration of the job in minutes
 #SBATCH -qinferno                               # QOS Name
 #SBATCH -oReport-%j.out                         # Combined output and error messages file
 #SBATCH --mail-type=BEGIN,END,FAIL              # Mail preferences
