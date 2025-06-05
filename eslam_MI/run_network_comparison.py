@@ -116,7 +116,6 @@ all_params = {}
 
 main_iterator = product(["neuron", "all"], filter_range, layers_range, stride_range, branch_range, repeats_range)
 iteration_count = 0
-total_iterations = len(list(main_iterator))
 save_every_n_iterations = 5
 for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
     empty_cache()
@@ -131,7 +130,7 @@ for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
     this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
 
     iteration_count += 1
-    print(f"[{iteration_count}/{total_iterations}] {key}")
+    print(f"Iteration {iteration_count}, {key}")
 
     # Train model on whole dataset
     print(key)

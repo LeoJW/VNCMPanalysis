@@ -106,7 +106,6 @@ all_params = {}
 
 main_iterator = product(["neuron", "all"], range(n_repeats), period_range, window_len_range)
 iteration_count = 0
-total_iterations = len(list(main_iterator))
 save_every_n_iterations = 5
 for run_on, rep, period, window_len in main_iterator:
     empty_cache()
@@ -117,7 +116,7 @@ for run_on, rep, period, window_len in main_iterator:
     this_params = {**params, 'window_size': np.round(window_len / 1000 / period).astype(int)}
 
     iteration_count += 1
-    print(f"[{iteration_count}/{total_iterations}] {key}")
+    print(f"Iteration {iteration_count}, {key}")
     
     X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period)
     if run_on == "neuron":
