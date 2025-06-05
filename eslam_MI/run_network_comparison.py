@@ -150,7 +150,7 @@ for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
-            save_dicts_to_h5([train_ids, precision_curves, time_per_epoch, precision_noise, all_params], filename)
+            save_dicts_to_h5([precision_curves, time_per_epoch, precision_noise, all_params], filename)
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
