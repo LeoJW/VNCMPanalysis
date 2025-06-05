@@ -533,3 +533,19 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     mi = np.array(mi)
     embed_dim_vec = np.array(embed_dim_vec)
     return subsets, mi, embed_dim_vec
+
+
+def precision(noise_levels, dataset, model, n_repeats=3):
+    """
+    Run spike timing precision analysis, to get precision curve
+    """
+    with torch.no_grad():
+        # Since datasets are discrete samples, only run noise levels that are actually unique (in no. of samples)
+        _, unique_inds = np.unique(np.round(noise_levels), return_index=True)
+        new_noise_levels = noise_levels[unique_inds]
+        mi = np.zeros((len(new_noise_levels), n_repeats))
+        for j0,prec_noise_amp in enumerate(new_noise_levels):
+            for j1 in range(n_repeats):
+                dataset.apply_noise(prec_noise_amp)
+                mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+        return new_noise_levels, mi

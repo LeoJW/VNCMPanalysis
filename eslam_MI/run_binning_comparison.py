@@ -37,7 +37,7 @@ else:
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
 
-filename = os.path.join(result_dir, 'network_arch_comparison_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+filename = os.path.join(result_dir, 'binning_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
 
 # Set defaults, device
 default_dtype = torch.float32
@@ -56,15 +56,15 @@ else:
     empty_cache = lambda: None
 print(f'Device: {device}')
 
-# Read the data and apply some binning/downsampling
-period = 0.0001
-X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, '2025-03-21'), period)
-
-print(f"Neurons (X): {X.shape}")
-print(f"Muscles (Y): {Y.shape}") 
-print("Neuron Labels:", x_labels)
-print("Muscle Labels:", y_labels)
-
+moths = [
+    "2025-02-25_1",
+    "2025-02-25",
+    "2025-03-11",
+    "2025-03-12_1",
+    "2025-03-20",
+    "2025-03-21"
+]
+moth = moths[2]
 
 params = {
     # Optimizer parameters (for training)
@@ -72,7 +72,6 @@ params = {
     'window_size': 512, # Window of time the estimator operates on, in samples
     'batch_size': 128, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
-    'n_trials': 3,
     'patience': 10,
     'min_delta': 0.001,
     'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
@@ -80,10 +79,10 @@ params = {
     'model_cache_dir': model_cache_dir,
     # Critic parameters for the estimator
     'model_func': DSIB, # DSIB or DVSIB
-    'branch': '1', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
-    'stride': 1, # stride of CNN layers. First layer will always be stride=1
-    'n_filters': 32, # Number of new filters per layer. Each layer will 2x this number
-    'layers': 4,
+    'branch': 'allGrowDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
+    'stride': 2, # stride of CNN layers. First layer will always be stride=1
+    'n_filters': 8, # Number of new filters per layer. Each layer will 2x this number
+    'layers': 5,
     'fc_layers': 2, # fully connected layers
     'hidden_dim': 256,
     'activation': nn.LeakyReLU, #nn.Softplus
@@ -95,71 +94,52 @@ params = {
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
 }
 
-
-filter_range = np.array([8, 16, 32])
-layers_range = np.array([3,4,5,6,7])
-stride_range = np.array([2])
-branch_range = [None, '1', 'all', 'allGrowDilation']
-repeats_range = np.arange(6)
-
-precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.06), 100) / period))
 n_repeats = 3
+neuron = 3
 
-neuron = 25
-dataset_neuron = BatchedDatasetWithNoise(X[[neuron],:], Y, params['window_size'])
-dataset_all = BatchedDatasetWithNoise(X, Y, params['window_size'])
+window_len_range = np.array([50, 100])
+period_range = np.logspace(np.log10(0.00005), np.log10(0.01), 20)
 
-precision_curves = {}
 precision_noise = {}
-time_per_epoch = {}
+precision_mi = {}
 all_params = {}
 
-main_iterator = product(["neuron", "all"], filter_range, layers_range, stride_range, branch_range, repeats_range)
+main_iterator = product(["neuron", "all"], range(n_repeats), period_range, window_len_range)
 iteration_count = 0
 total_iterations = len(list(main_iterator))
 save_every_n_iterations = 5
-for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
+for run_on, rep, period, window_len in main_iterator:
     empty_cache()
-    if run_on == "neuron":
-        dataset = dataset_neuron
-    else:
-        dataset = dataset_all
-    # Reset to zero noise
-    dataset.apply_noise(0)
+    precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.05), 40) / period))
+    
     # Make keys
-    key = f'neuron_{run_on}_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
-    this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
+    key = f'neuron_{run_on}_window_{window_len}_period_{period}_rep_{rep}'
+    this_params = {**params, 'window_size': np.round(window_len / 1000 / period).astype(int)}
 
     iteration_count += 1
     print(f"[{iteration_count}/{total_iterations}] {key}")
-
-    # Train model on whole dataset
-    print(key)
-    synchronize()
-    tic = time.time()
+    
+    X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period)
+    if run_on == "neuron":
+        dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, this_params['window_size'])
+    else:
+        dataset = BatchedDatasetWithNoise(X, Y, this_params['window_size'])
+    
+    # Train models, run precision
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
-    synchronize()
-    thistime = time.time() - tic
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
-    noise_levels, precision_mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
-    # Save results
-    precision_curves[key] = precision_mi
+    noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
+
     precision_noise[key] = noise_levels
-    time_per_epoch[key] = thistime / len(mis_test)
+    precision_mi[key] = mi
     all_params[key] = this_params
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
-            save_dicts_to_h5([train_ids, precision_curves, time_per_epoch, precision_noise, all_params], filename)
+            save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
 
-
-# Save final output
-try:
-    save_dicts_to_h5([precision_noise, precision_curves, time_per_epoch, all_params], filename)
-    print(f'Final results saved to {filename}')
-except Exception as e:
-    print(f"Error saving final results: {e}")
-    print("Intermediate files should still be available")
+save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+print(f'Final results saved to {filename}')
