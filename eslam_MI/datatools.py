@@ -45,9 +45,7 @@ class BatchedDataset(Dataset):
                 if not should_append:
                     continue
             self.batch_indices.append((start_idx, end_idx))
-        self._true_batch_indices = self.batch_indices.detach().clone()
         self.n_batches = len(self.batch_indices)
-        self._true_n_batches = len(self.batch_indices)
         # Store X, Y in pre-chunked form
         self.X = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
         self.Y = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
@@ -60,11 +58,6 @@ class BatchedDataset(Dataset):
     def __getitem__(self, idx):
         """Return a batch at the specified batch index."""
         return self.X[idx,:,:,:], self.Y[idx,:,:,:]
-    def subset(self, indices):
-        """
-        Artificially subset dataset, so other functions only see some percentage of the actual data
-        Mainly used for subsampling analysis
-        """
 
 
 

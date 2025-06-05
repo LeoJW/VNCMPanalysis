@@ -467,7 +467,7 @@ def log_prob_gaussian(x):
 
 
 
-def subsample_MI(dataset, params, split_sizes=[1,2,3,4,5,6]):
+def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
     """
     Subsamples dataset into non-overlapping fractions, trains estimators on all fractions
     This version does not vary dimensionality of embedding space (embed_dim)
@@ -482,7 +482,7 @@ def subsample_MI(dataset, params, split_sizes=[1,2,3,4,5,6]):
     indices = []
     for ss in split_sizes:
         inds = np.random.choice(dataset.X.shape[0], dataset.X.shape[0], replace=False)
-        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1))
+        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1)).astype(int)
         for i in range(ss):
             indices.append(inds[edges[i]:edges[i+1]])
     mi = np.zeros((len(indices)))

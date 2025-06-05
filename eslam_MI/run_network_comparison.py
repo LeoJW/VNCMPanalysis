@@ -31,11 +31,13 @@ if sys.platform == 'linux':
 # Home version
 else:
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata', 'data_for_python')
-    model_cache_dir = os.path.join(main_dir, '..', 'model_cache')
+    data_dir = os.path.join(main_dir, '..', '..', 'localdata')
+    model_cache_dir = os.path.join(data_dir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
+
+filename = os.path.join(result_dir, 'network_arch_comparison_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
 
 # Set defaults, device
 default_dtype = torch.float32
@@ -112,17 +114,23 @@ precision_curves = {}
 models = {}
 time_per_epoch = {}
 
+iteration_count = 0
+total_iterations = len(list(product(filter_range, layers_range, stride_range, branch_range, repeats_range)))
+save_every_n_iterations = 5
 for n_filters, n_layers, n_stride, branch_layout, rep in product(filter_range, layers_range, stride_range, branch_range, repeats_range):
     empty_cache()
     # Reset to zero noise
     dataset_neuron.apply_noise(0)
     dataset_all.apply_noise(0)
     # Make keys
-    key_neuron = f'single_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
-    key_all = f'all_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
+    key_neuron = f'neuron_single_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
+    key_all = f'neuron_all_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
     this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
+
+    iteration_count += 1
+    print(f"[{iteration_count}/{total_iterations}] {key_neuron}")
+
     # Train model on single neuron
-    print(key_neuron)
     synchronize()
     tic = time.time()
     mis_test, train_id = train_cnn_model_no_eval(dataset_neuron, this_params)
@@ -158,10 +166,18 @@ for n_filters, n_layers, n_stride, branch_layout, rep in product(filter_range, l
         precision_curves[key_all] = precision_mi_all
         time_per_epoch[key_all] = thistime_all / len(mis_test_all)
 
+        if (iteration_count % save_every_n_iterations == 0):
+            try:
+                save_dicts_to_h5([train_ids, precision_curves, time_per_epoch], filename)
+                print(f"Intermediate results saved")
+            except Exception as e:
+                print(f"Warning: Failed to save intermediate results: {e}")
 
 
-# Save output
-save_dicts_to_h5(
-    [train_ids, precision_curves, time_per_epoch],
-    os.path.join(result_dir, 'network_arch_comparison_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
-)
+# Save final output
+try:
+    save_dicts_to_h5([train_ids, precision_curves, time_per_epoch], filename)
+    print(f'Final results saved to {filename}')
+except Exception as e:
+    print(f"Error saving final results: {e}")
+    print("Intermediate files should still be available")
