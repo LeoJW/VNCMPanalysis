@@ -31,7 +31,7 @@ if sys.platform == 'linux':
 # Home version
 else:
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', '..', 'localdata')
+    data_dir = os.path.join(main_dir, '..', 'localdata')
     model_cache_dir = os.path.join(data_dir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
@@ -131,7 +131,7 @@ for run_on, rep, period, window_len in main_iterator:
 
     precision_noise[key] = noise_levels
     precision_mi[key] = mi
-    all_params[key] = this_params
+    all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
     if (iteration_count % save_every_n_iterations == 0):
         try:

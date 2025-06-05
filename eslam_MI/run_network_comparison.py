@@ -145,7 +145,7 @@ for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
     precision_curves[key] = precision_mi
     precision_noise[key] = noise_levels
     time_per_epoch[key] = thistime / len(mis_test)
-    all_params[key] = this_params
+    all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
