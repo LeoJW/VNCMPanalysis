@@ -514,7 +514,7 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     indices = []
     for ss in split_sizes:
         inds = np.random.choice(dataset.X.shape[0], dataset.X.shape[0], replace=False)
-        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1))
+        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1)).astype(int)
         for i in range(ss):
             indices.append(inds[edges[i]:edges[i+1]])
     mi, embed_dim_vec = [], []

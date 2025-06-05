@@ -21,7 +21,6 @@ file = "network_arch_comparison_PACE_2025-06-05.h5"
 
 precision_curves = h5read(joinpath(data_dir, file), "dict_1")
 time_per_epoch = h5read(joinpath(data_dir, file), "dict_2")
-
 noise_levels = vcat(0, logrange(period, 0.04, 20) .* 1000)
 
 # Construct dataframe
@@ -99,3 +98,20 @@ scatter!(ax, x[min_idx], deriv[min_idx])
 scatter!(ax, x[min_idx], curve[min_idx])
 f
 
+
+
+## --- Subsampling results
+
+file = "subsampling_PACE_2025-06-04.h5"
+subsamples = h5read(joinpath(data_dir, file), "dict_0")
+mi = h5read(joinpath(data_dir, file), "dict_1")
+
+moths = keys(mi)
+
+f = Figure()
+ax = [Axis(f[i,1], title=moth) for (i,moth) in enumerate(moths)]
+for (i,moth) in enumerate(moths)
+    scatter!(ax[i], subsamples[moth], mi[moth])
+end
+linkyaxes!(ax)
+f

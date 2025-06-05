@@ -82,10 +82,10 @@ params = {
     'model_cache_dir': model_cache_dir,
     # Critic parameters for the estimator
     'model_func': DSIB, # DSIB or DVSIB
-    'branch': 'all', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
+    'branch': 'allGrowDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
     'stride': 2, # stride of CNN layers. First layer will always be stride=1
-    'n_filters': 16, # Number of new filters per layer. Each layer will 2x this number
-    'layers': 5,
+    'n_filters': 8, # Number of new filters per layer. Each layer will 2x this number
+    'layers': 6,
     'fc_layers': 2, # fully connected layers
     'hidden_dim': 256,
     'activation': nn.LeakyReLU, #nn.Softplus
@@ -99,13 +99,15 @@ params = {
 
 all_subsets = {}
 all_mi = {}
+all_embed_dim = {}
 for moth in moths:
     empty_cache()
     X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period)
     dataset = BatchedDataset(X, Y, params['window_size'])
-    subsets, mi = subsample_MI(dataset, params, np.arange(1,10))
+    subsets, mi, embed_dim = subsample_MI_vary_embed_dim(dataset, params, np.arange(1,10), embed_range=np.arange(1,15))
     all_subsets[moth] = subsets
     all_mi[moth] = mi
+    all_embed_dim[moth] = embed_dim
 
-save_dicts_to_h5([all_subsets, all_mi], filename)
+save_dicts_to_h5([all_subsets, all_mi, all_embed_dim], filename)
 print(f'Final results saved to {filename}')
