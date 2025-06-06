@@ -37,6 +37,9 @@ else:
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
 
+task_id = sys.argv[1]
+print(f'Task ID is {task_id}')
+
 filename = os.path.join(result_dir, 'network_arch_comparison_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
 
 # Set defaults, device
@@ -97,10 +100,10 @@ params = {
 
 
 filter_range = np.array([8, 16, 32])
-layers_range = np.array([3,4,5,6,7])
+layers_range = np.array([3,5,7])
 stride_range = np.array([2])
-branch_range = [None, '1', 'all', 'allGrowDilation']
-repeats_range = np.arange(6)
+branch_range = [None, '1', 'all', 'linearDilation', 'expDilation']
+repeats_range = np.arange(1)
 
 precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.06), 100) / period))
 n_repeats = 3
@@ -114,51 +117,52 @@ precision_noise = {}
 time_per_epoch = {}
 all_params = {}
 
-main_iterator = product(["neuron", "all"], filter_range, layers_range, stride_range, branch_range, repeats_range)
-iteration_count = 0
-save_every_n_iterations = 5
-for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
-    empty_cache()
-    if run_on == "neuron":
-        dataset = dataset_neuron
-    else:
-        dataset = dataset_all
-    # Reset to zero noise
-    dataset.apply_noise(0)
-    # Make keys
-    key = f'neuron_{run_on}_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
-    this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
+print("everything loaded okay")
+# main_iterator = product(["neuron", "all"], filter_range, layers_range, stride_range, branch_range, repeats_range)
+# iteration_count = 0
+# save_every_n_iterations = 5
+# for run_on, n_filters, n_layers, n_stride, branch_layout, rep in main_iterator:
+#     empty_cache()
+#     if run_on == "neuron":
+#         dataset = dataset_neuron
+#     else:
+#         dataset = dataset_all
+#     # Reset to zero noise
+#     dataset.apply_noise(0)
+#     # Make keys
+#     key = f'neuron_{run_on}_filters_{n_filters}_layers_{n_layers}_stride_{n_stride}_layout_{str(branch_layout)}_rep_{rep}'
+#     this_params = {**params, 'branch': branch_layout, 'stride': n_stride, 'n_filters': n_filters, 'layers': n_layers}
 
-    iteration_count += 1
-    print(f"Iteration {iteration_count}, {key}")
+#     iteration_count += 1
+#     print(f"Iteration {iteration_count}, {key}")
 
-    # Train model on whole dataset
-    print(key)
-    synchronize()
-    tic = time.time()
-    mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
-    synchronize()
-    thistime = time.time() - tic
-    model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
-    noise_levels, precision_mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
-    # Save results
-    precision_curves[key] = precision_mi
-    precision_noise[key] = noise_levels
-    time_per_epoch[key] = thistime / len(mis_test)
-    all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
+#     # Train model on whole dataset
+#     print(key)
+#     synchronize()
+#     tic = time.time()
+#     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
+#     synchronize()
+#     thistime = time.time() - tic
+#     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
+#     noise_levels, precision_mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
+#     # Save results
+#     precision_curves[key] = precision_mi
+#     precision_noise[key] = noise_levels
+#     time_per_epoch[key] = thistime / len(mis_test)
+#     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
-    if (iteration_count % save_every_n_iterations == 0):
-        try:
-            save_dicts_to_h5([precision_curves, time_per_epoch, precision_noise, all_params], filename)
-            print(f"Intermediate results saved")
-        except Exception as e:
-            print(f"Warning: Failed to save intermediate results: {e}")
+#     if (iteration_count % save_every_n_iterations == 0):
+#         try:
+#             save_dicts_to_h5([precision_curves, time_per_epoch, precision_noise, all_params], filename)
+#             print(f"Intermediate results saved")
+#         except Exception as e:
+#             print(f"Warning: Failed to save intermediate results: {e}")
 
 
-# Save final output
-try:
-    save_dicts_to_h5([precision_noise, precision_curves, time_per_epoch, all_params], filename)
-    print(f'Final results saved to {filename}')
-except Exception as e:
-    print(f"Error saving final results: {e}")
-    print("Intermediate files should still be available")
+# # Save final output
+# try:
+#     save_dicts_to_h5([precision_noise, precision_curves, time_per_epoch, all_params], filename)
+#     print(f'Final results saved to {filename}')
+# except Exception as e:
+#     print(f"Error saving final results: {e}")
+#     print("Intermediate files should still be available")

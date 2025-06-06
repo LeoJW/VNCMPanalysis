@@ -129,7 +129,7 @@ for run_on, rep, period, window_len in main_iterator:
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
     noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
 
-    precision_noise[key] = noise_levels
+    precision_noise[key] = noise_levels # in units passed into precision function, so samples
     precision_mi[key] = mi
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
