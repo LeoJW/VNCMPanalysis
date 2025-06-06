@@ -542,6 +542,14 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
 def precision(noise_levels, dataset, model, n_repeats=3):
     """
     Run spike timing precision analysis, to get precision curve
+    Args:
+        noise_levels: Range of noise levels to run over, in units of samples
+        dataset: BatchedDatasetWithNoise of X and Y data
+        model: Trained model to run inference with
+        n_repeats: How many times per noise level to repeat
+    Returns:
+        new_noise_levels: Noise levels actually used (units of samples), based on rounding to integers
+        mi: Matrix of mutual information at each noise level. Rows are repeats, columns noise levels
     """
     with torch.no_grad():
         # Since datasets are discrete samples, only run noise levels that are actually unique (in no. of samples)

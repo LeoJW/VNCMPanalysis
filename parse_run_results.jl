@@ -9,7 +9,7 @@ using SavitzkyGolay
 
 function find_precision(noise_levels, mi, lower_bound=5e-4)
     curve = vec(mean(mi, dims=1))
-    deriv = savitzky_golay(curve, 5, 2; deriv=2).y
+    deriv = savitzky_golay(curve, 15, 2; deriv=2).y
     bound_mask = noise_levels .>= lower_bound
     return noise_levels[bound_mask][findmin(deriv[bound_mask])[2]]
 end
@@ -20,57 +20,48 @@ data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
 
 file = "network_arch_comparison_PACE_2025-06-05.h5"
 
-precision_noise = h5read(joinpath(data_dir, file), "dict_2")
-precision_curves = h5read(joinpath(data_dir, file), "dict_0")
-time_per_epoch = h5read(joinpath(data_dir, file), "dict_1")
-noise_levels = vcat(0, logrange(period, 0.04, 20) .* 1000)
-
-# Construct dataframe
-first_row = split(first(keys(time_per_epoch)), "_")
-names = vcat(first_row[1:2:end], ["time", "mi", "precision"])
-is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]], true, true, true)
-types = [x ? Float64 : String for x in is_numeric]
-
-df = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
-df = df[!, Symbol.(names)] # Undo name sorting
-for key in keys(time_per_epoch)
-    keysplit = split(key, "_")[2:2:end]
-    vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
-    push!(df, vcat(
-        vals, 
-        time_per_epoch[key], 
-        mean(precision_curves[key], dims=1)[1], 
-        find_precision(precision_noise[key] .* 0.0001, precision_curves[key])
-    ))
+function read_network_arch_file!(df, file, task)
+    precision_noise = h5read(joinpath(data_dir, file), "dict_0")
+    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    time_per_epoch = h5read(joinpath(data_dir, file), "dict_2")
+    # Construct dataframe
+    first_row = split(first(keys(time_per_epoch)), "_")
+    names = vcat(first_row[1:2:end], ["time", "mi", "precision", "precision_curve", "precision_noise"])
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Float64, Matrix{Float64}, Vector{Float64})
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(time_per_epoch)
+        keysplit = split(key, "_")[2:2:end]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        vals[6] = task
+        push!(thisdf, vcat(
+            vals, 
+            time_per_epoch[key], 
+            mean(precision_curves[key], dims=1)[1], 
+            find_precision(precision_noise[key] .* 0.0001 .* 1000, precision_curves[key]),
+            [precision_curves[key] .* log2(exp(1)) ./ (512 * 0.0001)],
+            [precision_noise[key] .* 0.0001 .* 1000]
+        ))
+    end
+    append!(df, thisdf)
 end
 
-##
 
+df = DataFrame()
+for task in 0:5
+    read_network_arch_file!(df, joinpath(data_dir, "network_arch_comparison_PACE_task_$(task)_2025-06-05.h5"), task)
+end
 
-@pipe df |> 
-stack(_, [:mi, :time]) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:layout, :value, color=:filters=>nonnumeric, dodge=:filters=>nonnumeric, row=:layers=>nonnumeric, col=:variable) * 
-visual(BoxPlot)
-) |> 
-draw(_, facet=(; linkyaxes=:none))
-
-##
-@pipe df |> 
-# @subset(_, :neuron .== "all") |> 
-# @transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:layout, :mi, color=:layers, dodge=:layers=>nonnumeric, row=:filters=>nonnumeric) * 
-visual(BoxPlot)
-) |> 
-draw(_)
+# Remove obvious failures, convert units
+df = @pipe df |> 
+@subset(_, :mi .> 0.05) |> 
+@transform(_, :mi = :mi .* log2(exp(1)) ./ (512 * 0.0001))
 
 ##
 
 @pipe df |> 
-# @subset(_, :neuron .== "all") |> 
+@subset(_, :neuron .== "all") |> 
 @transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
 (
 AlgebraOfGraphics.data(_) *
@@ -79,6 +70,59 @@ visual(Scatter)
 ) |> 
 draw(_)
 
+##
+
+@pipe df |> 
+@subset(_, :neuron .== "all") |> 
+@transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:precision, :mi, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
+visual(Scatter)
+) |> 
+draw(_)
+
+##
+dt = @pipe df |> 
+@subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
+@subset(_, :layers .>= 5) |> 
+@subset(_, :neuron .== "all")
+
+f = Figure()
+for (i,gdf) in enumerate(groupby(dt, :layout))
+    for (j,ggdf) in enumerate(groupby(gdf, :filters))
+        ax = Axis(f[j,i], xscale=log10, title=first(ggdf.layout) * " " * string(ggdf.filters[1]))
+        for row in eachrow(ggdf)
+            curve = vec(mean(row.precision_curve, dims=1))
+            deriv = savitzky_golay(curve, 15, 2; deriv=2).y
+            lines!(ax, row.precision_noise, curve, color=row.layers, colorrange=(5,7))
+        end
+        # ylims!(ax, 0, maximum(dt.mi))
+        xlims!(ax, 10^-1, 10^2)
+    end
+end
+f
+
+## Theoretical max receptive field calculations
+RFs, RFdlin, RFdmult, RFdexp = 1, 1, 1, 1
+k = 3
+layers = 7
+s = vcat(1, fill(2, layers-1))
+sc = cumsum(s)
+dlin = collect(1:layers) # Linear dilation
+dmult = 2 .* collect(1:layers) # Multiplying dilation
+dexp = 2 .^ collect(0:layers-1) # Exponential dilation
+for i in 1:layers
+    println("------ Layer $(i) -------")
+    RFs = RFs + (k - 1) * sc[i]
+    println("Standard : $(RFs)")
+    RFdlin = RFdlin + (k - 1) * dlin[i] * sc[i]
+    RFdmult = RFdmult + (k - 1) * dmult[i] * sc[i]
+    RFdexp = RFdexp + (k - 1) * dexp[i] * sc[i]
+    println("Linear Dilation : $(RFdlin)")
+    println("Multiplicative Dilation : $(RFdmult)")
+    println("Exponential Dilation : $(RFdexp)")
+end
 
 ##
 
@@ -186,20 +230,3 @@ key = collect(keys(precision_curves))[idx]
 lines!(ax, vec(precision_noise[key])[2:end] .* df.period[idx], vec(mean(precision_curves[key], dims=1))[2:end])
 f
 
-
-##
-
-RFs = 1
-RFd = 1
-k = 3
-layers = 7
-s = vcat(1, fill(2, layers-1))
-sc = cumsum(s)
-d = collect(1:layers)
-d = 2 .^ collect(0:layers-1)
-for i in 1:layers
-    RFs = RFs + (k - 1) * sc[i]
-    println("Standard : $(RFs)")
-    RFd = RFd + (k - 1) * d[i] * sc[i]
-    println("Dilated : $(RFd)")
-end

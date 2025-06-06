@@ -82,10 +82,10 @@ params = {
     'model_cache_dir': model_cache_dir,
     # Critic parameters for the estimator
     'model_func': DSIB, # DSIB or DVSIB
-    'branch': 'allGrowDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
+    'branch': 'expDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
     'stride': 2, # stride of CNN layers. First layer will always be stride=1
     'n_filters': 8, # Number of new filters per layer. Each layer will 2x this number
-    'layers': 6,
+    'layers': 7,
     'fc_layers': 2, # fully connected layers
     'hidden_dim': 256,
     'activation': nn.LeakyReLU, #nn.Softplus

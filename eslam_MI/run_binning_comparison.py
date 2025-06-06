@@ -37,7 +37,14 @@ else:
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
 
-filename = os.path.join(result_dir, 'binning_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+# Case where script got an input argument, means multiple separate runs
+if len(sys.argv) > 1: 
+    task_id = sys.argv[1]
+    print(f'Task ID is {task_id}')
+    filename = os.path.join(result_dir, 'binning_PACE_' + f'task_{task_id}_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+# Otherwise just a single run
+else:
+    filename = os.path.join(result_dir, 'binning_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
 
 # Set defaults, device
 default_dtype = torch.float32
@@ -79,10 +86,10 @@ params = {
     'model_cache_dir': model_cache_dir,
     # Critic parameters for the estimator
     'model_func': DSIB, # DSIB or DVSIB
-    'branch': 'allGrowDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
+    'branch': 'expDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
     'stride': 2, # stride of CNN layers. First layer will always be stride=1
     'n_filters': 8, # Number of new filters per layer. Each layer will 2x this number
-    'layers': 5,
+    'layers': 7,
     'fc_layers': 2, # fully connected layers
     'hidden_dim': 256,
     'activation': nn.LeakyReLU, #nn.Softplus
@@ -94,22 +101,22 @@ params = {
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
 }
 
-n_repeats = 3
 neuron = 3
 
-window_len_range = np.array([50, 100])
+window_len_range = np.array([25, 50, 100, 150, 200])
 period_range = np.logspace(np.log10(0.00005), np.log10(0.01), 20)
+precision_repeats = 3
 
 precision_noise = {}
 precision_mi = {}
 all_params = {}
 
-main_iterator = product(["neuron", "all"], range(n_repeats), period_range, window_len_range)
 iteration_count = 0
 save_every_n_iterations = 5
+main_iterator = product(["neuron", "all"], range(1), period_range, window_len_range)
 for run_on, rep, period, window_len in main_iterator:
     empty_cache()
-    precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.05), 40) / period))
+    precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.06), 100) / period))
     
     # Make keys
     key = f'neuron_{run_on}_window_{window_len}_period_{period}_rep_{rep}'
@@ -127,10 +134,10 @@ for run_on, rep, period, window_len in main_iterator:
     # Train models, run precision
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
-    noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=n_repeats)
+    noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
 
-    precision_noise[key] = noise_levels # in units passed into precision function, so samples
-    precision_mi[key] = mi
+    precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function
+    precision_mi[key] = mi # (nats/window)
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
     if (iteration_count % save_every_n_iterations == 0):
