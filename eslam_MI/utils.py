@@ -297,8 +297,12 @@ class multi_cnn_mlp(nn.Module):
                     ))
             elif branch_layout == 'all':
                 conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, activation=activation))
-            else:
+            elif branch_layout == 'linDilation':
                 conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=i+1, activation=activation))
+            elif branch_layout == 'multDilation':
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=2*(i+1), activation=activation))
+            else:
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=2**(i+1), activation=activation))
             # Double the number of filters in each layer
             in_channels = out_channels
             out_channels *= 2

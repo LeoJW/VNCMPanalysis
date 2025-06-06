@@ -196,7 +196,7 @@ layers = 7
 s = vcat(1, fill(2, layers-1))
 sc = cumsum(s)
 d = collect(1:layers)
-d = 2 .^ collect(1:layers)
+d = 2 .^ collect(0:layers-1)
 for i in 1:layers
     RFs = RFs + (k - 1) * sc[i]
     println("Standard : $(RFs)")
