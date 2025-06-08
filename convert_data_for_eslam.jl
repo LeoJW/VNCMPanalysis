@@ -26,7 +26,7 @@ buffer_in_sec = 2 # Seconds on either side of a bout to keep. Must be less than 
 spike_rate_thresh = 12 # Hz that a bout needs mean spike rate above
 refractory_thresh = 1 # ms, remove spikes closer than this
 
-
+##
 for moth in moths
     moth_dir = joinpath(data_dir, moth)
 
@@ -133,7 +133,7 @@ seg = 1 / (length(mua_units)+1)
 for (i,unit) in enumerate(mua_units)
     vlines!(ax, neurons[unit] ./ fsamp, ymin=i*seg, ymax=(i+1)*seg)
 end
-vlines!(ax, muscles["ldlm"] ./ fsamp, ymin=0.0, ymax=seg)
+vlines!(ax, muscles["rba"] ./ fsamp, ymin=0.0, ymax=seg)
 f
 
 ##

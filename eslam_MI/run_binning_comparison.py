@@ -71,7 +71,7 @@ moths = [
     "2025-03-20",
     "2025-03-21"
 ]
-moth = moths[2]
+moth = moths[1]
 
 params = {
     # Optimizer parameters (for training)
