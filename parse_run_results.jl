@@ -261,8 +261,8 @@ draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
 # @subset(_, :period .< 1) |> 
 (
 AlgebraOfGraphics.data(_) *
-# mapping(:samps_per_window, :mi=>"I(X,Y) (bits/s)", color=:window, col=:neuron) * visual(Scatter)
-mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
+mapping(:samps_per_window, :mi=>"I(X,Y) (bits/s)", color=:window, col=:neuron) * visual(Scatter)
+# mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
 

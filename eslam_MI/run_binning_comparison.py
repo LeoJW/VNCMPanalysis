@@ -115,6 +115,9 @@ iteration_count = 0
 save_every_n_iterations = 5
 main_iterator = product(["neuron", "all"], range(1), period_range, window_len_range)
 for run_on, rep, period, window_len in main_iterator:
+    # Ignore anything with less than 20 timepoints per window
+    if (window_len / 1000) / period <= 20:
+        continue
     empty_cache()
     precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.06), 100) / period))
     
