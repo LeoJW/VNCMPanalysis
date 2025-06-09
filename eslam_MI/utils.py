@@ -577,3 +577,26 @@ def precision(noise_levels, dataset, model, n_repeats=3):
                 dataset.apply_noise(prec_noise_amp)
                 mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
         return new_noise_levels, mi
+
+def precision_y(noise_levels, dataset, model, n_repeats=3):
+    """
+    Run spike timing precision analysis, to get precision curve
+    Args:
+        noise_levels: Range of noise levels to run over, in units of samples
+        dataset: BatchedDatasetWithNoise of X and Y data
+        model: Trained model to run inference with
+        n_repeats: How many times per noise level to repeat
+    Returns:
+        new_noise_levels: Noise levels actually used (units of samples), based on rounding to integers
+        mi: Matrix of mutual information at each noise level. Rows are repeats, columns noise levels
+    """
+    with torch.no_grad():
+        # Since datasets are discrete samples, only run noise levels that are actually unique (in no. of samples)
+        _, unique_inds = np.unique(np.round(noise_levels), return_index=True)
+        new_noise_levels = noise_levels[unique_inds]
+        mi = np.zeros((len(new_noise_levels), n_repeats))
+        for j0,prec_noise_amp in enumerate(new_noise_levels):
+            for j1 in range(n_repeats):
+                dataset.apply_noise_Y(prec_noise_amp)
+                mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+        return new_noise_levels, mi

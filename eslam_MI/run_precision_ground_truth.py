@@ -110,12 +110,14 @@ precision_repeats = 3
 
 precision_noise = {}
 precision_mi = {}
+precision_noise_y = {}
+precision_mi_y = {}
 all_params = {}
 
 iteration_count = 0
 save_every_n_iterations = 5
-main_iterator = product(["neuron", "all"], set_precision, moths)
-for run_on, prec_level, moth in main_iterator:
+main_iterator = product(["neuron", "all"], ['neurons', 'muscles'], set_precision, moths)
+for run_on, fix_precision_on, prec_level, moth in main_iterator:
     empty_cache()
     
     # Make keys
@@ -124,7 +126,11 @@ for run_on, prec_level, moth in main_iterator:
     iteration_count += 1
     print(f"Iteration {iteration_count}, {key}")
     
-    X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision=prec_level)
+    if fix_precision_on == 'neurons':
+        X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_x=prec_level)
+    else:
+        X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_y=prec_level)
+    
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, this_params['window_size'])
@@ -136,9 +142,12 @@ for run_on, prec_level, moth in main_iterator:
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
     noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
+    noise_levels_y, mi_y = precision_y(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
 
     precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function
     precision_mi[key] = mi # (nats/window)
+    precision_noise_y[key] = noise_levels_y
+    precision_mi[key] = mi_y
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
     if (iteration_count % save_every_n_iterations == 0):
