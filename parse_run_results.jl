@@ -186,6 +186,29 @@ Label(f[:, 0], "I(X,Y) (bits/s)", rotation = pi/2)
 Colorbar(f[:,2], colorrange=extrema(unique_dims), ticks=unique_dims, label="Dimensionality")
 f
 
+##
+
+thisdf = @pipe df |> 
+    @subset(_, :subsample .== 1) |> 
+    @transform(_, :mi = :mi ./ (512 .* 0.0001)) |> 
+    groupby(_, [:subsample, :dim, :moth]) |> 
+    combine(_, :mi => mean => :mi)
+f = Figure()
+ax = [Axis(f[i,1]) for i in eachindex(moths)]
+for (i, gdf) in enumerate(groupby(thisdf, :moth))
+    println(gdf.mi)
+    # errorbars!(ax[i,1], gdf.dim, gdf.mi, gdf.mi_std)
+    lines!(ax[i,1], gdf.dim, gdf.mi)
+    scatter!(ax[i,1], gdf.dim, gdf.mi)
+    ax[i].xticks = unique(gdf.dim)
+    text!(ax[i], 0.5, 1, text=gdf.moth[1], font=:bold, align=(:center, :top), space=:relative)
+end
+ax[end].xlabel =  "Dimensionality"
+linkyaxes!(ax)
+[hidexdecorations!(a, grid=false) for a in ax[1:end-1]]
+rowgap!(f.layout, 10)
+Label(f[:, 0], "I(X,Y) (bits/s)", rotation = pi/2)
+f
 
 ## ------------------ Binning results ------------------
 

@@ -185,7 +185,7 @@ def create_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=No
 
 
 # Read neuron and muscle data for one moth, return X and Y with specific binning
-def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000):
+def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000, set_precision=0):
     """
     Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
     Returns bool, always binarizes. If a bin has multiple spikes occur, will just appear as 1
@@ -199,7 +199,7 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
         neuron_label_filter (str, optional): Filter neurons by label (e.g., "good").
             Only used if a labels file is present.
         sample_rate (float, 30000 Hz by default): The sampling rate for the data
-        
+        set_precision (float): Resolution in s to set precision of data to. Skips this if set_precision=0
     Returns:
         X (numpy.ndarray): Neural activity tensor of shape (num_neurons, num_time_points).
         Y (numpy.ndarray): Muscle activity tensor of shape (num_muscles, num_time_points).
@@ -253,6 +253,10 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
             indices = data[unit]
         else:
             indices = np.rint(data[unit] / scale)
+        # Set to precision level if requested
+        if set_precision != 0:
+            prec_samples = set_precision / bin_size
+            indices = np.rint(np.rint(indices / prec_samples) * prec_samples)
         X[i, indices] = 1
     # Create binary spike trains for muscles
     for i, unit in enumerate(muscle_labels):

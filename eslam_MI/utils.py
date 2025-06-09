@@ -230,8 +230,21 @@ class MultiScaleConvBlock(nn.Module):
     A multi-scale convolutional block with parallel branches of different kernel sizes.
     Captures features at multiple scales and concatenates them.
     """
-    def __init__(self, in_channels, out_channels, stride=1, dilation=2, activation=nn.ReLU):
+    def __init__(self, in_channels, out_channels, stride=1, dilation=2, activation=nn.ReLU, use_1d_mode=False):
         super(MultiScaleConvBlock, self).__init__()
+        # Convert parameters to tuples if use_1d_mode is True
+        if use_1d_mode:
+            kernel_size = (1, 3)
+            stride = (1, stride)
+            dilation = (1, dilation)
+            padding_b1 = (0, 1)
+            padding_b2 = (0, dilation)
+        else:
+            kernel_size = 3
+            stride = stride
+            dilation = dilation
+            padding_b1 = 1
+            padding_b2 = dilation
         # Calculate channels for each branch (distribute output channels more flexibly)
         # Strategy: Give larger branches slightly more channels
         base_channels = out_channels // 2
@@ -241,13 +254,13 @@ class MultiScaleConvBlock(nn.Module):
         branch2_channels = base_channels + remainder  # 5x5 conv
         # Branch 1: 3x3 conv (standard receptive field)
         self.branch1 = nn.Sequential(
-            nn.Conv2d(in_channels, branch1_channels, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.Conv2d(in_channels, branch1_channels, kernel_size=kernel_size, stride=stride, padding=padding_b1, bias=False),
             nn.BatchNorm2d(branch1_channels),
             activation()
         )
         # Branch 2: 3x3 conv with dilation (larger receptive field)
         self.branch2 = nn.Sequential(
-            nn.Conv2d(in_channels, branch2_channels, kernel_size=3, stride=stride, dilation=dilation, padding=dilation, bias=False),
+            nn.Conv2d(in_channels, branch2_channels, kernel_size=kernel_size, stride=stride, dilation=dilation, padding=padding_b2, bias=False),
             nn.BatchNorm2d(branch2_channels),
             activation()
         )
@@ -260,15 +273,14 @@ class MultiScaleConvBlock(nn.Module):
         return torch.cat([branch1_out, branch2_out], dim=1)
 
 class multi_cnn_mlp(nn.Module):
-    def __init__(self, input_channels, hidden_dim, output_dim, conv_layers, fc_layers, activation, stride, n_filters, branch_layout):
+    def __init__(self, params, use_1d_mode=False):
         """
         Create a CNN-MLP hybrid model with batch normalization and strided convolutions.
-        
+        Input should be a standard params dict. Dict must contain:
         Args:
-            input_channels (int): Number of input channels (e.g., 3 for RGB images).
             hidden_dim (int): Number of hidden units in fully connected layers.
-            output_dim (int): Dimensionality of the output embedding.
-            conv_layers (int): Number of convolutional layers.
+            embed_dim (int): Dimensionality of the output embedding.
+            layers (int): Number of convolutional layers.
             fc_layers (int): Number of fully connected layers after GAP.
             activation (str): Activation function to use (e.g., 'relu', 'tanh').
         """
@@ -276,33 +288,39 @@ class multi_cnn_mlp(nn.Module):
         
         # Multi-scale convolutional layers with strided convolutions and batch normalization
         conv_seq = []
-        in_channels = input_channels
-        out_channels = n_filters
+        in_channels = 1
+        out_channels = params['n_filters']
         # Please re-write this to not be insane
-        for i in range(conv_layers):
-            if branch_layout is None:
+        for i in range(params['layers']):
+            # Determine stride for this layer
+            layer_stride = 1 if i == 0 else params['stride']
+            if use_1d_mode:
+                layer_stride = (1, layer_stride) if isinstance(layer_stride, int) else layer_stride
+            
+            if params['branch'] is None:
                 conv_seq.append(nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1 if i == 0 else stride, padding=1, bias=False),
+                    nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=layer_stride, padding=1, bias=False),
                     nn.BatchNorm2d(out_channels),
-                    activation()
+                    params['activation']()
                 ))
-            elif branch_layout == '1':
+            elif params['branch'] == '1':
                 if i == 0:
-                    conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1, activation=activation))
+                    conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1, activation=params['activation']))
                 else:
+                    layer_kernel = 3 if not use_1d_mode else (1,3)
                     conv_seq.append(nn.Sequential(
-                        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1 if i == 0 else stride, padding=1, bias=False),
+                        nn.Conv2d(in_channels, out_channels, kernel_size=layer_kernel, stride=layer_stride, padding=1, bias=False),
                         nn.BatchNorm2d(out_channels),
-                        activation()
+                        params['activation']()
                     ))
-            elif branch_layout == 'all':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, activation=activation))
-            elif branch_layout == 'linDilation':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=i+1, activation=activation))
-            elif branch_layout == 'multDilation':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=2*(i+1), activation=activation))
+            elif params['branch'] == 'all':
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, activation=params['activation']), use_1d_mdoe=use_1d_mode)
+            elif params['branch'] == 'linDilation':
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=i+1, activation=params['activation']), use_1d_mdoe=use_1d_mode)
+            elif params['branch'] == 'multDilation':
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2*(i+1), activation=params['activation']), use_1d_mdoe=use_1d_mode)
             else:
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1 if i == 0 else stride, dilation=2**(i+1), activation=activation))
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2**(i+1), activation=params['activation']), use_1d_mdoe=use_1d_mode)
             # Double the number of filters in each layer
             in_channels = out_channels
             out_channels *= 2
@@ -312,13 +330,13 @@ class multi_cnn_mlp(nn.Module):
         # Fully connected layers
         fc_seq = []
         in_features = in_channels  # After GAP, the number of features equals the number of channels
-        for _ in range(fc_layers):
-            fc_seq.append(nn.Linear(in_features, hidden_dim))
-            fc_seq.append(activation())
-            in_features = hidden_dim
+        for _ in range(params['fc_layers']):
+            fc_seq.append(nn.Linear(in_features, params['hidden_dim']))
+            fc_seq.append(params['activation']())
+            in_features = params['hidden_dim']
         self.fc_network = nn.Sequential(*fc_seq)
         # Output layer
-        self.out = nn.Linear(in_features, output_dim)
+        self.out = nn.Linear(in_features, params['embed_dim'])
         # Initialize weights
         self._initialize_weights()
     

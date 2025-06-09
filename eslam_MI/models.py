@@ -20,16 +20,14 @@ class DSIB(nn.Module):
         
         # Create two encoders from |X/Y| to |Z_X/Y|
         if params['mode'] in ['sep', 'bi']:
-            self.encoder_x = multi_cnn_mlp(
-                input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation'], 
-                stride=params['stride'], n_filters=params['n_filters'], branch_layout=params['branch']
-            )
-            self.encoder_y = multi_cnn_mlp(
-                input_channels=1, hidden_dim=params['hidden_dim'], output_dim=params['embed_dim'],
-                conv_layers=params['layers'], fc_layers=params['fc_layers'], activation=params['activation'], 
-                stride=params['stride'], n_filters=params['n_filters'], branch_layout=params['branch']
-            )
+            if 'Nx' in params and params['Nx'] == 1:
+                self.encoder_x = multi_cnn_mlp(params, use_1d_mode=True)
+            else:
+                self.encoder_x = multi_cnn_mlp(params, use_1d_mode=False)
+            if 'Ny' in params and params['Ny'] == 1:
+                self.encoder_y = multi_cnn_mlp(params, use_1d_mode=True)
+            else:
+                self.encoder_y = multi_cnn_mlp(params, use_1d_mode=False)
         if params['mode'] == "bi":
             # Add additional layer to the separable if bilinear
             self.bilinear = nn.Linear(params['embed_dim'], params['embed_dim'], bias=False)
