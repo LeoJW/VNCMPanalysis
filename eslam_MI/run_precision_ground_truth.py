@@ -117,7 +117,6 @@ all_params = {}
 iteration_count = 0
 save_every_n_iterations = 5
 main_iterator = product(["neuron", "all"], ['neurons', 'muscles'], set_precision, moths)
-main_iterator = product(["neuron"], ['neurons'], [set_precision[5]], [moths[0]])
 for run_on, fix_precision_on, prec_level, moth in main_iterator:
     empty_cache()
     
