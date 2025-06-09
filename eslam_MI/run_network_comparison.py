@@ -65,7 +65,7 @@ print(f'Device: {device}')
 
 # Read the data and apply some binning/downsampling
 period = 0.0001
-X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, '2025-03-21'), period)
+X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, '2025-02-25_1'), period)
 
 print(f"Neurons (X): {X.shape}")
 print(f"Muscles (Y): {Y.shape}") 

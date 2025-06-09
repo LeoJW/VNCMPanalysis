@@ -236,15 +236,15 @@ class MultiScaleConvBlock(nn.Module):
         if use_1d_mode:
             kernel_size = (1, 3)
             stride = (1, stride)
-            dilation = (1, dilation)
             padding_b1 = (0, 1)
             padding_b2 = (0, dilation)
+            dilation = (1, dilation)
         else:
             kernel_size = 3
             stride = stride
-            dilation = dilation
             padding_b1 = 1
             padding_b2 = dilation
+            dilation = dilation
         # Calculate channels for each branch (distribute output channels more flexibly)
         # Strategy: Give larger branches slightly more channels
         base_channels = out_channels // 2
@@ -294,8 +294,6 @@ class multi_cnn_mlp(nn.Module):
         for i in range(params['layers']):
             # Determine stride for this layer
             layer_stride = 1 if i == 0 else params['stride']
-            if use_1d_mode:
-                layer_stride = (1, layer_stride) if isinstance(layer_stride, int) else layer_stride
             
             if params['branch'] is None:
                 conv_seq.append(nn.Sequential(
@@ -305,7 +303,7 @@ class multi_cnn_mlp(nn.Module):
                 ))
             elif params['branch'] == '1':
                 if i == 0:
-                    conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1, activation=params['activation']))
+                    conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=1, activation=params['activation']), use_1d_mode=use_1d_mode)
                 else:
                     layer_kernel = 3 if not use_1d_mode else (1,3)
                     conv_seq.append(nn.Sequential(
@@ -314,13 +312,13 @@ class multi_cnn_mlp(nn.Module):
                         params['activation']()
                     ))
             elif params['branch'] == 'all':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, activation=params['activation']), use_1d_mdoe=use_1d_mode)
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, activation=params['activation'], use_1d_mode=use_1d_mode))
             elif params['branch'] == 'linDilation':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=i+1, activation=params['activation']), use_1d_mdoe=use_1d_mode)
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=i+1, activation=params['activation'], use_1d_mode=use_1d_mode))
             elif params['branch'] == 'multDilation':
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2*(i+1), activation=params['activation']), use_1d_mdoe=use_1d_mode)
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2*(i+1), activation=params['activation'], use_1d_mode=use_1d_mode))
             else:
-                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2**(i+1), activation=params['activation']), use_1d_mdoe=use_1d_mode)
+                conv_seq.append(MultiScaleConvBlock(in_channels, out_channels, stride=layer_stride, dilation=2**(i+1), activation=params['activation'], use_1d_mode=use_1d_mode))
             # Double the number of filters in each layer
             in_channels = out_channels
             out_channels *= 2
