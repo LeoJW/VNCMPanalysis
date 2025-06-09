@@ -79,7 +79,7 @@ params = {
     'window_size': 512, # Window of time the estimator operates on, in samples
     'batch_size': 128, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
-    'patience': 10,
+    'patience': 30,
     'min_delta': 0.001,
     'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
     'train_fraction': 0.9,
@@ -101,9 +101,9 @@ params = {
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
 }
 
-neuron = 3
+neuron = 11
 
-window_len_range = np.array([25, 50, 100, 150, 200])
+window_len_range = np.array([25, 50, 100, 150, 200, 300])
 period_range = np.logspace(np.log10(0.00005), np.log10(0.01), 20)
 precision_repeats = 3
 
@@ -130,8 +130,10 @@ for run_on, rep, period, window_len in main_iterator:
     
     X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period)
     if run_on == "neuron":
+        this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, this_params['window_size'])
     else:
+        this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0]}
         dataset = BatchedDatasetWithNoise(X, Y, this_params['window_size'])
     
     # Train models, run precision

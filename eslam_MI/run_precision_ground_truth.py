@@ -103,7 +103,7 @@ moths = [
     "2025-03-21"
 ]
 
-set_precision = np.hstack(period, np.logspace(np.log10(0.001), np.log10(0.05), 20))
+set_precision = np.hstack((period, np.logspace(np.log10(0.001), np.log10(0.05), 20)))
 
 precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.1), 200) / period))
 precision_repeats = 3
