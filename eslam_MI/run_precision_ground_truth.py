@@ -147,15 +147,15 @@ for run_on, fix_precision_on, prec_level, moth in main_iterator:
     precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function
     precision_mi[key] = mi # (nats/window)
     precision_noise_y[key] = noise_levels_y
-    precision_mi[key] = mi_y
+    precision_mi_y[key] = mi_y
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
-            save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+            save_dicts_to_h5([precision_noise, precision_mi, precision_noise_y, precision_mi_y, all_params], filename)
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
 
-save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+save_dicts_to_h5([precision_noise, precision_mi, precision_noise_y, precision_mi_y, all_params], filename)
 print(f'Final results saved to {filename}')
