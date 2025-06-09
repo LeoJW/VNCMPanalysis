@@ -144,7 +144,7 @@ f
 
 
 
-## ------------------ Subsampling results ------------------
+## ------------------------------------ Subsampling results ------------------
 
 file = "subsampling_PACE_2025-06-06.h5"
 subsamples = h5read(joinpath(data_dir, file), "dict_0")
@@ -210,9 +210,9 @@ rowgap!(f.layout, 10)
 Label(f[:, 0], "I(X,Y) (bits/s)", rotation = pi/2)
 f
 
-## ------------------ Binning results ------------------
+## ------------------------------------ Binning results ------------------
 
-file = "binning_PACE_2025-06-05.h5"
+file = "binning_PACE_2025-06-08.h5"
 
 function read_binning_file!(df, file, task)
     precision_noise = h5read(joinpath(data_dir, file), "dict_0")
@@ -271,10 +271,48 @@ combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :pre
 @transform(_, :mi_hi = :mi .+ :mi_std) |> 
 (
 AlgebraOfGraphics.data(_) *
-(mapping(:period=>"Bin size (ms)", :mi_lo=>"I(X,Y) (bits/window)", :mi_hi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Rangebars) +
-mapping(:period=>"Bin size (ms)", :mi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Scatter))
+(mapping(:samps_per_window, :mi_lo=>"I(X,Y) (bits/window)", :mi_hi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Rangebars) +
+mapping(:samps_per_window, :mi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Scatter))
 ) |> 
 draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
+##
+@pipe df |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
+combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
+@transform(_, :mi_lo = :mi .- :mi_std) |> 
+@transform(_, :mi_hi = :mi .+ :mi_std) |> 
+(
+AlgebraOfGraphics.data(_) *
+(mapping(:samps_per_window, :mi_lo=>"I(X,Y) (bits/window)", :mi_hi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Rangebars) +
+mapping(:samps_per_window, :mi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Scatter))
+) |> 
+draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
+
+##
+period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensures bins are offset from values slightly
+
+tempdf = @pipe df |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+groupby(_, [:window, :neuron, :period]) |> 
+combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
+@transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
+@transform(_, :logperiod = log.(:period))
+
+@pipe tempdf[sortperm(tempdf.window),:] |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
+) |> 
+draw(_, facet=(; linkyaxes=:none))#, axis=(; xscale=log10))
+
+##
+
+@pipe DataFrame(a = rand(collect(1:5),5), b = rand(5)) |> 
+(
+AlgebraOfGraphics.data(_) * mapping(:a, :b) * visual(Lines)
+) |> 
+draw(_)
 
 ##
 

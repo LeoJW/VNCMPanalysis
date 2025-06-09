@@ -250,22 +250,24 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
     for i, unit in enumerate(neuron_labels):
         if bin_size is None:
             indices = data[unit]
+            bin_size = 1/sample_rate
         else:
             indices = np.rint(data[unit] / scale)
         # Set to precision level if requested
         if set_precision_x != 0:
             prec_samples = set_precision_x / bin_size
-            indices = np.clip(np.rint(np.rint(indices / prec_samples) * prec_samples), 0, X.shape[1])
+            indices = np.clip(np.rint(np.rint(indices / prec_samples) * prec_samples), 0, X.shape[1]).astype(int)
         X[i, indices] = 1
     # Create binary spike trains for muscles
     for i, unit in enumerate(muscle_labels):
         if bin_size is None:
             indices = data[unit]
+            bin_size = 1/sample_rate
         else:
             indices = np.rint(data[unit] / scale)
         if set_precision_y != 0:
             prec_samples = set_precision_y / bin_size
-            indices = np.clip(np.rint(np.rint(indices / prec_samples) * prec_samples), 0, X.shape[1])
+            indices = np.clip(np.rint(np.rint(indices / prec_samples) * prec_samples), 0, Y.shape[1]).astype(int)
         Y[i, indices] = 1
     # Trim to only bouts
     indices = torch.concat([torch.arange(s,e, dtype=int) for s,e in zip(starts, ends)])

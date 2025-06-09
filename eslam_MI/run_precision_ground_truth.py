@@ -31,7 +31,7 @@ if sys.platform == 'linux':
 # Home version
 else:
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata', 'data_for_python')
+    data_dir = os.path.join(main_dir, '..', 'localdata')
     model_cache_dir = os.path.join(main_dir, '..', 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
@@ -117,20 +117,21 @@ all_params = {}
 iteration_count = 0
 save_every_n_iterations = 5
 main_iterator = product(["neuron", "all"], ['neurons', 'muscles'], set_precision, moths)
+main_iterator = product(["neuron"], ['neurons'], [set_precision[5]], [moths[0]])
 for run_on, fix_precision_on, prec_level, moth in main_iterator:
     empty_cache()
     
     # Make keys
-    key = f'neuron_{run_on}_precision_{prec_level}_moth_{moth}'
+    key = f'neuron_{run_on}_setOn_{fix_precision_on}_precision_{prec_level}_moth_{moth}'
 
     iteration_count += 1
     print(f"Iteration {iteration_count}, {key}")
-    
+    # Fix precision of either neurons or muscles
     if fix_precision_on == 'neurons':
         X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_x=prec_level)
     else:
         X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_y=prec_level)
-    
+    # Set up dataset with either one neuron or all neurons
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, this_params['window_size'])
