@@ -61,7 +61,7 @@ for moth in moths
     spike_rates = (end_inds - start_inds) ./ flap_duration
     valid_periods = (flap_duration .> duration_thresh) .&& (spike_rates .> spike_rate_thresh)
     # Grab valid periods, extend on either side by buffer seconds for neurons
-    bout_starts = min.(muscles["ldlm"][start_inds[valid_periods]] .- (buffer_in_sec * fsamp), 1)
+    bout_starts = max.(muscles["ldlm"][start_inds[valid_periods]] .- (buffer_in_sec * fsamp), 1)
     bout_ends = muscles["ldlm"][end_inds[valid_periods]] .+ (buffer_in_sec * fsamp)
     # Clear out spikes in neurons and muscles not valid by bouts
     for unit in keys(neurons)
