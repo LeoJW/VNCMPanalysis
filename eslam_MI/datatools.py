@@ -36,7 +36,7 @@ class BatchedDataset(Dataset):
         # Loop over bouts
         for i in range(len(bout_starts)-1):
             # Cut up bout into chunks
-            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size)
+            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size).astype(int)
             for j in range(n_chunks_in_bout-1):
                 start_idx = bout_starts[i] + j * batch_size
                 end_idx = start_idx + batch_size
@@ -90,7 +90,7 @@ class BatchedDatasetWithNoise(Dataset):
         # Loop over bouts
         for i in range(len(bout_starts)-1):
             # Cut up bout into chunks
-            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size)
+            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size).astype(int)
             for j in range(n_chunks_in_bout-1):
                 start_idx = bout_starts[i] + j * batch_size
                 end_idx = start_idx + batch_size
