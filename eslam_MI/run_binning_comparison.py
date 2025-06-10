@@ -79,7 +79,7 @@ params = {
     'window_size': 512, # Window of time the estimator operates on, in samples
     'batch_size': 256, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
-    'patience': 30,
+    'patience': 15,
     'min_delta': 0.001,
     'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
     'train_fraction': 0.9,
