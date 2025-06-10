@@ -96,7 +96,7 @@ for moth in moths
 
     npzwrite(joinpath(data_dir, moth * "_data.npz"), output_dict)
     npzwrite(joinpath(data_dir, moth * "_labels.npz"), label_dict)
-    npzwrite(joinpath(data_dir, moth * "_bouts.npy"), Dict("starts" => bout_starts, "ends" => bout_ends))
+    npzwrite(joinpath(data_dir, moth * "_bouts.npz"), Dict("starts" => bout_starts, "ends" => bout_ends))
 end
 
 
