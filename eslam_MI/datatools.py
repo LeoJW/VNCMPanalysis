@@ -21,7 +21,7 @@ class BatchedDataset(Dataset):
     Maintains only one copy of data in memory
     Simpler, lighter weight version than BatchedDatasetWithNoise
     """
-    def __init__(self, X, Y, batch_size, check_activity=False):
+    def __init__(self, X, Y, bout_starts, batch_size, check_activity=False):
         """
         Args:
             X (torch.Tensor): First time series data of shape [M_x, N]
@@ -29,30 +29,37 @@ class BatchedDataset(Dataset):
             batch_size (int): Size of each window
         """
         self.batch_size = batch_size
-        # Create batch indices
-        self.total_batches = (X.shape[1] + batch_size - 1) // batch_size
         # Pre-compute valid batch indices (those with non-zero X and Y)
         self.batch_indices = []
-        for i in range(self.total_batches):
-            start_idx = i * batch_size
-            end_idx = start_idx + batch_size
-            # Windows must all be same size, ignore last one if too small
-            if end_idx > X.shape[1]:
-                continue
-            # If asked, check if activity in X and Y for this window. Can be slow
-            if check_activity:
-                should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
-                if not should_append:
-                    continue
-            self.batch_indices.append((start_idx, end_idx))
+        bout_starts = np.hstack((bout_starts, X.shape[1]))
+        bout_diffs = np.diff(bout_starts)
+        # Loop over bouts
+        for i in range(len(bout_starts)-1):
+            # Cut up bout into chunks
+            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size)
+            for j in range(n_chunks_in_bout-1):
+                start_idx = bout_starts[i] + j * batch_size
+                end_idx = start_idx + batch_size
+                # If asked, check if activity in X and Y for this window. Can be slow
+                if check_activity:
+                    should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
+                    if not should_append:
+                        continue
+                self.batch_indices.append((start_idx, end_idx))
+            # Handle last chunk differently, just go to end of bout
+            start_idx = bout_starts[i] + n_chunks_in_bout * batch_size
+            end_idx = bout_starts[i+1]
         self.n_batches = len(self.batch_indices)
         # Store X, Y in pre-chunked form
         self.X = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
         self.Y = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
         for i in range(self.n_batches):
+            # Indexing done this way to catch times when a window is shorter than batch_size
+            # In that case we just fill chunk in, leave the rest as zeros
             indices = self.batch_indices[i]
-            self.X[i,0,:,:] = X[:, indices[0]:indices[1]]
-            self.Y[i,0,:,:] = Y[:, indices[0]:indices[1]]
+            ind_diff = indices[1] - indices[0]
+            self.X[i,0,:,0:ind_diff] = X[:, indices[0]:indices[1]]
+            self.Y[i,0,:,0:ind_diff] = Y[:, indices[0]:indices[1]]
     def __len__(self):
         return self.n_batches
     def __getitem__(self, idx):
@@ -68,7 +75,7 @@ class BatchedDatasetWithNoise(Dataset):
     Will always return Xnoise, to protect master copy X. 
     X will also always be preserved in [nchannels x ntimepoints] shape, whereas Xnoise is set to chunked/windowed form
     """
-    def __init__(self, X, Y, batch_size, check_activity=False):
+    def __init__(self, X, Y, bout_starts, batch_size, check_activity=False):
         """
         Args:
             X (torch.Tensor): First time series data of shape [M_x, N]
@@ -76,22 +83,26 @@ class BatchedDatasetWithNoise(Dataset):
             batch_size (int): Size of each window
         """
         self.batch_size = batch_size
-        # Create batch indices
-        self.total_batches = (X.shape[1] + batch_size - 1) // batch_size
         # Pre-compute valid batch indices (those with non-zero X and Y)
         self.batch_indices = []
-        for i in range(self.total_batches):
-            start_idx = i * batch_size
-            end_idx = start_idx + batch_size
-            # Windows must all be same size, ignore last one if too small
-            if end_idx > X.shape[1]:
-                continue
-            # If asked, check if activity in X and Y for this window. Can be slow
-            if check_activity:
-                should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
-                if not should_append:
-                    continue
-            self.batch_indices.append((start_idx, end_idx))
+        bout_starts = np.hstack((bout_starts, X.shape[1]))
+        bout_diffs = np.diff(bout_starts)
+        # Loop over bouts
+        for i in range(len(bout_starts)-1):
+            # Cut up bout into chunks
+            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size)
+            for j in range(n_chunks_in_bout-1):
+                start_idx = bout_starts[i] + j * batch_size
+                end_idx = start_idx + batch_size
+                # If asked, check if activity in X and Y for this window. Can be slow
+                if check_activity:
+                    should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
+                    if not should_append:
+                        continue
+                self.batch_indices.append((start_idx, end_idx))
+            # Handle last chunk differently, just go to end of bout
+            start_idx = bout_starts[i] + n_chunks_in_bout * batch_size
+            end_idx = bout_starts[i+1]
         self.n_batches = len(self.batch_indices)
         # Store X, Y in un-chunked form, noise-equivalent versions in pre-chunked form
         self.Xmain = X
@@ -99,9 +110,12 @@ class BatchedDatasetWithNoise(Dataset):
         self.X = torch.zeros((self.n_batches, 1, X.shape[0], batch_size), device=device)
         self.Y = torch.zeros((self.n_batches, 1, Y.shape[0], batch_size), device=device)
         for i in range(self.n_batches):
+            # Indexing done this way to catch times when a window is shorter than batch_size
+            # In that case we just fill chunk in, leave the rest as zeros
             indices = self.batch_indices[i]
-            self.X[i,0,:,:] = X[:, indices[0]:indices[1]]
-            self.Y[i,0,:,:] = Y[:, indices[0]:indices[1]]
+            ind_diff = indices[1] - indices[0]
+            self.X[i,0,:,0:ind_diff] = X[:, indices[0]:indices[1]]
+            self.Y[i,0,:,0:ind_diff] = Y[:, indices[0]:indices[1]]
         # Get spike indices
         self.spike_indices = torch.where(self.X)
         self.spike_indices_Y = torch.where(self.Y)
@@ -144,8 +158,11 @@ class BatchedDatasetWithNoise(Dataset):
         tempX = self.Xmain.detach().clone()
         tempX[channels,:] = torch.roll(tempX[channels,:], lag)
         for i in range(self.n_batches):
+            # Indexing done this way to catch times when a window is shorter than batcH_size
+            # In that case we just fill chunk in, leave the rest as zeros
             indices = self.batch_indices[i]
-            self.X[i,0,:,:] = tempX[:, indices[0]:indices[1]]
+            ind_diff = indices[1] - indices[0]
+            self.X[i,0,:,0:ind_diff] = tempX[:, indices[0]:indices[1]]
         del tempX
 
 
@@ -183,7 +200,8 @@ def create_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=No
 
 
 # Read neuron and muscle data for one moth, return X and Y with specific binning
-def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_rate=30000, 
+def read_spike_data(base_name,
+    bin_size=None, neuron_label_filter=None, sample_rate=30000, 
     set_precision_x=0, set_precision_y=0):
     """
     Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
@@ -273,8 +291,11 @@ def read_spike_data(base_name, bin_size=None, neuron_label_filter=None, sample_r
     indices = torch.concat([torch.arange(s,e, dtype=int) for s,e in zip(starts, ends)])
     X = X[:,indices]
     Y = Y[:,indices]
+    # Change bout indices to match new length of X and Y
+    subtract_amts = np.cumsum(starts - np.hstack((0, ends[0:-1])))
+    starts = starts - subtract_amts
     # Return results
-    return X, Y, neuron_labels, muscle_labels
+    return X, Y, neuron_labels, muscle_labels, starts
 
 
 

@@ -102,8 +102,8 @@ all_mi = {}
 all_embed_dim = {}
 for moth in moths:
     empty_cache()
-    X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period)
-    dataset = BatchedDataset(X, Y, params['window_size'])
+    X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period)
+    dataset = BatchedDataset(X, Y, bout_starts, params['window_size'])
     subsets, mi, embed_dim = subsample_MI_vary_embed_dim(dataset, params, np.arange(1,10), embed_range=np.arange(1,15))
     all_subsets[moth] = subsets
     all_mi[moth] = mi

@@ -19,10 +19,9 @@ moths = [
     "2025-03-21"
 ]
 data_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata"
-output_dir = joinpath(data_dir, "data_for_python")
 
 duration_thresh = 5 # Seconds long a flapping bout has to be
-buffer_in_sec = 2 # Seconds on either side of a bout to keep. Must be less than duration_thresh/2 
+buffer_in_sec = 0.1 # Seconds on either side of a bout to keep. Must be less than duration_thresh/2 
 spike_rate_thresh = 12 # Hz that a bout needs mean spike rate above
 refractory_thresh = 1 # ms, remove spikes closer than this
 
@@ -61,8 +60,8 @@ for moth in moths
     flap_duration = (muscles["ldlm"][end_inds] .- muscles["ldlm"][start_inds]) ./ fsamp
     spike_rates = (end_inds - start_inds) ./ flap_duration
     valid_periods = (flap_duration .> duration_thresh) .&& (spike_rates .> spike_rate_thresh)
-    # Grab valid periods, extend 1s on either side for neurons
-    bout_starts = muscles["ldlm"][start_inds[valid_periods]] .- (buffer_in_sec * fsamp)
+    # Grab valid periods, extend on either side by buffer seconds for neurons
+    bout_starts = min.(muscles["ldlm"][start_inds[valid_periods]] .- (buffer_in_sec * fsamp), 1)
     bout_ends = muscles["ldlm"][end_inds[valid_periods]] .+ (buffer_in_sec * fsamp)
     # Clear out spikes in neurons and muscles not valid by bouts
     for unit in keys(neurons)
@@ -95,15 +94,15 @@ for moth in moths
         end
     end
 
-    npzwrite(joinpath(output_dir, moth * "_data.npz"), output_dict)
-    npzwrite(joinpath(output_dir, moth * "_labels.npz"), label_dict)
-    npzwrite(joinpath(output_dir, moth * "_bouts.npy"), Dict("starts" => bout_starts, "ends" => bout_ends))
+    npzwrite(joinpath(data_dir, moth * "_data.npz"), output_dict)
+    npzwrite(joinpath(data_dir, moth * "_labels.npz"), label_dict)
+    npzwrite(joinpath(data_dir, moth * "_bouts.npy"), Dict("starts" => bout_starts, "ends" => bout_ends))
 end
 
 
 ##
 
-moth = moths[1]
+moth = moths[4]
 moth_dir = joinpath(data_dir, moth)
 dir_contents = readdir(moth_dir)
 phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
@@ -133,7 +132,7 @@ seg = 1 / (length(mua_units)+1)
 for (i,unit) in enumerate(mua_units)
     vlines!(ax, neurons[unit] ./ fsamp, ymin=i*seg, ymax=(i+1)*seg)
 end
-vlines!(ax, muscles["rba"] ./ fsamp, ymin=0.0, ymax=seg)
+vlines!(ax, muscles["ldlm"] ./ fsamp, ymin=0.0, ymax=seg)
 f
 
 ##

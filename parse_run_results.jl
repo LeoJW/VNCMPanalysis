@@ -20,8 +20,6 @@ end
 analysis_dir = @__DIR__
 data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
 
-file = "network_arch_comparison_PACE_2025-06-05.h5"
-
 function read_network_arch_file!(df, file, task)
     precision_noise = h5read(joinpath(data_dir, file), "dict_0")
     precision_curves = h5read(joinpath(data_dir, file), "dict_1")
@@ -52,12 +50,12 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_network_arch_file!(df, joinpath(data_dir, "network_arch_comparison_PACE_task_$(task)_2025-06-05.h5"), task)
+    read_network_arch_file!(df, joinpath(data_dir, "network_arch_comparison_PACE_task_$(task)_2025-06-08.h5"), task)
 end
 
 # Remove obvious failures, convert units
 df = @pipe df |> 
-@subset(_, :mi .> 0.05) |> 
+# @subset(_, :mi .> 0.05) |> 
 @transform(_, :mi = :mi .* log2(exp(1)) ./ (512 * 0.0001))
 
 ##
@@ -67,10 +65,10 @@ df = @pipe df |>
 @transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:time, :mi, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
+mapping(:mi, :precision, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
 visual(Scatter)
 ) |> 
-draw(_)
+draw(_)#, axis=(; limits=((2, 20), nothing)))
 
 ##
 
@@ -125,23 +123,6 @@ for i in 1:layers
     println("Multiplicative Dilation : $(RFdmult)")
     println("Exponential Dilation : $(RFdexp)")
 end
-
-##
-
-period = 0.0001
-x = vcat(0, logrange(period, 0.04, 20) .* 1000)
-curve = vec(mean(precision_curves[first(keys(precision_curves))], dims=1))
-deriv = savitzky_golay(curve, 5, 2; deriv=2).y
-
-f = Figure()
-ax = Axis(f[1,1], xscale=log10)
-lines!(ax, x, deriv)
-lines!(ax, x, curve)
-min_idx = findmin(deriv)[2]
-scatter!(ax, x[min_idx], deriv[min_idx])
-scatter!(ax, x[min_idx], curve[min_idx])
-f
-
 
 
 ## ------------------------------------ Subsampling results ------------------
@@ -256,7 +237,7 @@ for task in 0:9
 end
 # Convert units
 df = @pipe df |> 
-@transform(_, :mi = :mi ./ :window * 1000 .* log2(exp(1))) |> 
+@transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
 # @transform(_, :mi = :mi .* log2(exp(1))) |> 
 @transform(_, :period = :period .* 1000) |> 
 @transform(_, :samps_per_window = round.(Int, :window ./ :period))
@@ -294,6 +275,8 @@ period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensure
 
 tempdf = @pipe df |> 
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+# @transform(_, :precision = :precision ./ :window) |> 
+# @transform(_, :precision = :precision ./ :window .* :samps_per_window) |> 
 groupby(_, [:window, :neuron, :period]) |> 
 combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
 @transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
@@ -304,19 +287,12 @@ combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :pre
 AlgebraOfGraphics.data(_) *
 mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
 ) |> 
-draw(_, facet=(; linkyaxes=:none))#, axis=(; xscale=log10))
-
-##
-
-@pipe DataFrame(a = rand(collect(1:5),5), b = rand(5)) |> 
-(
-AlgebraOfGraphics.data(_) * mapping(:a, :b) * visual(Lines)
-) |> 
-draw(_)
+draw(_, facet=(; linkyaxes=:none))#, axis=(; yscale=log10))
 
 ##
 
 @pipe df |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 # groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
 # combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
 # @subset(_, :period .< 1) |> 
@@ -349,12 +325,13 @@ draw(_,
 
 ##
 
-row = rand(eachrow(@subset(df, (:precision .> 10))))
-# row = rand(eachrow(@subset(df, (:neuron .== "all") .&& (:window .== 200) .&& (:period .== 0.06608103647168023))))
+# row = rand(eachrow(@subset(df, (:precision .> 10))))
+row = rand(eachrow(@subset(df, (:neuron .== "all") .&& (:window .== 25) .&& (:precision .< 10))))
 
 f = Figure()
 ax = Axis(f[1,1], xscale=log10, title="$(row.neuron) window $(row.window) period $(row.period)")
 lines!(ax, row.precision_noise, vec(mean(row.precision_curve, dims=1)))
+scatter!(ax, row.precision_noise, vec(mean(row.precision_curve, dims=1)))
 f
 
 

@@ -127,16 +127,16 @@ for run_on, fix_precision_on, prec_level, moth in main_iterator:
     print(f"Iteration {iteration_count}, {key}")
     # Fix precision of either neurons or muscles
     if fix_precision_on == 'neurons':
-        X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_x=prec_level)
+        X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, set_precision_x=prec_level)
     else:
-        X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, moth), period, set_precision_y=prec_level)
+        X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, set_precision_y=prec_level)
     # Set up dataset with either one neuron or all neurons
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
-        dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, this_params['window_size'])
+        dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'])
     else:
         this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0]}
-        dataset = BatchedDatasetWithNoise(X, Y, this_params['window_size'])
+        dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'])
     
     # Train models, run precision
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)

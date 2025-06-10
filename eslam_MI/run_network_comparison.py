@@ -65,7 +65,7 @@ print(f'Device: {device}')
 
 # Read the data and apply some binning/downsampling
 period = 0.0001
-X, Y, x_labels, y_labels = read_spike_data(os.path.join(data_dir, '2025-02-25_1'), period)
+X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, '2025-02-25_1'), period)
 
 print(f"Neurons (X): {X.shape}")
 print(f"Muscles (Y): {Y.shape}") 
@@ -113,8 +113,8 @@ precision_noise_levels = np.hstack((0, np.logspace(np.log10(period), np.log10(0.
 n_repeats = 3
 
 neuron = 25
-dataset_neuron = BatchedDatasetWithNoise(X[[neuron],:], Y, params['window_size'])
-dataset_all = BatchedDatasetWithNoise(X, Y, params['window_size'])
+dataset_neuron = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, params['window_size'])
+dataset_all = BatchedDatasetWithNoise(X, Y, bout_starts, params['window_size'])
 
 precision_curves = {}
 precision_noise = {}
