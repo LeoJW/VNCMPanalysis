@@ -71,13 +71,13 @@ moths = [
     "2025-03-20",
     "2025-03-21"
 ]
-moth = moths[1]
+moth = moths[3]
 
 params = {
     # Optimizer parameters (for training)
     'epochs': 250,
     'window_size': 512, # Window of time the estimator operates on, in samples
-    'batch_size': 128, # Number of windows estimator processes at any time
+    'batch_size': 256, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
     'patience': 30,
     'min_delta': 0.001,
@@ -101,9 +101,9 @@ params = {
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
 }
 
-neuron = 11
+neuron = 0
 
-window_len_range = np.array([25, 50, 100, 150, 200, 300])
+window_len_range = np.array([25, 50, 100, 150, 200, 400])
 period_range = np.logspace(np.log10(0.00005), np.log10(0.01), 20)
 precision_repeats = 3
 
@@ -128,7 +128,7 @@ for run_on, rep, period, window_len in main_iterator:
     iteration_count += 1
     print(f"Iteration {iteration_count}, {key}")
     
-    X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period)
+    X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, neuron_label_filter=1) # Good units only for now
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'])

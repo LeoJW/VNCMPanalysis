@@ -87,7 +87,7 @@ for moth in moths
         if occursin(r"[0-9]", unit)
             output_dict[unit] = neurons[parse(Int,unit)]
             # label_dict[unit] = unit_details["quality"][parse(Int,unit)]
-            label_dict[unit] = unit_details["quality"][parse(Int,unit)] == "good" ? 0 : 1
+            label_dict[unit] = unit_details["quality"][parse(Int,unit)] == "good" ? 1 : 0
         else
             output_dict[unit] = muscles[unit]
             label_dict[unit] = 2

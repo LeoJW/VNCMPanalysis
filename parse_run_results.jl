@@ -193,11 +193,9 @@ f
 
 ## ------------------------------------ Binning results ------------------
 
-file = "binning_PACE_2025-06-08.h5"
-
 function read_binning_file!(df, file, task)
-    precision_noise = h5read(joinpath(data_dir, file), "dict_0")
-    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    precision_noise = h5read(file, "dict_0")
+    precision_curves = h5read(file, "dict_1")
     # Construct dataframe
     first_row = split(first(keys(precision_noise)), "_")
     names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_noise"])
@@ -233,7 +231,7 @@ end
 
 df = DataFrame()
 for task in 0:9
-    read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-06.h5"), task)
+    read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-08.h5"), task)
 end
 # Convert units
 df = @pipe df |> 
@@ -277,17 +275,18 @@ tempdf = @pipe df |>
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 # @transform(_, :precision = :precision ./ :window) |> 
 # @transform(_, :precision = :precision ./ :window .* :samps_per_window) |> 
-groupby(_, [:window, :neuron, :period]) |> 
-combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
+# groupby(_, [:window, :neuron, :period]) |> 
+# combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
 @transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
 @transform(_, :logperiod = log.(:period))
 
 @pipe tempdf[sortperm(tempdf.window),:] |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
+# mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
+mapping(:window, :precision, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
 ) |> 
-draw(_, facet=(; linkyaxes=:none))#, axis=(; yscale=log10))
+draw(_, facet=(; linkxaxes=:none, linkyaxes=:none))#, axis=(; yscale=log10))
 
 ##
 
@@ -295,13 +294,14 @@ draw(_, facet=(; linkyaxes=:none))#, axis=(; yscale=log10))
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 # groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
 # combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
+@transform(_, :logperiod = log.(:period)) |> 
 # @subset(_, :period .< 1) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:samps_per_window, :mi=>"I(X,Y) (bits/s)", color=:window, col=:neuron) * visual(Scatter)
+mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
 # mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
 ) |> 
-draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
+draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10, limits=(nothing, (0,nothing))))
 
 ##
 
