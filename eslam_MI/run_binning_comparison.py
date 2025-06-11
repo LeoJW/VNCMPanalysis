@@ -71,13 +71,13 @@ moths = [
     "2025-03-20",
     "2025-03-21"
 ]
-moth = moths[3]
+moth = moths[2]
 
 params = {
     # Optimizer parameters (for training)
     'epochs': 250,
     'window_size': 512, # Window of time the estimator operates on, in samples
-    'batch_size': 256, # Number of windows estimator processes at any time
+    'batch_size': 128, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
     'patience': 15,
     'min_delta': 0.001,

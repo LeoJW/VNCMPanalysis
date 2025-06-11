@@ -142,6 +142,7 @@ for run_on, fix_precision_on, prec_level, moth in main_iterator:
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
     noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
+    dataset.apply_noise(0) # Clear out any noise from previous
     noise_levels_y, mi_y = precision_y(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
 
     precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function

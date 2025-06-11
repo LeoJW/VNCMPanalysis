@@ -7,15 +7,18 @@ using DataFramesMeta
 using Pipe
 using SavitzkyGolay
 
-function find_precision(noise_levels, mi, lower_bound=5e-4)
+function find_precision(noise_levels, mi; lower_bound=5e-4)
     sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
     sg_window = sg_window < 2 ? 5 : sg_window
     curve = vec(mean(mi, dims=1))
     deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
-    bound_mask = noise_levels .>= lower_bound
-    return noise_levels[bound_mask][findmin(deriv[bound_mask])[2]]
+    bound_mask = deriv .<= (- lower_bound)
+    if !isempty(deriv[bound_mask])
+        return noise_levels[bound_mask][findmin(deriv[bound_mask])[2]]
+    else
+        return NaN
+    end
 end
-
 
 analysis_dir = @__DIR__
 data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
@@ -39,7 +42,7 @@ function read_network_arch_file!(df, file, task)
             vals, 
             time_per_epoch[key], 
             mean(precision_curves[key], dims=1)[1], 
-            find_precision(precision_noise[key] .* 0.0001 .* 1000, precision_curves[key]),
+            find_precision(precision_noise[key] .* 0.0001 .* 1000, precision_curves[key], lower_bound=0),
             [precision_curves[key] .* log2(exp(1)) ./ (512 * 0.0001)],
             [precision_noise[key] .* 0.0001 .* 1000]
         ))
@@ -86,7 +89,7 @@ draw(_)
 dt = @pipe df |> 
 @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
 @subset(_, :layers .>= 5) |> 
-@subset(_, :neuron .== "all")
+@subset(_, :neuron .== "neuron")
 
 f = Figure()
 for (i,gdf) in enumerate(groupby(dt, :layout))
@@ -94,8 +97,11 @@ for (i,gdf) in enumerate(groupby(dt, :layout))
         ax = Axis(f[j,i], xscale=log10, title=first(ggdf.layout) * " " * string(ggdf.filters[1]))
         for row in eachrow(ggdf)
             curve = vec(mean(row.precision_curve, dims=1))
-            deriv = savitzky_golay(curve, 15, 2; deriv=2).y
-            lines!(ax, row.precision_noise, curve, color=row.layers, colorrange=(5,7))
+            sg_window = 2 * floor(Int, length(row.precision_noise) / 5) + 1
+            sg_window = sg_window < 2 ? 5 : sg_window
+            deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
+            bound_mask = deriv .<= (- 3e-4)
+            lines!(ax, row.precision_noise[bound_mask], deriv[bound_mask], color=row.layers, colorrange=(5,7))
         end
         # ylims!(ax, 0, maximum(dt.mi))
         xlims!(ax, 10^-1, 10^2)
@@ -125,7 +131,7 @@ for i in 1:layers
 end
 
 
-## ------------------------------------ Subsampling results ------------------
+## ------------------------------------ Subsampling results ------------------------------------
 
 file = "subsampling_PACE_2025-06-06.h5"
 subsamples = h5read(joinpath(data_dir, file), "dict_0")
@@ -191,7 +197,7 @@ rowgap!(f.layout, 10)
 Label(f[:, 0], "I(X,Y) (bits/s)", rotation = pi/2)
 f
 
-## ------------------------------------ Binning results ------------------
+## ------------------------------------ Binning results ------------------------------------
 
 function read_binning_file!(df, file, task)
     precision_noise = h5read(file, "dict_0")
@@ -215,7 +221,7 @@ function read_binning_file!(df, file, task)
         if (all(mean_curve[2:end] .< 0)) || (length(precision_noise[key]) < 10)
             prec = NaN
         else
-            prec = find_precision(precision_noise[key] .* period .* 1000, precision_curves[key])
+            prec = find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=0)
         end
         push!(thisdf, vcat(
             vals,
@@ -231,50 +237,18 @@ end
 
 df = DataFrame()
 for task in 0:9
-    read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-08.h5"), task)
+    read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-10.h5"), task)
 end
 # Convert units
 df = @pipe df |> 
 @transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
-# @transform(_, :mi = :mi .* log2(exp(1))) |> 
 @transform(_, :period = :period .* 1000) |> 
 @transform(_, :samps_per_window = round.(Int, :window ./ :period))
 
-##
-
-@pipe df |> 
-@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
-groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
-combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
-@transform(_, :mi_lo = :mi .- :mi_std) |> 
-@transform(_, :mi_hi = :mi .+ :mi_std) |> 
-(
-AlgebraOfGraphics.data(_) *
-(mapping(:samps_per_window, :mi_lo=>"I(X,Y) (bits/window)", :mi_hi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Rangebars) +
-mapping(:samps_per_window, :mi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Scatter))
-) |> 
-draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
-##
-@pipe df |> 
-@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
-groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
-combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
-@transform(_, :mi_lo = :mi .- :mi_std) |> 
-@transform(_, :mi_hi = :mi .+ :mi_std) |> 
-(
-AlgebraOfGraphics.data(_) *
-(mapping(:samps_per_window, :mi_lo=>"I(X,Y) (bits/window)", :mi_hi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Rangebars) +
-mapping(:samps_per_window, :mi=>"I(X,Y) (bits/window)", color=:window=>"Window (ms)", col=:neuron) * visual(Scatter))
-) |> 
-draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
-
-##
+## Means by period
 period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensures bins are offset from values slightly
 
 tempdf = @pipe df |> 
-@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
-# @transform(_, :precision = :precision ./ :window) |> 
-# @transform(_, :precision = :precision ./ :window .* :samps_per_window) |> 
 # groupby(_, [:window, :neuron, :period]) |> 
 # combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
 @transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
@@ -284,44 +258,39 @@ tempdf = @pipe df |>
 (
 AlgebraOfGraphics.data(_) *
 # mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
-mapping(:window, :precision, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
+mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkxaxes=:none, linkyaxes=:none))#, axis=(; yscale=log10))
 
 ##
 
 @pipe df |> 
-@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+# @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 # groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
 # combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
 @transform(_, :logperiod = log.(:period)) |> 
-# @subset(_, :period .< 1) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
+mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
+# mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
 # mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10, limits=(nothing, (0,nothing))))
 
 ##
-
 @pipe df |> 
+@subset(_, :mi .> 0) |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+@transform(_, :logperiod = log.(:period)) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:mi, :precision, color=:window, col=:neuron) * visual(Scatter)
+mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
+# mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
+# mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
 ) |> 
-draw(_)
+draw(_, facet=(; linkyaxes=:none))
 
-##
 
-@pipe df |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:period, :precision, color=:window=>nonnumeric, col=:neuron) * visual(Scatter)
-) |> 
-draw(_, 
-    # facet=(; linkyaxes=:none), 
-    axis=(; xscale=log10))
 
 ##
 
@@ -345,3 +314,111 @@ key = collect(keys(precision_curves))[idx]
 lines!(ax, vec(precision_noise[key])[2:end] .* df.period[idx], vec(mean(precision_curves[key], dims=1))[2:end])
 f
 
+
+
+## ------------------------------------ Precision fixed results ------------------------------------
+
+# file = joinpath(data_dir, "precision_groundtruth_PACE_2025-06-09.h5")
+function find_precision(noise_levels, mi; lower_bound=5e-4)
+    sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
+    sg_window = sg_window < 2 ? 5 : sg_window
+    curve = vec(mean(mi, dims=1))
+    deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
+    bound_mask = deriv .<= - lower_bound
+    if !isempty(deriv[bound_mask])
+        return noise_levels[bound_mask][findmin(deriv[bound_mask])[2]]
+    else
+        return NaN
+    end
+end
+
+function read_precision_file(file)
+    # Returns in units of bits/window, time units in ms
+    precision_noise = h5read(file, "dict_0")
+    precision_curves = h5read(file, "dict_1")
+    precision_noise_y = h5read(file, "dict_2")
+    precision_curves_y = h5read(file, "dict_3")
+    
+    period = 0.0001
+    
+    # Construct dataframe
+    added_names = [
+        "mi", "precision_est", "mi_y", "precision_est_y", 
+        "precision_curve", "precision_noise", 
+        "precision_curve_y", "precision_noise_y"]
+    added_types = [
+        Float64, Float64, Float64, Float64, 
+        Matrix{Float64}, Vector{Float64}, 
+        Matrix{Float64}, Vector{Float64}]
+
+    first_row = split(first(keys(precision_noise)), "_")
+    last_ind = (length(first_row) ÷ 2) * 2
+
+    names = vcat(first_row[1:2:last_ind], added_names)
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat([x ? Float64 : String for x in is_numeric], added_types)
+    print(names)
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(precision_noise)
+        keysplit = split(key, "_")[2:2:last_ind]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        mean_curve = mean(precision_curves[key], dims=1) .* log2(exp(1))
+        mean_curve_y = mean(precision_curves_y[key], dims=1) .* log2(exp(1))
+        prec = all(mean_curve[2:end] .< 0) ? NaN : find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=5e-5)
+        prec_y = all(mean_curve_y[2:end] .< 0) ? NaN : find_precision(precision_noise_y[key] .* period .* 1000, precision_curves_y[key], lower_bound=5e-5)
+        push!(thisdf, vcat(
+            vals,
+            mean_curve[1], prec,
+            mean_curve_y[1], prec_y,
+            [precision_curves[key] .* log2(exp(1))], [precision_noise[key] .* period .* 1000],
+            [precision_curves_y[key] .* log2(exp(1))], [precision_noise_y[key] .* period .* 1000]
+        ))
+    end
+    return thisdf
+end
+
+
+df = read_precision_file(joinpath(data_dir, "precision_groundtruth_PACE_2025-06-09.h5"))
+
+##
+
+@pipe df |> 
+@transform(_, :precision = :precision .* 1000) |> 
+# @subset(_, :setOn .== "muscles") |> 
+@subset(_, :neuron .== "neuron") |> 
+(
+AlgebraOfGraphics.data(_) * 
+(mapping(:precision, :mi, row=:moth, col=:setOn, color=:setOn) * 
+visual(Scatter)) +
+mapping([0], [1]) * visual(ABLines)
+) |> 
+draw(_)
+
+##
+
+dt = @subset(df, (:moth .== "2025-03-11") .&& (:setOn .== "neurons"))
+
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+
+for row in eachrow(dt)
+    yvals = vec(mean(row.precision_curve[:,2:end], dims=1))
+
+    sg_window = 2 * floor(Int, length(row.precision_noise[2:end]) / 5) + 1
+    sg_window = sg_window < 2 ? 5 : sg_window
+    # yvals = savitzky_golay(yvals, sg_window, 2; deriv=2).y
+
+    bound_mask = yvals .<= -5e-5
+
+    lines!(ax, 
+        row.precision_noise[2:end], yvals, 
+        # row.precision_noise[2:end][bound_mask], yvals[bound_mask], 
+        color=row.precision, colorrange=extrema(dt.precision))
+    # if ~isempty(yvals[bound_mask])
+    #     idx = findmin(yvals[bound_mask])[2]
+    #     scatter!(ax, row.precision_noise[2:end][bound_mask][idx], yvals[bound_mask][idx])
+    # end
+end
+# xlims!(ax, 10^1, 10^2)
+f

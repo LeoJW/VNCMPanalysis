@@ -102,7 +102,7 @@ end
 
 ##
 
-moth = moths[4]
+moth = moths[5]
 moth_dir = joinpath(data_dir, moth)
 dir_contents = readdir(moth_dir)
 phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
@@ -128,13 +128,18 @@ mua_units = [unit for (unit, qual) in unit_details["quality"] if qual == "mua"]
 ##
 f = Figure()
 ax = Axis(f[1,1])
-seg = 1 / (length(mua_units)+1)
-for (i,unit) in enumerate(mua_units)
+seg = 1 / (length(good_units)+1)
+for (i,unit) in enumerate(good_units)
     vlines!(ax, neurons[unit] ./ fsamp, ymin=i*seg, ymax=(i+1)*seg)
 end
 vlines!(ax, muscles["ldlm"] ./ fsamp, ymin=0.0, ymax=seg)
 f
-
+##
+f = Figure()
+ax = Axis(f[1,1])
+vlines!(ax, neurons[6] ./ fsamp, ymin=0.5, ymax=1.0)
+vlines!(ax, muscles["ldlm"] ./ fsamp, ymin=0.0, ymax=0.5)
+f
 ##
 for unit in keys(neurons)
     deleteat!(neurons[unit], findall(diff(neurons[unit]) .< (fsamp * refractory_thresh / 1000)) .+ 1)
