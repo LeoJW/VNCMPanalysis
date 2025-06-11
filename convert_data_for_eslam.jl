@@ -70,6 +70,10 @@ for moth in moths
             valid[(neurons[unit] .> bout_starts[i]) .&& (neurons[unit] .< bout_ends[i])] .= true
         end
         keepat!(neurons[unit], valid)
+        # Remove anything empty (either doesn't overlap with muscles or slipped thru curation)
+        if !any(valid)
+            delete!(neurons, unit)
+        end
     end
     for unit in keys(muscles)
         valid = zeros(Bool, length(muscles[unit]))
@@ -77,6 +81,10 @@ for moth in moths
             valid[(muscles[unit] .> bout_starts[i]) .&& (muscles[unit] .< bout_ends[i])] .= true
         end
         keepat!(muscles[unit], valid)
+        # Remove anything empty (either poor quality or slipped thru curation)
+        if !any(valid)
+            delete!(muscles, unit)
+        end
     end
 
     # Assemble export dict
@@ -102,7 +110,7 @@ end
 
 ##
 
-moth = moths[5]
+moth = moths[3]
 moth_dir = joinpath(data_dir, moth)
 dir_contents = readdir(moth_dir)
 phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
@@ -137,7 +145,7 @@ f
 ##
 f = Figure()
 ax = Axis(f[1,1])
-vlines!(ax, neurons[6] ./ fsamp, ymin=0.5, ymax=1.0)
+vlines!(ax, neurons[57] ./ fsamp, ymin=0.5, ymax=1.0)
 vlines!(ax, muscles["ldlm"] ./ fsamp, ymin=0.0, ymax=0.5)
 f
 ##
