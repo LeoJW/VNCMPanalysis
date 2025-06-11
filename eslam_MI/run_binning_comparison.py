@@ -58,7 +58,7 @@ elif torch.backends.mps.is_available():
     synchronize = torch.mps.synchronize
     empty_cache = torch.mps.empty_cache
 else:
-    device = "CPU"
+    device = 'cpu'
     synchronize = lambda: None
     empty_cache = lambda: None
 print(f'Device: {device}')

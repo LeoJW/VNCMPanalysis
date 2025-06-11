@@ -13,7 +13,6 @@ else:
     device = "cpu"
 
 
-
 class BatchedDataset(Dataset):
     """
     Dataset that supports both batch-wise and full data access.
@@ -140,21 +139,23 @@ class BatchedDatasetWithNoise(Dataset):
             self.X[i,0,:,0:ind_diff] = self.Xmain[:, indices[0]:indices[1]]
             self.Y[i,0,:,0:ind_diff] = self.Ymain[:, indices[0]:indices[1]]
         # Get spike indices
-        self.spike_indices = torch.where(self.X)
-        self.spike_indices_Y = torch.where(self.Y)
+        self.spike_indices = torch.nonzero(self.X, as_tuple=False)
+        self.spike_indices_Y = torch.nonzero(self.Y, as_tuple=False)
         # If checking activity, remove chunks where there is no activity
         if check_activity:
             # Find batches with activity in both
-            keep_batches, validX, validY = np.intersect1d(self.spike_indices[0].cpu(), self.spike_indices_Y[0].cpu(), return_indices=True)
+            keep_batches, validX, validY = np.intersect1d(self.spike_indices[:,0].cpu(), self.spike_indices_Y[:,0].cpu(), return_indices=True)
             # Update everything
             self.X = self.X[keep_batches,:,:,:]
             self.Y = self.Y[keep_batches,:,:,:]
             self.n_batches = len(keep_batches)
-            self.spike_indices = tuple(tensor[validX] for tensor in self.spike_indices)
-            self.spike_indices_Y = tuple(tensor[validY] for tensor in self.spike_indices_Y)
+            self.spike_indices = self.spike_indices[validX,:]
+            self.spike_indices_Y = self.spike_indices_Y[validY,:]
+            self.spike_indices[:,0] = torch.searchsorted(torch.tensor(keep_batches, device=device), self.spike_indices[:,0].contiguous())
+            self.spike_indices_Y[:,0] = torch.searchsorted(torch.tensor(keep_batches, device=device), self.spike_indices_Y[:,0].contiguous())
             self.batch_indices = [self.batch_indices[i] for i in keep_batches]
         # Intermediate tensor for holding noise indices
-        self.new_indices = torch.zeros_like(self.spike_indices[3], dtype=int, device=device)
+        self.new_indices = torch.zeros_like(self.spike_indices[:,3], dtype=int, device=device)
     def __len__(self):
         return self.n_batches
     def __getitem__(self, idx):
@@ -170,9 +171,9 @@ class BatchedDatasetWithNoise(Dataset):
         """
         self.X.zero_()
         self.new_indices = torch.clip(
-            self.spike_indices[3] + torch.rand(self.spike_indices[3].shape, device=device).mul_(amplitude).round_().int(), 
+            self.spike_indices[:,3] + torch.rand(self.spike_indices[:,3].shape, device=device).mul_(amplitude).round_().int(), 
             0, self.X.shape[3] - 1)
-        self.X[self.spike_indices[0], self.spike_indices[1], self.spike_indices[2], self.new_indices] = 1
+        self.X[self.spike_indices[:,0], self.spike_indices[:,1], self.spike_indices[:,2], self.new_indices] = 1
     def apply_noise_Y(self, amplitude):
         """
         Apply noise to spike times of noisy version of Y. 
@@ -180,9 +181,9 @@ class BatchedDatasetWithNoise(Dataset):
         """
         self.Y.zero_()
         self.new_indices = torch.clip(
-            self.spike_indices_Y[3] + torch.rand(self.spike_indices_Y[3].shape, device=device).mul_(amplitude).round_().int(), 
+            self.spike_indices_Y[:,3] + torch.rand(self.spike_indices_Y[:,3].shape, device=device).mul_(amplitude).round_().int(), 
             0, self.Y.shape[3] - 1)
-        self.Y[self.spike_indices_Y[0], self.spike_indices_Y[1], self.spike_indices_Y[2], self.new_indices] = 1
+        self.Y[self.spike_indices_Y[:,0], self.spike_indices_Y[:,1], self.spike_indices_Y[:,2], self.new_indices] = 1
     def time_lag(self, lag, channels=None):
         """
         Apply time lag to spike times of all (or specific) neurons/muscles 

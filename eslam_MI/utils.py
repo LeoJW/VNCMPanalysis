@@ -246,12 +246,12 @@ class MultiScaleConvBlock(nn.Module):
             padding_b2 = dilation
             dilation = dilation
         # Calculate channels for each branch (distribute output channels more flexibly)
-        # Strategy: Give larger branches slightly more channels
+        # Gives larger branches slightly more channels if not divisible by 2
         base_channels = out_channels // 2
         remainder = out_channels % 2
         # Distribute remainder channels to branches (prioritize faster branches)
         branch1_channels = base_channels + remainder  # 3x3 conv  
-        branch2_channels = base_channels + remainder  # 5x5 conv
+        branch2_channels = base_channels + remainder  # 3x3 conv dilated
         # Branch 1: 3x3 conv (standard receptive field)
         self.branch1 = nn.Sequential(
             nn.Conv2d(in_channels, branch1_channels, kernel_size=kernel_size, stride=stride, padding=padding_b1, bias=False),

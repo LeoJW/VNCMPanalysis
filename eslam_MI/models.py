@@ -11,7 +11,7 @@ if torch.cuda.is_available():
 elif torch.backends.mps.is_available():
     device = 'mps'
 else:
-    device = "cpu"
+    device = 'cpu'
 
 class DSIB(nn.Module):
     def __init__(self, params, baseline_fn=None):
@@ -50,7 +50,7 @@ class DSIB(nn.Module):
             zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
             zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
             for i in range(0, batch_size, self.params['batch_size']):
-                end_idx = min(i + self.params['batch_size'], batch_size - 1)
+                end_idx = min(i + self.params['batch_size'], batch_size)
                 zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:,:])
                 zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:,:])
         else:
