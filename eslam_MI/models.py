@@ -20,14 +20,8 @@ class DSIB(nn.Module):
         
         # Create two encoders from |X/Y| to |Z_X/Y|
         if params['mode'] in ['sep', 'bi']:
-            if 'Nx' in params and params['Nx'] == 1:
-                self.encoder_x = multi_cnn_mlp(params, use_1d_mode=True)
-            else:
-                self.encoder_x = multi_cnn_mlp(params, use_1d_mode=False)
-            if 'Ny' in params and params['Ny'] == 1:
-                self.encoder_y = multi_cnn_mlp(params, use_1d_mode=True)
-            else:
-                self.encoder_y = multi_cnn_mlp(params, use_1d_mode=False)
+            self.encoder_x = multi_cnn_mlp(params, use_1d_mode=('Nx' in params and params['Nx'] == 1))
+            self.encoder_y = multi_cnn_mlp(params, use_1d_mode=('Ny' in params and params['Ny'] == 1))
         if params['mode'] == "bi":
             # Add additional layer to the separable if bilinear
             self.bilinear = nn.Linear(params['embed_dim'], params['embed_dim'], bias=False)
