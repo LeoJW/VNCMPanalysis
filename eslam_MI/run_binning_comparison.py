@@ -41,10 +41,10 @@ else:
 if len(sys.argv) > 1: 
     task_id = sys.argv[1]
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, 'binning_PACE_' + f'task_{task_id}_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_binning_PACE_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
-    filename = os.path.join(result_dir, 'binning_PACE_' + datetime.today().strftime('%Y-%m-%d') + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_binning_PACE_' + '.h5')
 
 # Set defaults, device
 default_dtype = torch.float32
@@ -99,6 +99,7 @@ params = {
     'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
     'mode': 'sep', # Almost always we'll use separable
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+    'moth' : moth
 }
 
 neuron = 0
