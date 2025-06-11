@@ -237,7 +237,8 @@ end
 
 df = DataFrame()
 for task in 0:9
-    read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-10.h5"), task)
+    # read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-10.h5"), task)
+    read_binning_file!(df, joinpath(data_dir, "2025-06-10_binning_PACE_task_$(task).h5"), task)
 end
 # Convert units
 df = @pipe df |> 
@@ -246,26 +247,44 @@ df = @pipe df |>
 @transform(_, :samps_per_window = round.(Int, :window ./ :period))
 
 ## Means by period
+
 period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensures bins are offset from values slightly
 
 tempdf = @pipe df |> 
-# groupby(_, [:window, :neuron, :period]) |> 
-# combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => mean => :precision) |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+groupby(_, [:window, :neuron, :period]) |> 
+combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => (x->mean(x[(!).(isnan.(x))])) => :precision) |> 
 @transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
 @transform(_, :logperiod = log.(:period))
 
 @pipe tempdf[sortperm(tempdf.window),:] |> 
 (
 AlgebraOfGraphics.data(_) *
-# mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
-mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
+mapping(:window, :precision, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
+# mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkxaxes=:none, linkyaxes=:none))#, axis=(; yscale=log10))
+
+## Precision vs period
+
+group_bins = sort(unique(df.period)) .- 0.001
+tempdf = @pipe df |> 
+    @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+    groupby(_, [:window, :neuron, :period]) |> 
+    combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => (x->mean(x[(!).(isnan.(x))])) => :precision) |> 
+    @transform(_, :logperiod = log.(:period)) |> 
+    @transform(_, :order = searchsortedlast.(Ref(group_bins), :period))
+@pipe tempdf[sortperm(tempdf.order),:] |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:period, :mi, color=:window, col=:neuron, group=:window=>nonnumeric) * (visual(Scatter) + visual(Lines))
+) |> 
+draw(_, facet=(; linkxaxes=:none, linkyaxes=:none), axis=(; xscale=log10))
 
 ##
 
 @pipe df |> 
-# @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+@transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 # groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
 # combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
 @transform(_, :logperiod = log.(:period)) |> 
@@ -284,12 +303,11 @@ draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10, limits=(nothing, (0,not
 @transform(_, :logperiod = log.(:period)) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
-# mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
+# mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
+mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
 # mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
 ) |> 
-draw(_, facet=(; linkyaxes=:none))
-
+draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
 
 
 ##
@@ -365,8 +383,14 @@ function read_precision_file(file)
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
         mean_curve = mean(precision_curves[key], dims=1) .* log2(exp(1))
         mean_curve_y = mean(precision_curves_y[key], dims=1) .* log2(exp(1))
-        prec = all(mean_curve[2:end] .< 0) ? NaN : find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=5e-5)
-        prec_y = all(mean_curve_y[2:end] .< 0) ? NaN : find_precision(precision_noise_y[key] .* period .* 1000, precision_curves_y[key], lower_bound=5e-5)
+        prec = ifelse(
+            all(mean_curve[2:end] .< 0), 
+            NaN,
+            find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=5e-5))
+        prec_y = ifelse(
+            all(mean_curve_y[2:end] .< 0),
+            NaN,
+            find_precision(precision_noise_y[key] .* period .* 1000, precision_curves_y[key], lower_bound=5e-5))
         push!(thisdf, vcat(
             vals,
             mean_curve[1], prec,

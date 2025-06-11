@@ -124,17 +124,16 @@ for run_on, rep, period, window_len in main_iterator:
     
     # Make keys
     key = f'neuron_{run_on}_window_{window_len}_period_{period}_rep_{rep}'
-    this_params = {**params, 'window_size': np.round(window_len / 1000 / period).astype(int)}
 
     iteration_count += 1
     print(f"Iteration {iteration_count}, {key}")
     
     X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, neuron_label_filter=1) # Good units only for now
     if run_on == "neuron":
-        this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0]}
+        this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'])
     else:
-        this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0]}
+        this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
         dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'])
     
     # Train models, run precision
