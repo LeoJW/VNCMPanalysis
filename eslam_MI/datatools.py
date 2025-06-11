@@ -145,15 +145,14 @@ class BatchedDatasetWithNoise(Dataset):
         # If checking activity, remove chunks where there is no activity
         if check_activity:
             # Find batches with activity in both
-            validX, validY = intersect_sorted_tensors(self.spike_indices[0], self.spike_indices_Y[0])
-            keep_batches = torch.unique(validX)
+            keep_batches, validX, validY = np.intersect1d(self.spike_indices[0].cpu(), self.spike_indices_Y[0].cpu(), return_indices=True)
             # Update everything
             self.X = self.X[keep_batches,:,:,:]
             self.Y = self.Y[keep_batches,:,:,:]
             self.n_batches = len(keep_batches)
             self.spike_indices = tuple(tensor[validX] for tensor in self.spike_indices)
             self.spike_indices_Y = tuple(tensor[validY] for tensor in self.spike_indices_Y)
-            self.batch_indices = self.batch_indices[keep_batches]
+            self.batch_indices = [self.batch_indices[i] for i in keep_batches]
         # Intermediate tensor for holding noise indices
         self.new_indices = torch.zeros_like(self.spike_indices[3], dtype=int, device=device)
     def __len__(self):
