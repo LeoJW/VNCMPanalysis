@@ -131,10 +131,10 @@ for run_on, rep, period, window_len in main_iterator:
     X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, neuron_label_filter=1) # Good units only for now
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
-        dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'])
+        dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'], check_activity=True)
     else:
         this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
-        dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'])
+        dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'], check_activity=True)
     
     # Train models, run precision
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
