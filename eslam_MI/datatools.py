@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
-
+from utils import *
 
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
@@ -94,11 +94,6 @@ class BatchedDatasetWithNoise(Dataset):
             for j in range(n_chunks_in_bout-1):
                 start_idx = bout_starts[i] + j * batch_size
                 end_idx = start_idx + batch_size
-                # If asked, check if activity in X and Y for this window. Can be slow
-                if check_activity:
-                    should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
-                    if not should_append:
-                        continue
                 self.batch_indices.append((start_idx, end_idx))
             # Handle last chunk differently, just go to end of bout
             start_idx = bout_starts[i] + n_chunks_in_bout * batch_size
@@ -114,13 +109,25 @@ class BatchedDatasetWithNoise(Dataset):
             # In that case we just fill chunk in, leave the rest as zeros
             indices = self.batch_indices[i]
             ind_diff = indices[1] - indices[0]
-            self.X[i,0,:,0:ind_diff] = X[:, indices[0]:indices[1]]
-            self.Y[i,0,:,0:ind_diff] = Y[:, indices[0]:indices[1]]
+            self.X[i,0,:,0:ind_diff] = self.Xmain[:, indices[0]:indices[1]]
+            self.Y[i,0,:,0:ind_diff] = self.Ymain[:, indices[0]:indices[1]]
         # Get spike indices
         self.spike_indices = torch.where(self.X)
         self.spike_indices_Y = torch.where(self.Y)
+        # If checking activity, remove chunks where there is no activity
+        if check_activity:
+            # Find batches with activity in both
+            validX, validY = intersect_sorted_tensors(self.spike_indices[0], self.spike_indices_Y[0])
+            keep_batches = torch.unique(validX)
+            # Update everything
+            self.X = self.X[keep_batches,:,:,:]
+            self.Y = self.Y[keep_batches,:,:,:]
+            self.n_batches = len(keep_batches)
+            self.spike_indices = tuple(tensor[validX] for tensor in self.spike_indices)
+            self.spike_indices_Y = tuple(tensor[validY] for tensor in self.spike_indices_Y)
+            self.batch_indices = self.batch_indices[keep_batches]
         # Intermediate tensor for holding noise indices
-        self.new_indices = torch.zeros_like(self.spike_indices[3], device=device, dtype=int)
+        self.new_indices = torch.zeros_like(self.spike_indices[3], dtype=int, device=device)
     def __len__(self):
         return self.n_batches
     def __getitem__(self, idx):
@@ -129,6 +136,8 @@ class BatchedDatasetWithNoise(Dataset):
     def apply_noise(self, amplitude):
         """
         Apply noise to spike times of noisy version of X. 
+        NOTE: This could become a problem if too many spikes are supposed to move across window borders to next window
+        Implementing that was a bit too complicated, and likely doesn't matter. But it might!
         Args: 
             amplitude: added uniform noise amplitude, units of samples
         """
@@ -158,7 +167,7 @@ class BatchedDatasetWithNoise(Dataset):
         tempX = self.Xmain.detach().clone()
         tempX[channels,:] = torch.roll(tempX[channels,:], lag)
         for i in range(self.n_batches):
-            # Indexing done this way to catch times when a window is shorter than batcH_size
+            # Indexing done this way to catch times when a window is shorter than batch_size
             # In that case we just fill chunk in, leave the rest as zeros
             indices = self.batch_indices[i]
             ind_diff = indices[1] - indices[0]
@@ -294,6 +303,10 @@ def read_spike_data(base_name,
     # Change bout indices to match new length of X and Y
     subtract_amts = np.cumsum(starts - np.hstack((0, ends[0:-1])))
     starts = starts - subtract_amts
+    # Close all files
+    data.close()
+    bouts.close()
+    labels_data.close()
     # Return results
     return X, Y, neuron_labels, muscle_labels, starts
 

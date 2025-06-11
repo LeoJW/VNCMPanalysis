@@ -486,6 +486,35 @@ def log_prob_gaussian(x):
     return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
 
+def intersect_sorted_tensors(tensor1, tensor2):
+    """
+    Efficiently find intersection of two sorted tensors and return
+    the indices to filter both tensors to keep only shared elements.
+    
+    Args:
+        tensor1: First sorted tensor
+        tensor2: Second sorted tensor
+    Returns:
+        tuple: (indices1, indices2) where:
+            - indices1: indices to filter tensor1
+            - indices2: indices to filter tensor2
+    """
+    # Find where each element of tensor1 would be inserted in tensor2
+    indices = torch.searchsorted(tensor2, tensor1)
+    # Clamp indices to valid range
+    indices = torch.clamp(indices, 0, len(tensor2) - 1)
+    # Check which elements actually match
+    mask1 = tensor2[indices] == tensor1
+    indices1 = torch.where(mask1)[0]
+    # For tensor2, we need to find corresponding indices
+    # Use searchsorted in reverse
+    indices_rev = torch.searchsorted(tensor1, tensor2)
+    indices_rev = torch.clamp(indices_rev, 0, len(tensor1) - 1)
+    mask2 = tensor1[indices_rev] == tensor2
+    indices2 = torch.where(mask2)[0]
+    return indices1, indices2
+
+
 
 def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
     """
