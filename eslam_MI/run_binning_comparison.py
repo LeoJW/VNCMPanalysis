@@ -76,7 +76,7 @@ moth = moths[2]
 params = {
     # Optimizer parameters (for training)
     'epochs': 250,
-    'window_size': 512, # Window of time the estimator operates on, in samples
+    # 'window_size': 512, # Window of time the estimator operates on, in samples
     'batch_size': 128, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
     'patience': 15,
@@ -131,9 +131,11 @@ for run_on, rep, period, window_len in main_iterator:
     X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, neuron_label_filter=1) # Good units only for now
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
+        print(this_params['window_size'])
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'], check_activity=True)
     else:
         this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
+        print(this_params['window_size'])
         dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'], check_activity=True)
     
     # Train models, run precision
@@ -144,13 +146,15 @@ for run_on, rep, period, window_len in main_iterator:
     precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function
     precision_mi[key] = mi # (nats/window)
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
+    print([key + ' : ' + str(value) for key, value in this_params.items()])
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
-            save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+            # save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
+    break
 
-save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+# save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
 print(f'Final results saved to {filename}')
