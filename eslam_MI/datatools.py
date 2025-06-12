@@ -144,15 +144,23 @@ class BatchedDatasetWithNoise(Dataset):
         # If checking activity, remove chunks where there is no activity
         if check_activity:
             # Find batches with activity in both
-            keep_batches, validX, validY = np.intersect1d(self.spike_indices[:,0].cpu(), self.spike_indices_Y[:,0].cpu(), return_indices=True)
-            # Update everything
+            indsX, indsY = self.spike_indices[:,0].cpu().numpy(), self.spike_indices_Y[:,0].cpu().numpy()
+            uniqueX, uniqueY = set(indsX), set(indsY)
+            keep_batches_set = uniqueX.intersection(uniqueY)
+            keep_batches = np.array(sorted(keep_batches_set))
+            validX, validY = np.isin(indsX, keep_batches), np.isin(indsY, keep_batches)
+            # Keep only valid batches
             self.X = self.X[keep_batches,:,:,:]
             self.Y = self.Y[keep_batches,:,:,:]
-            self.n_batches = len(keep_batches)
             self.spike_indices = self.spike_indices[validX,:]
             self.spike_indices_Y = self.spike_indices_Y[validY,:]
-            self.spike_indices[:,0] = torch.searchsorted(torch.tensor(keep_batches, device=device), self.spike_indices[:,0].contiguous())
-            self.spike_indices_Y[:,0] = torch.searchsorted(torch.tensor(keep_batches, device=device), self.spike_indices_Y[:,0].contiguous())
+            # Re-map spike indices to new numbering
+            batch_mapping = np.full((self.n_batches,), -1, dtype=int)
+            batch_mapping[keep_batches] = np.arange(len(keep_batches))
+            new_indsX, new_indsY = batch_mapping[indsX[validX]], batch_mapping[indsY[validY]]
+            self.spike_indices[:,0] = torch.from_numpy(new_indsX).to(device)
+            self.spike_indices_Y[:,0] = torch.from_numpy(new_indsY).to(device)
+            self.n_batches = len(keep_batches)
             self.batch_indices = [self.batch_indices[i] for i in keep_batches]
         # Intermediate tensor for holding noise indices
         self.new_indices = torch.zeros_like(self.spike_indices[:,3], dtype=int, device=device)
