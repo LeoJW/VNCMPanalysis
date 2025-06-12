@@ -77,7 +77,7 @@ params = {
     # Optimizer parameters (for training)
     'epochs': 250,
     # 'window_size': 512, # Window of time the estimator operates on, in samples
-    'batch_size': 128, # Number of windows estimator processes at any time
+    'batch_size': 256, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
     'patience': 15,
     'min_delta': 0.001,
@@ -131,30 +131,32 @@ for run_on, rep, period, window_len in main_iterator:
     X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period, neuron_label_filter=1) # Good units only for now
     if run_on == "neuron":
         this_params = {**params, 'Nx': 1, 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
-        print(this_params['window_size'])
         dataset = BatchedDatasetWithNoise(X[[neuron],:], Y, bout_starts, this_params['window_size'], check_activity=True)
     else:
         this_params = {**params, 'Nx': X.shape[0], 'Ny': Y.shape[0], 'window_size': np.round(window_len / 1000 / period).astype(int)}
-        print(this_params['window_size'])
         dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'], check_activity=True)
     
     # Train models, run precision
+    synchronize()
+    tic = time.time()
     mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
+    synchronize()
+    print(f'Training took {(time.time() - tic) / len(mis_test)} s/epoch')
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
     noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
 
     precision_noise[key] = noise_levels # (samples) units are whatever was passed into precision function
     precision_mi[key] = mi # (nats/window)
     all_params[key] = [key + ' : ' + str(value) for key, value in this_params.items()]
-    print([key + ' : ' + str(value) for key, value in this_params.items()])
 
     if (iteration_count % save_every_n_iterations == 0):
         try:
-            # save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+            save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
-    break
+    if iteration_count == 2:
+        break
 
-# save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
+save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
 print(f'Final results saved to {filename}')

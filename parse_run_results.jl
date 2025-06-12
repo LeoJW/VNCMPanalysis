@@ -223,6 +223,9 @@ function read_binning_file!(df, file, task)
         else
             prec = find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=0)
         end
+        if (vals[1] == "neuron") .&& (vals[2] .== 25.0)
+            println(vec(mean(precision_curves[key], dims=1))[1:3])
+        end
         push!(thisdf, vcat(
             vals,
             mean_curve[1], 
@@ -238,17 +241,26 @@ end
 df = DataFrame()
 for task in 0:9
     # read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-10.h5"), task)
-    read_binning_file!(df, joinpath(data_dir, "2025-06-10_binning_PACE_task_$(task).h5"), task)
+    read_binning_file!(df, joinpath(data_dir, "2025-06-11_binning_PACE_task_$(task).h5"), task)
 end
 # Convert units
 df = @pipe df |> 
-@transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
+# @transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
 @transform(_, :period = :period .* 1000) |> 
 @transform(_, :samps_per_window = round.(Int, :window ./ :period))
+
+##
+
+row = rand(eachrow(df))
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+lines!(ax, row.precision_noise, vec(mean(row.precision_curve, dims=1)))
+f
 
 ## Means by period
 
 period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensures bins are offset from values slightly
+
 
 tempdf = @pipe df |> 
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
@@ -269,7 +281,7 @@ draw(_, facet=(; linkxaxes=:none, linkyaxes=:none))#, axis=(; yscale=log10))
 
 group_bins = sort(unique(df.period)) .- 0.001
 tempdf = @pipe df |> 
-    @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+    # @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
     groupby(_, [:window, :neuron, :period]) |> 
     combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => (x->mean(x[(!).(isnan.(x))])) => :precision) |> 
     @transform(_, :logperiod = log.(:period)) |> 
