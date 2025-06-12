@@ -68,7 +68,7 @@ df = @pipe df |>
 @transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:mi, :precision, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
+mapping(:time, :precision, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
 visual(Scatter)
 ) |> 
 draw(_)#, axis=(; limits=((2, 20), nothing)))

@@ -155,8 +155,6 @@ for run_on, rep, period, window_len in main_iterator:
             print(f"Intermediate results saved")
         except Exception as e:
             print(f"Warning: Failed to save intermediate results: {e}")
-    if iteration_count == 2:
-        break
 
 save_dicts_to_h5([precision_noise, precision_mi, all_params], filename)
 print(f'Final results saved to {filename}')
