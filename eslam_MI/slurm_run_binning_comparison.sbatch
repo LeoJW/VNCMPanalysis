@@ -2,9 +2,9 @@
 #SBATCH -Jrun_binning_comparison            # Job name
 #SBATCH --account=gts-ssponberg3            # charge account
 #SBATCH -N1                                 # Number of nodes and cores per node required
-#SBATCH --gres=gpu:1                        # GPU type (any) and number of GPUs
+#SBATCH --gres=gpu:A100:1                   # GPU type (any) and number of GPUs
 #SBATCH --mem-per-gpu=32G                   # Memory per GPU
-#SBATCH -t900                               # Duration of the job in minutes
+#SBATCH -t300                               # Duration of the job in minutes
 #SBATCH -qinferno                           # QOS Name
 #SBATCH --output=binning_report.%A\_%a.log  # Combined output and error messages file
 #SBATCH --mail-type=BEGIN,END,FAIL          # Mail preferences
