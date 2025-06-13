@@ -245,6 +245,11 @@ class TimeWindowDataset(Dataset):
         # Pre-compute mask of where actual spikes are
         self.spike_mask_x = torch.nonzero(self.Xmain != no_spike_value, as_tuple=True)
         self.spike_mask_y = torch.nonzero(self.Ymain != no_spike_value, as_tuple=True)
+        # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
+        self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
+        self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
+        self.n_spikes_x = len(self.spike_mask_x[0])
+        self.n_spikes_y = len(self.spike_mask_y[0])
         # If checking activity, remove chunks where there is no activity
         if check_activity:
             # Do something
@@ -260,13 +265,19 @@ class TimeWindowDataset(Dataset):
         Args: 
             amplitude: added uniform noise amplitude, units of seconds
         """
-        self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + torch.rand(len(self.spike_mask_x[0]), device=device) * amplitude
+        # Generate noise directly into pre-allocated buffer
+        self.noise_buffer_x.uniform_(0, amplitude)
+        # Apply noise in-place
+        self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + self.noise_buffer_x
     def apply_noise_Y(self, amplitude):
         """
         Apply noise to spike times of noisy version of Y. 
         Amplitude is in units of samples
         """
-        self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + torch.rand(len(self.spike_mask_y[0]), device=device) * amplitude
+        # Generate noise directly into pre-allocated buffer
+        self.noise_buffer_y.uniform_(0, amplitude)
+        # Apply noise in-place
+        self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + self.noise_buffer_y
     # def time_lag(self, lag, channels=None):
     #     """
     #     Apply time lag to spike times of all (or specific) neurons/muscles 
