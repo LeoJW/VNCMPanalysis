@@ -21,87 +21,44 @@ elif torch.backends.mps.is_available():
 else:
     device = "cpu"
 
-def rho_to_mi(dim, rho):
-    """Obtain the ground truth mutual information from rho."""
-    return -0.5 * np.log2(1 - rho**2) * dim
-
-
-def mi_to_rho(dim, mi):
-    """Obtain the rho for Gaussian give ground truth mutual information."""
-    return np.sqrt(1 - 2**(-2.0 / dim * mi))
-
-
-def linear_mut_info(x, y, threshold=1e-10):
-    try:
-        # Combine x and y column-wise (variables are columns)
-        xy = np.hstack((x, y))
-        
-        # Compute joint covariance matrix once
-        c_tot = np.cov(xy, rowvar=False)
-        n_x = x.shape[1]  # Number of features in X
-        n_y = y.shape[1]  # Number of features in Y
-        
-        # Extract C_x and C_y from the joint covariance matrix
-        c_x = c_tot[:n_x, :n_x]
-        c_y = c_tot[n_x:, n_x:]
-        
-        # Compute eigenvalues using eigh (faster for symmetric matrices)
-        eig_tot = np.linalg.eigh(c_tot)[0]  # Returns sorted eigenvalues (ascending)
-        eig_x = np.linalg.eigh(c_x)[0]
-        eig_y = np.linalg.eigh(c_y)[0]
-        
-        # Threshold eigenvalues (avoid log(0))
-        eig_tot_thr = np.maximum(eig_tot, threshold)
-        eig_x_thr = np.maximum(eig_x, threshold)
-        eig_y_thr = np.maximum(eig_y, threshold)
-        
-        # Compute log determinants
-        logdet_tot = np.sum(np.log2(eig_tot_thr))
-        logdet_x = np.sum(np.log2(eig_x_thr))
-        logdet_y = np.sum(np.log2(eig_y_thr))
-        
-        # Mutual information
-        info = 0.5 * (logdet_x + logdet_y - logdet_tot)
-        return info if not np.isinf(info) else np.nan
-    except np.linalg.LinAlgError:
-        return np.nan
-
 
 class mlp(nn.Module):
-    def __init__(self, dim, hidden_dim, output_dim, layers, activation):
+    def __init__(self, in_dim, params):
         """Create an mlp from the configurations."""
         super(mlp, self).__init__()
-    
         # Initialize the layers list
         seq = []
-    
+        # Flattening layer
+        seq.append(nn.Flatten())
         # Input layer
-        seq.append(nn.Linear(dim, hidden_dim))
-        seq.append(activation())
-        nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
-    
+        seq.append(nn.Linear(in_dim, params['hidden_dim']))
+        seq.append(params['activation']())
         # Hidden layers
-        for _ in range(layers):
-            layer = nn.Linear(hidden_dim, hidden_dim)
+        for _ in range(params['layers']):
+            layer = nn.Linear(params['hidden_dim'], params['hidden_dim'])
             nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
-            seq.append(activation())
-    
+            seq.append(params['activation']())
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
-    
         # Output layer
-        self.out = nn.Linear(hidden_dim, output_dim)
-        
-        # Initialize the layer with Xavier initialization
-        nn.init.xavier_uniform_(self.out.weight)
+        self.out = nn.Linear(params['hidden_dim'], params['embed_dim'])
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Initialize weights using Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
     
     def forward(self, x):
+        # Pass through fully connected layers
         x = self.base_network(x)
-        
         # Get output
         out = self.out(x)
-        
         return out
 
 

@@ -20,6 +20,55 @@ class DSIB(nn.Module):
         
         # Create two encoders from |X/Y| to |Z_X/Y|
         if params['mode'] in ['sep', 'bi']:
+            self.encoder_x = mlp(params['X_dim'], params)
+            self.encoder_y = mlp(params['Y_dim'], params)
+        if params['mode'] == "bi":
+            # Add additional layer to the separable if bilinear
+            self.bilinear = nn.Linear(params['embed_dim'], params['embed_dim'], bias=False)
+        elif params['mode'] == "concat":
+            # Create one encoder that takes |X|+|Y| and outputs 1, it has twice the width as the seprable/bilinear
+            self.encoder_xy = mlp(
+                dim=params['Nx'] + params['Ny'], hidden_dim=params['hidden_dim'], output_dim=1,
+                layers=params['layers'], activation=params['activation']
+            )
+        # Estimator
+        self.info = decoder_INFO(params['estimator'], params['mode'], baseline_fn)
+
+    def forward(self, dataX, dataY):
+        batch_size = dataX.shape[0]  # Dynamically infer batch size
+        # Concat version
+        if self.params['mode'] == "concat":
+            x_expanded = dataX.repeat(batch_size, 1)  # Repeat batch_size times
+            y_expanded = dataY.repeat_interleave(batch_size, dim=0)  # Repeat within batch
+            xy_pairs = torch.cat((x_expanded, y_expanded), dim=1)  # Concatenate along feature dim
+            scores = self.encoder_xy(xy_pairs)
+            lossGout = self.info(scores, None, batch_size)  # scores is in the place of zX
+            return -lossGout
+        # Otherwise sep or bi
+        # If input is too large, run mini batches
+        if batch_size > self.params['max_n_batches']:
+            zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
+            zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
+            for i in range(0, batch_size, self.params['batch_size']):
+                end_idx = min(i + self.params['batch_size'], batch_size)
+                zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:])
+                zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:])
+        else:
+            zX = self.encoder_x(dataX)
+            zY = self.encoder_y(dataY)
+        if self.params['mode'] == "bi":
+            # Get the rotated version ready 
+            zX = self.bilinear(zX)
+        lossGout = self.info(zX, zY, batch_size)
+        return -lossGout
+
+class DSIBconv(nn.Module):
+    def __init__(self, params, baseline_fn=None):
+        super(DSIB, self).__init__()
+        self.params = params
+        
+        # Create two encoders from |X/Y| to |Z_X/Y|
+        if params['mode'] in ['sep', 'bi']:
             self.encoder_x = multi_cnn_mlp(params, use_1d_mode=('Nx' in params and params['Nx'] == 1))
             self.encoder_y = multi_cnn_mlp(params, use_1d_mode=('Ny' in params and params['Ny'] == 1))
         if params['mode'] == "bi":

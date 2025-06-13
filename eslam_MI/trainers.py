@@ -111,7 +111,7 @@ def train_cnn_model_no_eval(full_dataset, params, device=device, subset_indices=
     train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["window_size"]}_' + str(uuid.uuid4())
     # Create training dataloader, get indices for test set
     train_loader, test_indices, _ = create_data_split(full_dataset, params['batch_size'], params['train_fraction'], subset_indices=subset_indices)
-    test_X, test_Y = full_dataset.X[test_indices,:,:,:], full_dataset.Y[test_indices,:,:,:]
+    test_X, test_Y = full_dataset.X[test_indices,:,:], full_dataset.Y[test_indices,:,:]
     # Initialize variables
     epochs = params['epochs']
     opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])

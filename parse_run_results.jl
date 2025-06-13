@@ -223,9 +223,6 @@ function read_binning_file!(df, file, task)
         else
             prec = find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=0)
         end
-        if (vals[1] == "neuron") .&& (vals[2] .== 25.0)
-            println(vec(mean(precision_curves[key], dims=1))[1:3])
-        end
         push!(thisdf, vcat(
             vals,
             mean_curve[1], 
@@ -241,11 +238,11 @@ end
 df = DataFrame()
 for task in 0:9
     # read_binning_file!(df, joinpath(data_dir, "binning_PACE_task_$(task)_2025-06-10.h5"), task)
-    read_binning_file!(df, joinpath(data_dir, "2025-06-11_binning_PACE_task_$(task).h5"), task)
+    read_binning_file!(df, joinpath(data_dir, "2025-06-12_binning_PACE_task_$(task).h5"), task)
 end
 # Convert units
 df = @pipe df |> 
-# @transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
+@transform(_, :mi = :mi ./ :window .* 1000 .* log2(exp(1))) |> 
 @transform(_, :period = :period .* 1000) |> 
 @transform(_, :samps_per_window = round.(Int, :window ./ :period))
 
@@ -259,29 +256,28 @@ f
 
 ## Means by period
 
-period_level_bins = logrange(0.00005, 0.01, 20) .* 1000 .- 0.001 # -0.001 ensures bins are offset from values slightly
-
-
+group_bins = sort(unique(df.period)) .- 0.001
 tempdf = @pipe df |> 
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 groupby(_, [:window, :neuron, :period]) |> 
 combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => (x->mean(x[(!).(isnan.(x))])) => :precision) |> 
-@transform(_, :newperiod = searchsortedlast.(Ref(period_level_bins), :period)) |> 
+@transform(_, :newperiod = searchsortedlast.(Ref(group_bins), :period)) |> 
 @transform(_, :logperiod = log.(:period))
 
 @pipe tempdf[sortperm(tempdf.window),:] |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:window, :precision, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
+mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * (visual(Scatter) + visual(Lines))
 # mapping(:window, :mi, color=:logperiod, col=:neuron, group=:newperiod=>nonnumeric) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkxaxes=:none, linkyaxes=:none))#, axis=(; yscale=log10))
+
 
 ## Precision vs period
 
 group_bins = sort(unique(df.period)) .- 0.001
 tempdf = @pipe df |> 
-    # @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
+    @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
     groupby(_, [:window, :neuron, :period]) |> 
     combine(_, :mi => mean => :mi, :mi => std => :mi_std, :precision => (x->mean(x[(!).(isnan.(x))])) => :precision) |> 
     @transform(_, :logperiod = log.(:period)) |> 
@@ -308,18 +304,23 @@ mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
 ) |> 
 draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10, limits=(nothing, (0,nothing))))
 
-##
+## samples per window vs precision/mi
 @pipe df |> 
+# @subset(_, :neuron .== "all") |> 
 @subset(_, :mi .> 0) |> 
+@subset(_, (!).(isnan.(:precision))) |> 
+groupby(_, [:window, :samps_per_window, :neuron, :period]) |> 
+combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
 @transform(_, :mi = :mi .* (:window ./ 1000)) |> 
 @transform(_, :logperiod = log.(:period)) |> 
+# @transform(_, :precision = :precision ./ (:period ./ 1000) ./ 1000) |> 
+@transform(_, :samps_per_window = log10.(:samps_per_window)) |> 
+# stack(_, [:precision, :mi]) |> 
 (
 AlgebraOfGraphics.data(_) *
-# mapping(:window, :mi, color=:logperiod, col=:neuron) * visual(Scatter)
-mapping(:samps_per_window, :mi, color=:logperiod, row=:window=>nonnumeric, col=:neuron) * visual(Scatter)
-# mapping(:period, :precision, color=:window, col=:neuron) * visual(Scatter)
+mapping(:samps_per_window=>"log10(Samples per window)", :mi=>"I(X,Y) (bits/window)", color=:window=>nonnumeric, col=:neuron, group=:window=>nonnumeric) * (visual(Scatter) + linear())
 ) |> 
-draw(_, facet=(; linkyaxes=:none), axis=(; xscale=log10))
+draw(_, facet=(; linkyaxes=:none))#, axis=(; xscale=log10))
 
 
 ##
