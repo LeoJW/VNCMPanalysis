@@ -89,7 +89,7 @@ params = {
 
 layers_range = np.array([3,4,5,6,7])
 hidden_dim_range = np.array([128, 256, 512, 1024])
-window_size_range = np.logspace(np.log10(0.02), np.log10(2.0), 100)
+window_size_range = np.logspace(np.log10(0.02), np.log10(2.0), 10)
 embed_dim_range = np.array([2,6,10,14])
 repeats_range = np.arange(1)
 
