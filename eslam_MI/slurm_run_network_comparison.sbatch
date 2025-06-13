@@ -3,7 +3,7 @@
 #SBATCH --account=gts-ssponberg3                # charge account
 #SBATCH -N1                                     # Number of nodes and cores per node required
 #SBATCH --gres=gpu:1                            # GPU type (any) and number of GPUs
-#SBATCH --mem-per-gpu=32G                       # Memory per GPU
+#SBATCH --mem-per-gpu=12G                       # Memory per GPU
 #SBATCH -t900                                   # Duration of the job in minutes
 #SBATCH -qinferno                               # QOS Name
 #SBATCH --output=network_comparison_report.%A\_%a.log

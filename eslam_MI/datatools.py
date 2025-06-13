@@ -185,7 +185,7 @@ def dfill(a):
     b = np.concatenate([[0], np.where(a[:-1] != a[1:])[0] + 1, [n]])
     return np.arange(n)[b[:-1]].repeat(np.diff(b))
 
-class TimesWindowDataset(Dataset):
+class TimeWindowDataset(Dataset):
     # TODO: Switch times to milliseconds, might enable using much lower precision dtypes
     """
     Reads in data, stores and outputs in form similar to previous KSG encoding
@@ -196,12 +196,18 @@ class TimesWindowDataset(Dataset):
     def __init__(self, base_name, window_size, 
             no_spike_value=0, 
             check_activity=False, 
-            sample_rate=30000, neuron_label_filter=None):
+            sample_rate=30000, neuron_label_filter=None,
+            select_x=None, select_y=None):
         """
         Args:
             batch_size (int): Size of each window
         """
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
+        
+        if select_x is not None:
+            self.Xtimes = [self.Xtimes[i] for i in select_x]
+        if select_y is not None:
+            self.Ytimes = [self.Ytimes[i] for i in select_y]
 
         self.window_size = window_size
         # Make chunk start times
