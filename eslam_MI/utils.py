@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.multiprocessing as mp
 from itertools import product
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from estimators import estimate_mutual_information
@@ -63,29 +64,31 @@ class mlp(nn.Module):
 
 
 class var_mlp(nn.Module):
-    def __init__(self, dim, hidden_dim, output_dim, layers, activation):
+    def __init__(self, in_dim, params):
         """Create a variational mlp from the configurations."""
         super(var_mlp, self).__init__()
         # Initialize the layers list
         seq = []
+        # Flattening layer
+        seq.append(nn.Flatten())
         # Input layer
-        seq.append(nn.Linear(dim, hidden_dim))
-        seq.append(activation())
-        nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
+        seq.append(nn.Linear(in_dim, params['hidden_dim']))
+        seq.append(params['activation']())
+        # nn.init.xavier_uniform_(seq[0].weight)  # Xavier initialization for input layer
         # Hidden layers
-        for _ in range(layers):
-            layer = nn.Linear(hidden_dim, hidden_dim)
-            nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
+        for _ in range(params['layers']):
+            layer = nn.Linear(params['hidden_dim'], params['hidden_dim'])
+            # nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
-            seq.append(activation())
+            seq.append(params['activation']())
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
         # Two heads for means and log variances
-        self.fc_mu = nn.Linear(hidden_dim, output_dim)
-        self.fc_logvar = nn.Linear(hidden_dim, output_dim)
-        # Initialize the heads with Xavier initialization
-        nn.init.xavier_uniform_(self.fc_mu.weight)
-        nn.init.xavier_uniform_(self.fc_logvar.weight)
+        self.fc_mu = nn.Linear(params['hidden_dim'], params['embed_dim'])
+        self.fc_logvar = nn.Linear(params['hidden_dim'], params['embed_dim'])
+        # # Initialize the heads with Xavier initialization
+        # nn.init.xavier_uniform_(self.fc_mu.weight)
+        # nn.init.xavier_uniform_(self.fc_logvar.weight)
         # Normal distribution for sampling
         self.N = torch.distributions.Normal(0, 1)
         self.N.loc = self.N.loc.to(device)
@@ -95,6 +98,16 @@ class var_mlp(nn.Module):
         # Set limits for numerical stability
         self.logvar_min = -20  # Lower bound for logVar
         self.logvar_max = 20   # Upper bound for logVar
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        """Initialize weights using Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x):
         x = self.base_network(x)
@@ -531,10 +544,96 @@ def precision(noise_levels, dataset, model, n_repeats=3):
             if prec_noise_amp == 0:
                 dataset.apply_noise(prec_noise_amp)
                 mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+                continue
             for j1 in range(n_repeats):
                 dataset.apply_noise(prec_noise_amp)
                 mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
         return mi
+
+def precision_parallel(noise_levels, dataset, model, n_repeats=3):
+    """
+    More memory-efficient precision approach: batch multiple noise realizations together
+    
+    Args:
+        noise_levels: Range of noise levels to run over
+        dataset: Your TimeWindowDataset instance  
+        model: Trained DSIB model
+        n_repeats: How many times per noise level to repeat
+        batch_size: How many noise realizations to process simultaneously
+    Returns:
+        mi: Matrix of mutual information values
+    """
+    # Set multiprocessing start method
+    if mp.get_start_method(allow_none=True) != 'spawn':
+        mp.set_start_method('spawn', force=True)
+    
+    with torch.no_grad():
+        mi = np.zeros((len(noise_levels), n_repeats))
+
+        for j0, prec_noise_amp in enumerate(noise_levels):
+            # Only run zero noise once, nothing changes between runs
+            if prec_noise_amp == 0:
+                dataset.apply_noise(prec_noise_amp)
+                mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+                continue
+            # Process repeats all at once to manage memory
+            # Create batch of noisy versions
+            # Shape: [batch_size, n_windows, n_neurons, max_spikes]
+            X_expanded = dataset.Xmain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
+            Y_expanded = dataset.Ymain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
+            # Generate, apply noise
+            for b in range(n_repeats):
+                noise_x = torch.empty_like(dataset.noise_buffer_x).uniform_(0, prec_noise_amp)
+                X_expanded[b][dataset.spike_mask_x] = dataset.Xmain[dataset.spike_mask_x] + noise_x
+            # Run model on entire batch at once
+            mi_batch = - model(
+                X_expanded.view(-1, dataset.X.shape[1], dataset.X.shape[2]), 
+                Y_expanded.view(-1, dataset.Y.shape[1], dataset.Y.shape[2])
+            ).detach().cpu().numpy()
+            # Store results
+            mi[j0, :] = mi_batch
+        return mi
+
+def precision_vectorized(noise_levels, dataset, model, n_repeats=3):
+    """
+    More memory-efficient precision approach: batch multiple noise realizations together
+    
+    Args:
+        noise_levels: Range of noise levels to run over
+        dataset: Your TimeWindowDataset instance  
+        model: Trained DSIB model
+        n_repeats: How many times per noise level to repeat
+        batch_size: How many noise realizations to process simultaneously
+    Returns:
+        mi: Matrix of mutual information values
+    """
+    with torch.no_grad():
+        mi = np.zeros((len(noise_levels), n_repeats))
+
+        for j0, prec_noise_amp in enumerate(noise_levels):
+            # Only run zero noise once, nothing changes between runs
+            if prec_noise_amp == 0:
+                dataset.apply_noise(prec_noise_amp)
+                mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+                continue
+            # Process repeats all at once to manage memory
+            # Create batch of noisy versions
+            # Shape: [batch_size, n_windows, n_neurons, max_spikes]
+            X_expanded = dataset.Xmain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
+            Y_expanded = dataset.Ymain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
+            # Generate, apply noise
+            for b in range(n_repeats):
+                noise_x = torch.empty_like(dataset.noise_buffer_x).uniform_(0, prec_noise_amp)
+                X_expanded[b][dataset.spike_mask_x] = dataset.Xmain[dataset.spike_mask_x] + noise_x
+            # Run model on entire batch at once
+            mi_batch = - model(
+                X_expanded.view(-1, dataset.X.shape[1], dataset.X.shape[2]), 
+                Y_expanded.view(-1, dataset.Y.shape[1], dataset.Y.shape[2])
+            ).detach().cpu().numpy()
+            # Store results
+            mi[j0, :] = mi_batch
+        return mi
+
 
 def precision_cnn(noise_levels, dataset, model, n_repeats=3):
     """
