@@ -1,4 +1,5 @@
 import os
+import time
 import h5py
 import numpy as np
 import torch
@@ -7,10 +8,16 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
     device = 'cuda'
+    synchronize = torch.cuda.synchronize
+    empty_cache = torch.cuda.empty_cache
 elif torch.backends.mps.is_available():
     device = 'mps'
+    synchronize = torch.mps.synchronize
+    empty_cache = torch.mps.empty_cache
 else:
-    device = "cpu"
+    device = 'cpu'
+    synchronize = lambda: None
+    empty_cache = lambda: None
 
 
 class BatchedDataset(Dataset):
@@ -194,7 +201,7 @@ class TimeWindowDataset(Dataset):
     Will always return Xnoise, to protect master copy X. 
     """
     def __init__(self, base_name, window_size, 
-            no_spike_value=0, 
+            no_spike_value=0, add_offset=0,
             check_activity=False, 
             sample_rate=30000, neuron_label_filter=None,
             select_x=None, select_y=None):
@@ -203,57 +210,21 @@ class TimeWindowDataset(Dataset):
             batch_size (int): Size of each window
         """
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
-        
+        # Could write this so this is adjustable after dataset is made. I'm lazy for now though
         if select_x is not None:
             self.Xtimes = [self.Xtimes[i] for i in select_x]
         if select_y is not None:
             self.Ytimes = [self.Ytimes[i] for i in select_y]
-
+        
         self.window_size = window_size
-        # Make chunk start times
-        # Loop over bouts, cut up into chunks, assign start times
-        bout_diffs = self.bout_ends - self.bout_starts
-        window_times = []
-        for i in range(len(self.bout_starts)):
-            n_windows = np.ceil(bout_diffs[i] / window_size).astype(int)
-            for j in range(n_windows):
-                start_idx = self.bout_starts[i] + j * window_size
-                window_times.append(start_idx)
-        self.window_times = np.array(window_times)
-        self.n_windows = len(self.window_times)
-        # Use searchsorted on each neuron/muscle to assign to chunks
-        window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
-        window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
-        # Get max number of spikes per chunk for X and Y, preallocate
-        max_neuron = np.max(np.array([np.max(np.bincount(x)) for x in window_inds_x]))
-        max_muscle = np.max(np.array([np.max(np.bincount(y)) for y in window_inds_y]))
-        # Preallocate
-        Xmain = np.full((self.n_windows, len(self.Xtimes), max_neuron), no_spike_value, dtype=np.float32)
-        Ymain = np.full((self.n_windows, len(self.Ytimes), max_muscle), no_spike_value, dtype=np.float32)
-        # Loop down each neuron, muscle, assign data to main arrays
-        for i in range(len(self.Xtimes)):
-            column_inds = np.arange(len(window_inds_x[i])) - dfill(window_inds_x[i])
-            Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
-        for i in range(len(self.Ytimes)):
-            column_inds = np.arange(len(window_inds_y[i])) - dfill(window_inds_y[i])
-            Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
-        # Convert to tensor, move to device. Make copies that noise will be applied on
-        self.Xmain = torch.tensor(Xmain, device=device)
-        self.Ymain = torch.tensor(Ymain, device=device)
-        self.X = self.Xmain.detach().clone()
-        self.Y = self.Ymain.detach().clone()
-        # Pre-compute mask of where actual spikes are
-        self.spike_mask_x = torch.nonzero(self.Xmain != no_spike_value, as_tuple=True)
-        self.spike_mask_y = torch.nonzero(self.Ymain != no_spike_value, as_tuple=True)
-        # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
-        self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
-        self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
-        self.n_spikes_x = len(self.spike_mask_x[0])
-        self.n_spikes_y = len(self.spike_mask_y[0])
+        
+        self.move_data_to_windows(add_offset=add_offset, no_spike_value=no_spike_value)
+        
         # If checking activity, remove chunks where there is no activity
         if check_activity:
             # Do something
             print('I didnt get here yet lol')
+    
     def __len__(self):
         return self.n_windows
     def __getitem__(self, idx):
@@ -269,7 +240,7 @@ class TimeWindowDataset(Dataset):
         self.noise_buffer_x.uniform_(0, amplitude)
         # Apply noise in-place
         self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + self.noise_buffer_x
-    def apply_noise_Y(self, amplitude):
+    def apply_noise_y(self, amplitude):
         """
         Apply noise to spike times of noisy version of Y. 
         Amplitude is in units of samples
@@ -278,6 +249,73 @@ class TimeWindowDataset(Dataset):
         self.noise_buffer_y.uniform_(0, amplitude)
         # Apply noise in-place
         self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + self.noise_buffer_y
+    
+    def apply_precision(self, prec):
+        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
+        self.Xmain[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
+    def apply_precision_y(self, prec):
+        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
+        self.Ymain[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
+    
+    def move_data_to_windows(self, no_spike_value=0, add_offset=0):
+        """
+        Take list of spike times, convert to matrices of spike times in given windows
+        Args:
+            no_spike_value: Filler value used to indicate no spike occurred in that position
+            add_offset: Offset to window start time in s, should be positive!
+        """
+        # Make chunk start times
+        # Loop over bouts, cut up into chunks, assign start times
+        bout_diffs = self.bout_ends - self.bout_starts
+        window_times, valid_window = [], []
+        # valid_window will be used to trim last partial-length chunk from each bout
+        # If time offset added, this also trims partial-length chunk at start of next bout
+        # Partial-length start of very first bout needs to be trimmed if offset added, so that's done here
+        # A starting window has to be made to catch spikes before time offset
+        if add_offset > 0:
+            window_times.append(0)
+            valid_window.append(False)
+        for i in range(len(self.bout_starts)):
+            n_windows = np.ceil((bout_diffs[i] - add_offset) / self.window_size).astype(int)
+            for j in range(n_windows):
+                start_idx = self.bout_starts[i] + add_offset + j * self.window_size
+                window_times.append(start_idx)
+                valid_window.append(True)
+            valid_window[-1] = False
+        self.valid_window = np.array(valid_window)
+        self.window_times = np.array(window_times)
+        self.n_windows = len(self.window_times)
+        # Use searchsorted on each neuron/muscle to assign to chunks
+        # This is by far the slowest part of this whole function!
+        window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
+        window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
+        # Get max number of spikes per chunk for X and Y, preallocate
+        max_neuron = np.max(np.array([np.max(np.bincount(x)) for x in window_inds_x]))
+        max_muscle = np.max(np.array([np.max(np.bincount(y)) for y in window_inds_y]))
+        # Preallocate (size is [window, neuron/muscle, spike time])
+        Xmain = np.full((self.n_windows, len(self.Xtimes), max_neuron), no_spike_value, dtype=np.float32)
+        Ymain = np.full((self.n_windows, len(self.Ytimes), max_muscle), no_spike_value, dtype=np.float32)
+        # Loop down each neuron, muscle, assign data to main arrays
+        for i in range(len(self.Xtimes)):
+            column_inds = np.arange(len(window_inds_x[i])) - dfill(window_inds_x[i])
+            Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
+        for i in range(len(self.Ytimes)):
+            column_inds = np.arange(len(window_inds_y[i])) - dfill(window_inds_y[i])
+            Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
+        # Trim windows that are too short to be valid
+        Xmain = Xmain[self.valid_window,:,:]
+        Ymain = Ymain[self.valid_window,:,:]
+        # Convert to tensor, move to device. Make copies that noise will be applied on
+        self.Xmain = torch.tensor(Xmain, device=device)
+        self.Ymain = torch.tensor(Ymain, device=device)
+        self.X = self.Xmain.detach().clone()
+        self.Y = self.Ymain.detach().clone()
+        # Pre-compute mask of where actual spikes are
+        self.spike_mask_x = torch.nonzero(self.Xmain != no_spike_value, as_tuple=True)
+        self.spike_mask_y = torch.nonzero(self.Ymain != no_spike_value, as_tuple=True)
+        # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
+        self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
+        self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
     # def time_lag(self, lag, channels=None):
     #     """
     #     Apply time lag to spike times of all (or specific) neurons/muscles 
@@ -295,7 +333,6 @@ class TimeWindowDataset(Dataset):
     #         ind_diff = indices[1] - indices[0]
     #         self.X[i,0,:,0:ind_diff] = tempX[:, indices[0]:indices[1]]
     #     del tempX
-    # TODO: Add set_precision_x and set_precision_y functions
     def read_data(self, base_name, sample_rate=30000, neuron_label_filter=None):
         """
         Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
@@ -506,3 +543,31 @@ def load_dicts_from_h5(filename):
                     d[key] = dataset[()]
             dicts.append(d)
     return dicts
+
+if __name__ == '__main__':
+    import sys
+    import os
+
+    import torch
+    import time
+
+    import torch.nn as nn
+    import torch.multiprocessing as mp
+    import numpy as np
+    import torch.optim as optim
+
+    from torch.utils.data import Dataset, DataLoader
+    from scipy.ndimage import gaussian_filter1d
+    from itertools import product
+
+    from utils import *
+    from models import *
+    from estimators import *
+    from trainers import *
+
+    main_dir = os.getcwd()
+    data_dir = os.path.join(main_dir, '..', 'localdata')
+    model_cache_dir = os.path.join(data_dir, 'model_cache')
+    
+    
+    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=0.05, add_offset=0.045, neuron_label_filter=1)#, select_x=[10])
