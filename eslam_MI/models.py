@@ -8,10 +8,16 @@ from datatools import *
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
     device = 'cuda'
+    synchronize = torch.cuda.synchronize
+    empty_cache = torch.cuda.empty_cache
 elif torch.backends.mps.is_available():
     device = 'mps'
+    synchronize = torch.mps.synchronize
+    empty_cache = torch.mps.empty_cache
 else:
     device = 'cpu'
+    synchronize = lambda: None
+    empty_cache = lambda: None
 
 class DSIB(nn.Module):
     def __init__(self, params, baseline_fn=None):
@@ -212,65 +218,3 @@ class conv_DVSIB(nn.Module):
         loss = lossGin - self.params['beta']*lossGout
         return [loss, lossGin, lossGout]
     
-
-# if __name__ == '__main__':
-#     import sys
-#     import os
-
-#     import torch
-#     import random
-#     import warnings
-#     import time
-
-#     import torch.nn as nn
-#     import torch.multiprocessing as mp
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-#     import torch.optim as optim
-
-#     from torch.utils.data import Dataset, DataLoader
-#     from scipy.ndimage import gaussian_filter1d
-#     from tqdm.auto import tqdm
-#     from itertools import product
-
-#     warnings.filterwarnings("ignore")
-
-#     # Import MI files
-#     from utils import *
-#     from models import *
-#     from estimators import *
-#     from trainers import *
-#     from datatools import *
-
-#     main_dir = os.getcwd()
-#     data_dir = os.path.join(main_dir, '..', 'localdata')
-#     model_cache_dir = os.path.join(data_dir, 'model_cache')
-
-#     params = {
-#     # Optimizer parameters (for training)
-#     'epochs': 250,
-#     'window_size': 'your_mother', # Window of time the estimator operates on, in samples
-#     'batch_size': 1024, # Number of windows estimator processes at any time
-#     'learning_rate': 5e-3,
-#     'patience': 15,
-#     'min_delta': 0.001,
-#     'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
-#     'train_fraction': 0.9,
-#     'model_cache_dir': model_cache_dir,
-#     # Critic parameters for the estimator
-#     'model_func': DSIB, # DSIB or DVSIB
-#     'layers': 3,
-#     'hidden_dim': 128,#512,
-#     'activation': nn.LeakyReLU, #nn.Softplus
-#     'embed_dim': 6,#10,
-#     'beta': 512,
-#     'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
-#     'mode': 'sep', # Almost always we'll use separable
-#     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
-# }
-
-#     ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=0.05, neuron_label_filter=1, select_x=[10])
-
-#     this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2], 'model_func': DVSIB}
-#     mis_test_dvsib, train_id = train_cnn_model_no_eval(ds, this_params)
-#     model_DVSIB = retrieve_best_model(mis_test_dvsib, this_params, train_id=train_id, remove_all=True)

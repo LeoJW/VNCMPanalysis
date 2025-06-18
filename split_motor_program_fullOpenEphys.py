@@ -7,15 +7,16 @@ import shutil
 from open_ephys.analysis import Session
 from functions import *
 
-motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/')
+# motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/')
+motor_program_dir = os.path.normpath('/Users/leo/Desktop/ResearchPhD/VNCMP/temp/')
 
 # Controls
-overwrite_previous = False
+overwrite_previous = True
 
 # Settings
 chunk_size = 30000*20 # samples
 
-threshold_mult_pkpk = 10
+threshold_mult_pkpk = 30
 threshold_hp_cutoff = 2000 # hz
 general_bp_cutoff = [10, 1000] # hz
 

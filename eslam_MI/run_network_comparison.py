@@ -125,7 +125,7 @@ for run_on, n_layers, hidden_dim, window_size, embed_dim, rep in main_iterator:
     print(key)
     synchronize()
     tic = time.time()
-    mis_test, train_id = train_cnn_model_no_eval(ds, this_params)
+    mis_test, train_id = train_model_no_eval(ds, this_params)
     synchronize()
     thistime = time.time() - tic
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)

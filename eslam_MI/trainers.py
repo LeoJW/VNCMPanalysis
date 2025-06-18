@@ -15,10 +15,35 @@ from datatools import *
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
     device = 'cuda'
+    synchronize = torch.cuda.synchronize
+    empty_cache = torch.cuda.empty_cache
 elif torch.backends.mps.is_available():
     device = 'mps'
+    synchronize = torch.mps.synchronize
+    empty_cache = torch.mps.empty_cache
 else:
     device = 'cpu'
+    synchronize = lambda: None
+    empty_cache = lambda: None
+
+
+"""
+Utility functions, lifted from: 
+https://stackoverflow.com/questions/51918580/python-random-list-of-numbers-in-a-range-keeping-with-a-minimum-distance
+"""
+def ranks(sample):
+    """
+    Return the ranks of each element in an integer sample.
+    """
+    indices = sorted(range(len(sample)), key=lambda i: sample[i])
+    return sorted(indices, key=lambda i: indices[i])
+def sample_with_minimum_distance(n=40, k=4, d=10):
+    """
+    Sample of k elements from range(n), with a minimum distance d.
+    """
+    sample = np.random.choice(range(n-(k-1)*(d-1)), k, replace=False)
+    return np.array([s + (d-1)*r for s, r in zip(sample, ranks(sample))])
+
 
 # Train functions specific to CNN model architecture
 def train_cnn_model(full_dataset, params, device=device, subset_indices=None):
@@ -92,7 +117,7 @@ def train_cnn_model(full_dataset, params, device=device, subset_indices=None):
     return np.array(estimates_mi_train), np.array(estimates_mi_test), model
 
 
-def train_cnn_model_no_eval(full_dataset, params, device=device, subset_indices=None):
+def train_model_no_eval(full_dataset, params, device=device, subset_indices=None):
     """
     Generalized training function for DSIB and DVSIB models with early stopping.
     Version that does not run evaluation! Skimps on that to save time, returns only mi values from test
@@ -109,17 +134,43 @@ def train_cnn_model_no_eval(full_dataset, params, device=device, subset_indices=
     # Make save directory if it doesn't exist, generate unique model id
     os.makedirs(params['model_cache_dir'], exist_ok=True)
     train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["window_size"]}_' + str(uuid.uuid4())
+    
     # Create training dataloader, get indices for test set
-    train_loader, test_indices, _ = create_data_split(full_dataset, params['batch_size'], params['train_fraction'], subset_indices=subset_indices)
-    test_X, test_Y = full_dataset.X[test_indices,:,:], full_dataset.Y[test_indices,:,:]
+    # Generate test set indices
+    n_test_windows = np.floor((1 - params['train_fraction']) * full_dataset.n_windows).astype(int)
+    start_inds = sample_with_minimum_distance(
+        full_dataset.n_windows, 
+        params['n_test_set_blocks'], 
+        np.ceil(n_test_windows / params['n_test_set_blocks']).astype(int)
+    )
+    block_len = n_test_windows // params['n_test_set_blocks']
+    remainder = n_test_windows % params['n_test_set_blocks']
+    test_block_inds = np.vstack((start_inds, start_inds + block_len)) # Row 0 start, row 1 end indices
+    test_block_inds[1,-1] += remainder # Add any remainder to last block
+    # Get time windows from indices, will use later as indices can move around when time offsets applied
+    test_block_times = np.vstack((full_dataset.window_times[test_block_inds[0,:]], full_dataset.window_times[test_block_inds[1,:]]))
+    # Set arrays of indices for train/test, send to device
+    test_indices = np.concatenate([np.arange(test_block_inds[0,i], test_block_inds[1,i]) for i in range(test_block_inds.shape[1])])
+    train_indices = np.delete(np.arange(0, full_dataset.n_windows), test_indices)
+    test_indices = torch.tensor(test_indices, dtype=int).to(device)
+    train_indices = torch.tensor(train_indices, dtype=int).to(device)
+    test_X = full_dataset.X[test_indices,:,:].detach().clone()
+    test_Y = full_dataset.Y[test_indices,:,:].detach().clone()
+
     # Initialize variables
     epochs = params['epochs']
     opt = torch.optim.Adam(model.parameters(), lr=params['learning_rate'], eps=params['eps'])
     estimates_mi_test = []
     best_estimator_ts = float('-inf')  # Initialize with negative infinity
     no_improvement_count = 0
+    # Loop over epochs
     for epoch in range(epochs):
-        for x, y in iter(train_loader):
+
+        # Shuffle training indices for this epoch, train on batches
+        shuffled_train_indices = train_indices[torch.randperm(train_indices.nelement())]
+        for batch_indices in shuffled_train_indices.split(params['batch_size']):
+            x = full_dataset.X[batch_indices, :, :]
+            y = full_dataset.Y[batch_indices, :, :]
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":
@@ -130,6 +181,7 @@ def train_cnn_model_no_eval(full_dataset, params, device=device, subset_indices=
                 raise ValueError("Invalid model_type. Choose 'DSIB' or 'DVSIB'.")
             loss.backward()
             opt.step()
+        
         # Test model at every epoch
         with torch.no_grad():
             if model_name == "DSIB":
@@ -138,12 +190,22 @@ def train_cnn_model_no_eval(full_dataset, params, device=device, subset_indices=
                 _, _, estimator_ts = model(test_X, test_Y)
             estimator_ts = estimator_ts.to('cpu').detach().numpy()
             estimates_mi_test.append(estimator_ts)
+            # Shuffle time offset of data each epoch
+            full_dataset.move_data_to_windows(time_offset=np.random.uniform(high=full_dataset.window_size), no_spike_value=full_dataset.no_spike_value)
+            # Get new training set indices
+            # This excludes windows on either side of test times, to ensure no overlaps with test set
+            test_block_inds = np.searchsorted(full_dataset.window_times, test_block_times) - 1
+            test_indices = np.concatenate([np.arange(test_block_inds[0,i], test_block_inds[1,i]) for i in range(test_block_inds.shape[1])])
+            train_indices = np.delete(np.arange(0, full_dataset.n_windows), test_indices)
+            train_indices = torch.tensor(train_indices, dtype=int).to(device)
+        
         print(f"Epoch: {epoch+1}, {model_name}, test: {estimator_ts}", flush=True)
         # Save snapshot of model
         torch.save(
             model.state_dict(), 
             os.path.join(params['model_cache_dir'], f'epoch{epoch}_' + train_id + '.pt')
         )
+
         # Check for improvement, negative values, or nans
         if np.isnan(estimator_ts):
             print('Early stop due to nan outputs')

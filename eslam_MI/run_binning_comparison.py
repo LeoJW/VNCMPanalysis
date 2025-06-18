@@ -139,7 +139,7 @@ for run_on, rep, period, window_len in main_iterator:
     # Train models, run precision
     synchronize()
     tic = time.time()
-    mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
+    mis_test, train_id = train_model_no_eval(dataset, this_params)
     synchronize()
     print(f'Training took {(time.time() - tic) / len(mis_test)} s/epoch')
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)

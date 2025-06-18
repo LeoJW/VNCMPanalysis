@@ -139,7 +139,7 @@ for run_on, fix_precision_on, prec_level, moth in main_iterator:
         dataset = BatchedDatasetWithNoise(X, Y, bout_starts, this_params['window_size'])
     
     # Train models, run precision
-    mis_test, train_id = train_cnn_model_no_eval(dataset, this_params)
+    mis_test, train_id = train_model_no_eval(dataset, this_params)
     model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
     noise_levels, mi = precision(precision_noise_levels, dataset, model, n_repeats=precision_repeats)
     dataset.apply_noise(0) # Clear out any noise from previous

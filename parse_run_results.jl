@@ -20,6 +20,16 @@ function find_precision(noise_levels, mi; lower_bound=5e-4)
     end
 end
 
+function find_precision_threshold(noise_levels, mi)
+    curve = vec(mean(mi, dims=1))
+    threshold = mean(mi[:,2]) - (4 .* std(mi[:,2]))
+    cross = curve .< threshold
+    if !any(cross)
+        return NaN
+    end
+    return noise_levels[findfirst(cross)]
+end
+
 analysis_dir = @__DIR__
 data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
 
@@ -41,10 +51,10 @@ function read_network_arch_file!(df, file, task)
         push!(thisdf, vcat(
             vals, 
             time_per_epoch[key], 
-            mean(precision_curves[key], dims=1)[1], 
-            find_precision(precision_noise[key] .* 0.0001 .* 1000, precision_curves[key], lower_bound=0),
-            [precision_curves[key] .* log2(exp(1)) ./ (512 * 0.0001)],
-            [precision_noise[key] .* 0.0001 .* 1000]
+            mean(precision_curves[key], dims=1)[1] .* log2(exp(1)), 
+            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key] .* log2(exp(1))),
+            [precision_curves[key] .* log2(exp(1))],
+            [precision_noise[key] .* 1000]
         ))
     end
     append!(df, thisdf)
@@ -53,60 +63,155 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_network_arch_file!(df, joinpath(data_dir, "network_arch_comparison_PACE_task_$(task)_2025-06-08.h5"), task)
+    read_network_arch_file!(df, joinpath(data_dir, "2025-06-12_network_comparison_PACE_task_$(task).h5"), task)
 end
 
 # Remove obvious failures, convert units
 df = @pipe df |> 
-# @subset(_, :mi .> 0.05) |> 
-@transform(_, :mi = :mi .* log2(exp(1)) ./ (512 * 0.0001))
+@subset(_, :mi .> 0.0)
+# @transform(_, :mi = :mi .* log2(exp(1)))
 
 ##
 
 @pipe df |> 
 @subset(_, :neuron .== "all") |> 
-@transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
+# @subset(_, :embed .== 10) |> 
+@transform(_, :mi = :mi ./ :window) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:time, :precision, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
-visual(Scatter)
-) |> 
-draw(_)#, axis=(; limits=((2, 20), nothing)))
-
-##
-
-@pipe df |> 
-@subset(_, :neuron .== "all") |> 
-@transform(_, :layout = ifelse.(:layout .== "None", "0", :layout)) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:precision, :mi, col=:layout, color=:layers, row=:filters=>nonnumeric) * 
+mapping(:time, :mi, color=:embed, row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric) * 
 visual(Scatter)
 ) |> 
 draw(_)
 
 ##
+
+@pipe df |> 
+@subset(_, :neuron .== "all") |> 
+# @subset(_, :embed .== 10) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers]) |> 
+combine(_, :mi => mean => :mi, :precision=>mean=>:precision) |> 
+(
+AlgebraOfGraphics.data(_) *
+# mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", 
+mapping(:window=>"Window length (ms)", :precision=>"Precision (ms)", 
+    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * 
+visual(Scatter)
+) |> 
+draw(_, axis=(; xscale=log10))
+
+## Embedding dim comparison
+
+@pipe df |> 
+@subset(_, :neuron .== "all") |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = round.(:window .* 1000)) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers]) |> 
+combine(_, :mi => mean => :mi) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:embed, :mi=>"I(X,Y) (bits/s)", row=:hiddendim=>nonnumeric, col=:window=>nonnumeric, color=:layers) * 
+visual(Scatter)
+) |> 
+draw(_, axis=(; xticks=[2,6,10,14]))
+
+## Number of parameters
+
+@pipe df |> 
+@subset(_, :neuron .== "neuron") |> 
+@subset(_, :embed .> 6) |> 
+# @transform(_, :mi = :mi ./ :window) |> s
+@transform(_, :n_params = :hiddendim .* :layers) |> 
+@transform(_, :window = round.(:window .* 1000)) |> 
+groupby(_, [:window, :layers, :n_params]) |> 
+combine(_, :mi => mean => :mi) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:n_params, :mi=>"I(X,Y) (bits/s)", col=:window=>nonnumeric, color=:layers) * 
+visual(Scatter)
+) |> 
+draw(_, axis=(; xscale=log2))
+
+##
+
+@pipe df |> 
+@subset(_, :neuron .== "neuron") |> 
+# @subset(_, :embed .== 10) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers]) |> 
+combine(_, :mi => mean => :mi) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * 
+visual(Scatter)
+) |> 
+draw(_, axis=(; xscale=log10))
+
+## Precision
+
+@pipe df |> 
+@subset(_, :neuron .== "all") |> 
+# @subset(_, :embed .== 10) |> 
+@transform(_, :window = :window .* 1000) |> 
+# @subset(_, :window .< 60) |> 
+@transform(_, :n_params = :hiddendim .* :layers) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:window, :precision=>"Precision (ms)", color=:embed) * 
+visual(Scatter)
+) |> 
+draw(_)#, axis=(; xscale=log10))
+
+##
 dt = @pipe df |> 
-@subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
-@subset(_, :layers .>= 5) |> 
+# @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
+@subset(_, :embed .== 6) |> 
+@subset(_, :layers .== 3) |> 
+@transform(_, :n_params = :hiddendim .* :layers) |> 
 @subset(_, :neuron .== "neuron")
 
 f = Figure()
-for (i,gdf) in enumerate(groupby(dt, :layout))
-    for (j,ggdf) in enumerate(groupby(gdf, :filters))
-        ax = Axis(f[j,i], xscale=log10, title=first(ggdf.layout) * " " * string(ggdf.filters[1]))
+for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
+    # for (j,ggdf) in enumerate(groupby(gdf, :n_params))
+    j = 1
+        ax = Axis(f[j,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))# * " " * string(ggdf.n_params[1]))
+        ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
         for row in eachrow(ggdf)
             curve = vec(mean(row.precision_curve, dims=1))
             sg_window = 2 * floor(Int, length(row.precision_noise) / 5) + 1
             sg_window = sg_window < 2 ? 5 : sg_window
             deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
             bound_mask = deriv .<= (- 3e-4)
-            lines!(ax, row.precision_noise[bound_mask], deriv[bound_mask], color=row.layers, colorrange=(5,7))
+            # lines!(ax, row.precision_noise[bound_mask], deriv[bound_mask], color=row.layers, colorrange=(5,7))
+            lines!(ax, row.precision_noise[2:end], curve[2:end] ./ row.window, color=log.(row.n_params), colorrange=log.(extrema(dt.n_params)))
+            lines!(ax2, row.precision_noise[2:end], deriv[2:end] ./ row.window, color=log.(row.n_params), colorrange=log.(extrema(dt.n_params)))
         end
-        # ylims!(ax, 0, maximum(dt.mi))
-        xlims!(ax, 10^-1, 10^2)
-    end
+        ylims!(ax, 0, maximum(dt.mi ./ dt.window))
+        # xlims!(ax, 10^-1, 10^2)
+        vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)
+        vlines!(ax2, ggdf.window[1] * 1000, color="black", linestyle=:dash)
+    # end
 end
+f
+
+##
+
+dt = @pipe df |> 
+    @subset(_, :window .< 0.1) |> 
+    @subset(_, :neuron .== "neuron") |> 
+    groupby(_, [:neuron, :layers, :hiddendim, :embed, :window]) |> 
+    collect(_) |> rand(_)
+
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+for row in eachrow(dt)
+    curve = vec(mean(row.precision_curve, dims=1))
+    lines!(ax, row.precision_noise[2:end], curve[2:end])
+end
+ylims!(ax, 0, nothing)
 f
 
 ## Theoretical max receptive field calculations

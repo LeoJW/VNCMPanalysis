@@ -20,191 +20,55 @@ else:
     empty_cache = lambda: None
 
 
-class BatchedDataset(Dataset):
+def max_events_in_window(event_times, window_size):
     """
-    Dataset that supports both batch-wise and full data access.
-    Maintains only one copy of data in memory
-    Simpler, lighter weight version than BatchedDatasetWithNoise
+    Find maximum number of events that fit in a sliding window.
+    Args:
+        event_times: numpy array of event times (must be sorted)
+        window_size: float, size of the sliding window
+    
+    Returns:
+        int: maximum number of events in any window of given size
     """
-    def __init__(self, X, Y, bout_starts, batch_size, check_activity=False):
-        """
-        Args:
-            X (torch.Tensor): First time series data of shape [M_x, N]
-            Y (torch.Tensor): Second time series data of shape [M_y, N]
-            batch_size (int): Size of each window
-        """
-        self.batch_size = batch_size
-        # Pre-compute valid batch indices (those with non-zero X and Y)
-        self.batch_indices = []
-        bout_starts = np.hstack((bout_starts, X.shape[1]))
-        bout_diffs = np.diff(bout_starts)
-        # Loop over bouts
-        for i in range(len(bout_starts)-1):
-            # Cut up bout into chunks
-            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size).astype(int)
-            for j in range(n_chunks_in_bout-1):
-                start_idx = bout_starts[i] + j * batch_size
-                end_idx = start_idx + batch_size
-                # If asked, check if activity in X and Y for this window. Can be slow
-                if check_activity:
-                    should_append = torch.any(X[:, start_idx:end_idx] > 0) and torch.any(Y[:, start_idx:end_idx] > 0)
-                    if not should_append:
-                        continue
-                self.batch_indices.append((start_idx, end_idx))
-            # Handle last chunk differently, just go to end of bout
-            start_idx = bout_starts[i] + n_chunks_in_bout * batch_size
-            end_idx = bout_starts[i+1]
-        self.n_windows = len(self.batch_indices)
-        # Store X, Y in pre-chunked form
-        self.X = torch.zeros((self.n_windows, 1, X.shape[0], batch_size), device=device)
-        self.Y = torch.zeros((self.n_windows, 1, Y.shape[0], batch_size), device=device)
-        for i in range(self.n_windows):
-            # Indexing done this way to catch times when a window is shorter than batch_size
-            # In that case we just fill chunk in, leave the rest as zeros
-            indices = self.batch_indices[i]
-            ind_diff = indices[1] - indices[0]
-            self.X[i,0,:,0:ind_diff] = X[:, indices[0]:indices[1]]
-            self.Y[i,0,:,0:ind_diff] = Y[:, indices[0]:indices[1]]
-    def __len__(self):
-        return self.n_windows
-    def __getitem__(self, idx):
-        """Return a batch at the specified batch index."""
-        return self.X[idx,:,:,:], self.Y[idx,:,:,:]
-
-
-class BatchedDatasetWithNoise(Dataset):
-    """
-    Dataset that supports both batch-wise and full data access.
-    Maintains master copy of data in memory, as well as duplicate on which noise can be applied to spike timings
-    Will always return Xnoise, to protect master copy X. 
-    X will also always be preserved in [nchannels x ntimepoints] shape, whereas Xnoise is set to chunked/windowed form
-    """
-    def __init__(self, X, Y, bout_starts, batch_size, check_activity=False):
-        """
-        Args:
-            X (torch.Tensor): First time series data of shape [M_x, N]
-            Y (torch.Tensor): Second time series data of shape [M_y, N]
-            batch_size (int): Size of each window
-        """
-        self.batch_size = batch_size
-        # Pre-compute valid batch indices (those with non-zero X and Y)
-        self.batch_indices = []
-        bout_starts = np.hstack((bout_starts, X.shape[1]))
-        bout_diffs = np.diff(bout_starts)
-        # Loop over bouts
-        for i in range(len(bout_starts)-1):
-            # Cut up bout into chunks
-            n_chunks_in_bout = np.ceil(bout_diffs[i] / batch_size).astype(int)
-            for j in range(n_chunks_in_bout-1):
-                start_idx = bout_starts[i] + j * batch_size
-                end_idx = start_idx + batch_size
-                self.batch_indices.append((start_idx, end_idx))
-            # Handle last chunk differently, just go to end of bout
-            start_idx = bout_starts[i] + n_chunks_in_bout * batch_size
-            end_idx = bout_starts[i+1]
-        self.n_windows = len(self.batch_indices)
-        # Store X, Y in un-chunked form, noise-equivalent versions in pre-chunked form
-        self.Xmain = X
-        self.Ymain = Y
-        self.X = torch.zeros((self.n_windows, 1, X.shape[0], batch_size), device=device)
-        self.Y = torch.zeros((self.n_windows, 1, Y.shape[0], batch_size), device=device)
-        for i in range(self.n_windows):
-            # Indexing done this way to catch times when a window is shorter than batch_size
-            # In that case we just fill chunk in, leave the rest as zeros
-            indices = self.batch_indices[i]
-            ind_diff = indices[1] - indices[0]
-            self.X[i,0,:,0:ind_diff] = self.Xmain[:, indices[0]:indices[1]]
-            self.Y[i,0,:,0:ind_diff] = self.Ymain[:, indices[0]:indices[1]]
-        # Get spike indices
-        self.spike_indices = torch.nonzero(self.X, as_tuple=False)
-        self.spike_indices_Y = torch.nonzero(self.Y, as_tuple=False)
-        # If checking activity, remove chunks where there is no activity
-        if check_activity:
-            # Find batches with activity in both
-            indsX, indsY = self.spike_indices[:,0].cpu().numpy(), self.spike_indices_Y[:,0].cpu().numpy()
-            uniqueX, uniqueY = set(indsX), set(indsY)
-            keep_batches_set = uniqueX.intersection(uniqueY)
-            keep_batches = np.array(sorted(keep_batches_set))
-            validX, validY = np.isin(indsX, keep_batches), np.isin(indsY, keep_batches)
-            # Keep only valid batches
-            self.X = self.X[keep_batches,:,:,:]
-            self.Y = self.Y[keep_batches,:,:,:]
-            self.spike_indices = self.spike_indices[validX,:]
-            self.spike_indices_Y = self.spike_indices_Y[validY,:]
-            # Re-map spike indices to new numbering
-            batch_mapping = np.full((self.n_windows,), -1, dtype=int)
-            batch_mapping[keep_batches] = np.arange(len(keep_batches))
-            new_indsX, new_indsY = batch_mapping[indsX[validX]], batch_mapping[indsY[validY]]
-            self.spike_indices[:,0] = torch.from_numpy(new_indsX).to(device)
-            self.spike_indices_Y[:,0] = torch.from_numpy(new_indsY).to(device)
-            self.n_windows = len(keep_batches)
-            self.batch_indices = [self.batch_indices[i] for i in keep_batches]
-        # Intermediate tensor for holding noise indices
-        self.new_indices = torch.zeros_like(self.spike_indices[:,3], dtype=int, device=device)
-    def __len__(self):
-        return self.n_windows
-    def __getitem__(self, idx):
-        """Return a batch at the specified batch index."""
-        return self.X[idx,:,:,:], self.Y[idx,:,:,:]
-    def apply_noise(self, amplitude):
-        """
-        Apply noise to spike times of noisy version of X. 
-        NOTE: This could become a problem if too many spikes are supposed to move across window borders to next window
-        Implementing that was a bit too complicated, and likely doesn't matter. But it might!
-        Args: 
-            amplitude: added uniform noise amplitude, units of samples
-        """
-        self.X.zero_()
-        self.new_indices = torch.clip(
-            self.spike_indices[:,3] + torch.rand(self.spike_indices[:,3].shape, device=device).mul_(amplitude).round_().int(), 
-            0, self.X.shape[3] - 1)
-        self.X[self.spike_indices[:,0], self.spike_indices[:,1], self.spike_indices[:,2], self.new_indices] = 1
-    def apply_noise_Y(self, amplitude):
-        """
-        Apply noise to spike times of noisy version of Y. 
-        Amplitude is in units of samples
-        """
-        self.Y.zero_()
-        self.new_indices = torch.clip(
-            self.spike_indices_Y[:,3] + torch.rand(self.spike_indices_Y[:,3].shape, device=device).mul_(amplitude).round_().int(), 
-            0, self.Y.shape[3] - 1)
-        self.Y[self.spike_indices_Y[:,0], self.spike_indices_Y[:,1], self.spike_indices_Y[:,2], self.new_indices] = 1
-    def time_lag(self, lag, channels=None):
-        """
-        Apply time lag to spike times of all (or specific) neurons/muscles 
-        Positive lag shifts entries rightward (forward in time), negative the opposite
-        """
-        if channels is None:
-            channels = torch.arange(self.Xmain.shape[0])
-        # Re-make X from rolled copy of Xmain
-        tempX = self.Xmain.detach().clone()
-        tempX[channels,:] = torch.roll(tempX[channels,:], lag)
-        for i in range(self.n_windows):
-            # Indexing done this way to catch times when a window is shorter than batch_size
-            # In that case we just fill chunk in, leave the rest as zeros
-            indices = self.batch_indices[i]
-            ind_diff = indices[1] - indices[0]
-            self.X[i,0,:,0:ind_diff] = tempX[:, indices[0]:indices[1]]
-        del tempX
+    n = len(event_times)
+    if n == 0:
+        return 0
+    max_count = 1
+    left = 0
+    # Cache array reference to avoid repeated attribute lookup
+    times = event_times
+    for right in range(1, n):
+        right_time = times[right]
+        # Shrink window from left while it's too large
+        while right_time - times[left] > window_size:
+            left += 1
+        # Update max count with potential early termination
+        current_count = right - left + 1
+        if current_count > max_count:
+            max_count = current_count
+            # Early termination: if we can't possibly beat this count
+            if max_count >= n - right:
+                break
+    return max_count
 
 def dfill(a):
     n = a.size
     b = np.concatenate([[0], np.where(a[:-1] != a[1:])[0] + 1, [n]])
     return np.arange(n)[b[:-1]].repeat(np.diff(b))
 
+
 class TimeWindowDataset(Dataset):
-    # TODO: Switch times to milliseconds, might enable using much lower precision dtypes
     """
     Reads in data, stores and outputs in form similar to previous KSG encoding
-    Dataset that supports both batch-wise and full data access.
-    Maintains master copy of data in memory, as well as duplicate on which noise can be applied to spike timings
-    Will always return Xnoise, to protect master copy X. 
+    Maintains master copy of data in memory, as well as duplicate on which noise/other things can be applied
+    Will always return X, to protect master copy Xmain. 
+    TODO: Could do times in milliseconds, would potentially enable a lower precision dtype 
     """
     def __init__(self, base_name, window_size, 
-            no_spike_value=0, add_offset=0,
-            check_activity=False, 
+            no_spike_value=0, time_offset=0,
             sample_rate=30000, neuron_label_filter=None,
-            select_x=None, select_y=None):
+            select_x=None, select_y=None,
+            check_activity=False):
         """
         Args:
             batch_size (int): Size of each window
@@ -217,8 +81,9 @@ class TimeWindowDataset(Dataset):
             self.Ytimes = [self.Ytimes[i] for i in select_y]
         
         self.window_size = window_size
+        self.no_spike_value = no_spike_value
         
-        self.move_data_to_windows(add_offset=add_offset, no_spike_value=no_spike_value)
+        self.move_data_to_windows(time_offset=time_offset)
         
         # If checking activity, remove chunks where there is no activity
         if check_activity:
@@ -227,9 +92,11 @@ class TimeWindowDataset(Dataset):
     
     def __len__(self):
         return self.n_windows
+    
     def __getitem__(self, idx):
         """Return a batch at the specified batch index."""
         return self.X[idx,:,:], self.Y[idx,:,:]
+    
     def apply_noise(self, amplitude):
         """
         Apply noise to spike times of noisy version of X. 
@@ -257,28 +124,28 @@ class TimeWindowDataset(Dataset):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         self.Ymain[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
     
-    def move_data_to_windows(self, no_spike_value=0, add_offset=0):
+    def move_data_to_windows(self, time_offset=0):
         """
         Take list of spike times, convert to matrices of spike times in given windows
         Args:
             no_spike_value: Filler value used to indicate no spike occurred in that position
-            add_offset: Offset to window start time in s, should be positive!
+            time_offset: Offset to window start time in s, should be positive!
         """
         # Make chunk start times
         # Loop over bouts, cut up into chunks, assign start times
         bout_diffs = self.bout_ends - self.bout_starts
         window_times, valid_window = [], []
-        # valid_window will be used to trim last partial-length chunk from each bout
-        # If time offset added, this also trims partial-length chunk at start of next bout
-        # Partial-length start of very first bout needs to be trimmed if offset added, so that's done here
-        # A starting window has to be made to catch spikes before time offset
-        if add_offset > 0:
+        # Partial-length windows will often exist at end of botus, valid_window is used to trim this.
+        # If time offset added, this also ends up trimming partial-length window at start of next bout (great!).
+        # Just leaves partial-length start of very first bout, if an offset is added
+        # For that we add a starting window to catch spikes before initial time offset
+        if time_offset > 0:
             window_times.append(0)
             valid_window.append(False)
         for i in range(len(self.bout_starts)):
-            n_windows = np.ceil((bout_diffs[i] - add_offset) / self.window_size).astype(int)
+            n_windows = np.ceil((bout_diffs[i] - time_offset) / self.window_size).astype(int)
             for j in range(n_windows):
-                start_idx = self.bout_starts[i] + add_offset + j * self.window_size
+                start_idx = self.bout_starts[i] + time_offset + j * self.window_size
                 window_times.append(start_idx)
                 valid_window.append(True)
             valid_window[-1] = False
@@ -289,12 +156,13 @@ class TimeWindowDataset(Dataset):
         # This is by far the slowest part of this whole function!
         window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
         window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
-        # Get max number of spikes per chunk for X and Y, preallocate
-        max_neuron = np.max(np.array([np.max(np.bincount(x)) for x in window_inds_x]))
-        max_muscle = np.max(np.array([np.max(np.bincount(y)) for y in window_inds_y]))
+        # Get max number of spikes per chunk for X and Y, preallocate. This is only done once!
+        if not hasattr(self, 'max_neuron'):
+            self.max_neuron = np.max(np.array([max_events_in_window(x, self.window_size) for x in self.Xtimes]))
+            self.max_muscle = np.max(np.array([max_events_in_window(y, self.window_size) for y in self.Ytimes]))
         # Preallocate (size is [window, neuron/muscle, spike time])
-        Xmain = np.full((self.n_windows, len(self.Xtimes), max_neuron), no_spike_value, dtype=np.float32)
-        Ymain = np.full((self.n_windows, len(self.Ytimes), max_muscle), no_spike_value, dtype=np.float32)
+        Xmain = np.full((self.n_windows, len(self.Xtimes), self.max_neuron), self.no_spike_value, dtype=np.float32)
+        Ymain = np.full((self.n_windows, len(self.Ytimes), self.max_muscle), self.no_spike_value, dtype=np.float32)
         # Loop down each neuron, muscle, assign data to main arrays
         for i in range(len(self.Xtimes)):
             column_inds = np.arange(len(window_inds_x[i])) - dfill(window_inds_x[i])
@@ -305,14 +173,16 @@ class TimeWindowDataset(Dataset):
         # Trim windows that are too short to be valid
         Xmain = Xmain[self.valid_window,:,:]
         Ymain = Ymain[self.valid_window,:,:]
+        self.window_times = self.window_times[self.valid_window]
+        self.n_windows = len(self.window_times)
         # Convert to tensor, move to device. Make copies that noise will be applied on
         self.Xmain = torch.tensor(Xmain, device=device)
         self.Ymain = torch.tensor(Ymain, device=device)
         self.X = self.Xmain.detach().clone()
         self.Y = self.Ymain.detach().clone()
         # Pre-compute mask of where actual spikes are
-        self.spike_mask_x = torch.nonzero(self.Xmain != no_spike_value, as_tuple=True)
-        self.spike_mask_y = torch.nonzero(self.Ymain != no_spike_value, as_tuple=True)
+        self.spike_mask_x = torch.nonzero(self.Xmain != self.no_spike_value, as_tuple=True)
+        self.spike_mask_y = torch.nonzero(self.Ymain != self.no_spike_value, as_tuple=True)
         # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
         self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
         self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
@@ -333,6 +203,7 @@ class TimeWindowDataset(Dataset):
     #         ind_diff = indices[1] - indices[0]
     #         self.X[i,0,:,0:ind_diff] = tempX[:, indices[0]:indices[1]]
     #     del tempX
+
     def read_data(self, base_name, sample_rate=30000, neuron_label_filter=None):
         """
         Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
@@ -543,31 +414,3 @@ def load_dicts_from_h5(filename):
                     d[key] = dataset[()]
             dicts.append(d)
     return dicts
-
-if __name__ == '__main__':
-    import sys
-    import os
-
-    import torch
-    import time
-
-    import torch.nn as nn
-    import torch.multiprocessing as mp
-    import numpy as np
-    import torch.optim as optim
-
-    from torch.utils.data import Dataset, DataLoader
-    from scipy.ndimage import gaussian_filter1d
-    from itertools import product
-
-    from utils import *
-    from models import *
-    from estimators import *
-    from trainers import *
-
-    main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata')
-    model_cache_dir = os.path.join(data_dir, 'model_cache')
-    
-    
-    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=0.05, add_offset=0.045, neuron_label_filter=1)#, select_x=[10])

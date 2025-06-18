@@ -17,10 +17,16 @@ from trainers import *
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
     device = 'cuda'
+    synchronize = torch.cuda.synchronize
+    empty_cache = torch.cuda.empty_cache
 elif torch.backends.mps.is_available():
     device = 'mps'
+    synchronize = torch.mps.synchronize
+    empty_cache = torch.mps.empty_cache
 else:
-    device = "cpu"
+    device = 'cpu'
+    synchronize = lambda: None
+    empty_cache = lambda: None
 
 
 class mlp(nn.Module):
@@ -480,7 +486,7 @@ def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
     # Loop over subsets
     for i,inds in enumerate(indices):
         # Train model
-        mis_test, train_id = train_cnn_model_no_eval(dataset, params, subset_indices=inds)
+        mis_test, train_id = train_model_no_eval(dataset, params, subset_indices=inds)
         mod = retrieve_best_model(mis_test, params, train_id=train_id, remove_all=True)
         # Run model inference to get MI value
         with torch.no_grad():
@@ -514,7 +520,7 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
         inds = indices[subset_idx]
         this_params = {**params, 'embed_dim': embed_dim}
         # Train model
-        mis_test, train_id = train_cnn_model_no_eval(dataset, this_params, subset_indices=inds)
+        mis_test, train_id = train_model_no_eval(dataset, this_params, subset_indices=inds)
         with torch.no_grad():
             # Retrieve model, run inference to get MI value
             mod = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
