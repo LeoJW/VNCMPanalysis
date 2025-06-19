@@ -43,10 +43,6 @@ def max_events_in_window(event_times, window_size):
     
     return max_count
 
-def dfill(a):
-    n = a.size
-    b = np.concatenate([[0], np.where(a[:-1] != a[1:])[0] + 1, [n]])
-    return np.arange(n)[b[:-1]].repeat(np.diff(b))
 
 def monotonic_repeats_to_ranges(a):
     unique, index, counts = np.unique(a, return_counts=True, return_index=True)

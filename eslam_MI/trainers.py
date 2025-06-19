@@ -164,6 +164,9 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
                     use_ind = (subset_inds[0] + np.arange(0,num)) % dataset.n_windows
                     test_block_inds = dataset.n_windows - np.abs(test_block_inds - subset_inds[0])
                 n_windows = num
+            else:
+                n_windows = dataset.n_windows
+                use_ind = np.arange(n_windows)
             # This excludes windows on either side of test times, to ensure no overlaps with test set
             test_indices = np.concatenate([np.arange(test_block_inds[0,i], test_block_inds[1,i]) for i in range(test_block_inds.shape[1])])
             train_indices = np.delete(np.arange(0, n_windows), test_indices)
@@ -344,7 +347,7 @@ if __name__ == '__main__':
         'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
     }
 
-    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=0.05, neuron_label_filter=1, select_x=[10])
+    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=0.05, neuron_label_filter=1, no_spike_value=-1)
 
     this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
 
@@ -352,8 +355,7 @@ if __name__ == '__main__':
     # subset_times = np.array([ds.window_times[-100], ds.window_times[1000]])
     mi = []
     for i in range(20):
-        ds.move_data_to_windows(time_offset=0)
-        mis_test, train_id, train_inds = train_model_no_eval(ds, this_params, subset_times=subset_times, return_indices=True)
+        mis_test, train_id, train_inds = train_model_no_eval(ds, this_params, return_indices=True)
         model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
         with torch.no_grad():
             ds.move_data_to_windows(time_offset=0)
