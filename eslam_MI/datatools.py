@@ -116,10 +116,10 @@ class TimeWindowDataset(Dataset):
     
     def apply_precision(self, prec):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.Xmain[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
+        self.X[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
     def apply_precision_y(self, prec):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.Ymain[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
+        self.Y[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
     
     def move_data_to_windows(self, time_offset=0.0):
         """
