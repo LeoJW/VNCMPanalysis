@@ -22,37 +22,6 @@ else:
 
 def max_events_in_window(event_times, window_size):
     """
-    Find maximum number of events that fit in a sliding window.
-    Args:
-        event_times: numpy array of event times (must be sorted)
-        window_size: float, size of the sliding window
-    
-    Returns:
-        int: maximum number of events in any window of given size
-    """
-    n = len(event_times)
-    if n == 0:
-        return 0
-    max_count = 1
-    left = 0
-    # Cache array reference to avoid repeated attribute lookup
-    times = event_times
-    for right in range(1, n):
-        right_time = times[right]
-        # Shrink window from left while it's too large
-        while (right_time - times[left]) > window_size:
-            left += 1
-        # Update max count with potential early termination
-        current_count = right - left + 1
-        if current_count > max_count:
-            max_count = current_count
-            # Early termination: if we can't possibly beat this count
-            if max_count >= n - right:
-                break
-    return max_count
-
-def max_events_in_window_ds(event_times, window_size):
-    """
     Find the maximum number of events that can fit in a window of given size.
     
     Args:
@@ -449,65 +418,3 @@ def load_dicts_from_h5(filename):
                     d[key] = dataset[()]
             dicts.append(d)
     return dicts
-
-
-if __name__ == '__main__':
-    import sys
-    import os
-
-    import torch
-    import time
-
-    import torch.nn as nn
-    import torch.multiprocessing as mp
-    import numpy as np
-    import torch.optim as optim
-
-    from torch.utils.data import Dataset, DataLoader
-    from scipy.ndimage import gaussian_filter1d
-    from itertools import product
-
-    from utils import *
-    from models import *
-    from estimators import *
-    from trainers import *
-
-    main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata')
-    model_cache_dir = os.path.join(data_dir, 'model_cache')
-
-    params = {
-        # Optimizer parameters (for training)
-        'epochs': 250,
-        'window_size': 0.05,
-        'batch_size': 512, # Number of windows estimator processes at any time
-        'learning_rate': 5e-3,
-        'patience': 50,
-        'min_delta': 0.001,
-        'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
-        'train_fraction': 0.95,
-        'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'model_cache_dir': model_cache_dir,
-        # Critic parameters for the estimator
-        'model_func': DSIB, # DSIB or DVSIB
-        'layers': 3,
-        'hidden_dim': 32,
-        'activation': nn.LeakyReLU, #nn.Softplus
-        'embed_dim': 6,
-        'beta': 512, # Just used in DVSIB
-        'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
-        'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
-    }
-
-
-    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=1.0, neuron_label_filter=1)
-    ds.move_data_to_windows(time_offset=0.89)
-    this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
-
-    mi = []
-    for i in range(20):
-        ds.move_data_to_windows(time_offset=0)
-        mis_test, train_id = train_model_no_eval(ds, this_params)
-        model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
-        ds.move_data_to_windows(time_offset=0.89)
