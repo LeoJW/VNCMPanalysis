@@ -41,18 +41,19 @@ function read_network_arch_file!(df, file, task)
     first_row = split(first(keys(time_per_epoch)), "_")
     names = vcat(first_row[1:2:end], ["time", "mi", "precision", "precision_curve", "precision_noise"])
     is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
-    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Float64, Matrix{Float64}, Vector{Float64})
+    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Float64, Vector{Float64}, Vector{Float64})
     thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
     thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
     for key in keys(time_per_epoch)
         keysplit = split(key, "_")[2:2:end]
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
-        vals[6] = task
+        # vals[6] = task
         push!(thisdf, vcat(
             vals, 
             time_per_epoch[key], 
             mean(precision_curves[key], dims=1)[1] .* log2(exp(1)), 
-            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key] .* log2(exp(1))),
+            1,
+            # find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key] .* log2(exp(1))),
             [precision_curves[key] .* log2(exp(1))],
             [precision_noise[key] .* 1000]
         ))
@@ -62,9 +63,10 @@ end
 
 
 df = DataFrame()
-for task in 0:5
-    read_network_arch_file!(df, joinpath(data_dir, "2025-06-12_network_comparison_PACE_task_$(task).h5"), task)
-end
+# for task in 0:5
+#     read_network_arch_file!(df, joinpath(data_dir, "2025-06-12_network_comparison_PACE_task_$(task).h5"), task)
+# end
+read_network_arch_file!(df, joinpath(data_dir, "2025-06-19_network_comparison_PACE_.h5"), 0)
 
 # Remove obvious failures, convert units
 df = @pipe df |> 
@@ -74,12 +76,13 @@ df = @pipe df |>
 ##
 
 @pipe df |> 
-@subset(_, :neuron .== "all") |> 
+# @subset(_, :neuron .== "all") |> 
 # @subset(_, :embed .== 10) |> 
-@transform(_, :mi = :mi ./ :window) |> 
+# @transform(_, :mi = :mi ./ :window) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:time, :mi, color=:embed, row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric) * 
+# mapping(:time, :mi, color=:embed, row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric) * 
+mapping(:window, :mi, row=:hiddendim=>nonnumeric) * 
 visual(Scatter)
 ) |> 
 draw(_)
@@ -166,33 +169,34 @@ visual(Scatter)
 draw(_)#, axis=(; xscale=log10))
 
 ##
-dt = @pipe df |> 
-# @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
-@subset(_, :embed .== 6) |> 
-@subset(_, :layers .== 3) |> 
-@transform(_, :n_params = :hiddendim .* :layers) |> 
-@subset(_, :neuron .== "neuron")
+# dt = @pipe df |> 
+# # @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
+# @subset(_, :embed .== 6) |> 
+# @subset(_, :layers .== 3) |> 
+# @transform(_, :n_params = :hiddendim .* :layers) |> 
+# @subset(_, :neuron .== "neuron")
+dt = df
 
 f = Figure()
-for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
+for (i,ggdf) in enumerate(groupby(dt, :hiddendim, sort=true))
     # for (j,ggdf) in enumerate(groupby(gdf, :n_params))
     j = 1
-        ax = Axis(f[j,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))# * " " * string(ggdf.n_params[1]))
-        ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
+        ax = Axis(f[j,i], xscale=log10, title=string(round(ggdf.hiddendim[1] * 1000)))
+        # ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
         for row in eachrow(ggdf)
-            curve = vec(mean(row.precision_curve, dims=1))
+            curve = row.precision_curve
             sg_window = 2 * floor(Int, length(row.precision_noise) / 5) + 1
             sg_window = sg_window < 2 ? 5 : sg_window
             deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
             bound_mask = deriv .<= (- 3e-4)
             # lines!(ax, row.precision_noise[bound_mask], deriv[bound_mask], color=row.layers, colorrange=(5,7))
-            lines!(ax, row.precision_noise[2:end], curve[2:end] ./ row.window, color=log.(row.n_params), colorrange=log.(extrema(dt.n_params)))
-            lines!(ax2, row.precision_noise[2:end], deriv[2:end] ./ row.window, color=log.(row.n_params), colorrange=log.(extrema(dt.n_params)))
+            lines!(ax, row.precision_noise[2:end], curve[2:end] ./ row.window, color=log.(row.window), colorrange=log.(extrema(dt.window)))
+            # lines!(ax2, row.precision_noise[2:end], deriv[2:end] ./ row.window, color=log.(row.n_params), colorrange=log.(extrema(dt.n_params)))
         end
         ylims!(ax, 0, maximum(dt.mi ./ dt.window))
         # xlims!(ax, 10^-1, 10^2)
         vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)
-        vlines!(ax2, ggdf.window[1] * 1000, color="black", linestyle=:dash)
+        # vlines!(ax2, ggdf.window[1] * 1000, color="black", linestyle=:dash)
     # end
 end
 f

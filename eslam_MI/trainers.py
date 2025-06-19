@@ -260,6 +260,40 @@ def retrieve_best_model(mi_test, params,
         os.remove(os.path.join(params['model_cache_dir'], good_file))
     return model
 
+def retrieve_best_model_path(mi_test, params, 
+        train_id=None, remove_others=True, smooth=True, sigma=1, device=device):
+    """
+    Given a directory for a training run and test MI/loss, removes all but the best model based on early stopping
+    Version of retrieve_best_model that only returns path to good model file
+    Deletes the rest of the model files
+    Parameters:
+        mi_test (np vector): Vector of test MI at each epoch 
+        params (dict): Dictionary of standard model parameters, should match params used during training run. Used for creating model
+            Should include model_cache_dir!
+        train_id (string): Timestamp unique identifier for that training run. Inferred if not provided
+    """
+    # Get unique training ids
+    valid_files = [f for f in os.listdir(params['model_cache_dir']) if '.pt' in f]
+    unique_ids = [s.split('_')[-1][:-3] for s in valid_files]
+    # If no time_id provided, use newest
+    if train_id is None:
+        creation_times = np.array([os.path.getmtime(os.path.join(params['model_cache_dir'], file)) for file in valid_files])
+        train_id = unique_ids[np.argmin(creation_times)]
+    mi_test = np.nan_to_num(mi_test)
+    if smooth:
+        mi_test = gaussian_filter1d(mi_test, sigma=sigma)
+    # Grab best epoch
+    best_epoch = np.argmax(mi_test)
+    # Get all files associated with this id, load good one and trash the rest
+    match_files = [f for f in valid_files if train_id in f]
+    good_file_idx = [idx for idx,s in enumerate(match_files) if f'epoch{best_epoch}' in s][0]
+    good_file = match_files.pop(good_file_idx)
+    if remove_others:
+        for file in match_files:
+            os.remove(os.path.join(params['model_cache_dir'], file))
+    good_file_path = os.path.join(params['model_cache_dir'], good_file)
+    return good_file_path
+
 
 if __name__ == '__main__':
     import sys
@@ -323,9 +357,6 @@ if __name__ == '__main__':
         model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
         with torch.no_grad():
             ds.move_data_to_windows(time_offset=0)
-            synchronize()
-            tic = time.time()
             thismi = - model(ds.X[train_inds,:,:], ds.Y[train_inds,:,:]).detach().cpu().numpy()
-            synchronize()
             print(f'MI: {thismi}')
             mi.append(thismi)

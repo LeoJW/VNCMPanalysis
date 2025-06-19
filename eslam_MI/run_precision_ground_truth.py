@@ -17,6 +17,7 @@ from utils import *
 from models import *
 from estimators import *
 from trainers import *
+from datatools import *
 
 # Directory handling
 # PACE version

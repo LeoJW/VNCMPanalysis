@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from utils import *
+from models import *
 from estimators import *
 from datatools import *
 

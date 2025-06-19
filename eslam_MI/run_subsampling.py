@@ -17,6 +17,7 @@ from utils import *
 from models import *
 from estimators import *
 from trainers import *
+from datatools import *
 
 # Directory handling
 # PACE version
@@ -31,7 +32,7 @@ if sys.platform == 'linux':
 # Home version
 else:
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', '..', 'localdata')
+    data_dir = os.path.join(main_dir, '..', 'localdata')
     model_cache_dir = os.path.join(data_dir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
@@ -56,42 +57,35 @@ else:
     empty_cache = lambda: None
 print(f'Device: {device}')
 
-period = 0.0001
 
 moths = [
-    "2025-02-25_1",
-    "2025-02-25",
+    # "2025-02-25_1",
+    # "2025-02-25",
     "2025-03-11",
     "2025-03-12_1",
     "2025-03-20",
     "2025-03-21"
 ]
 
-
 params = {
     # Optimizer parameters (for training)
     'epochs': 250,
-    'window_size': 512, # Window of time the estimator operates on, in samples
+    'window_size': 0.05,
     'batch_size': 128, # Number of windows estimator processes at any time
     'learning_rate': 5e-3,
-    'n_trials': 3,
-    'patience': 10,
+    'patience': 50,
     'min_delta': 0.001,
     'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
-    'train_fraction': 0.9,
+    'train_fraction': 0.95,
+    'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
     'model_cache_dir': model_cache_dir,
     # Critic parameters for the estimator
     'model_func': DSIB, # DSIB or DVSIB
-    'branch': 'expDilation', # Whether to have branched first layer '1', all branched layers 'all', or None if no branch layers
-    'stride': 2, # stride of CNN layers. First layer will always be stride=1
-    'n_filters': 8, # Number of new filters per layer. Each layer will 2x this number
-    'layers': 7,
-    'fc_layers': 2, # fully connected layers
-    'hidden_dim': 256,
+    'layers': 3,
+    'hidden_dim': 64,#512,
     'activation': nn.LeakyReLU, #nn.Softplus
-    'embed_dim': 10,
-    'beta': 512,
-    'max_dz': 12, # max value for embed_dim that we search for
+    'embed_dim': 6,
+    'beta': 512, # Just used in DVSIB
     'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
     'mode': 'sep', # Almost always we'll use separable
     'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
@@ -102,9 +96,9 @@ all_mi = {}
 all_embed_dim = {}
 for moth in moths:
     empty_cache()
-    X, Y, x_labels, y_labels, bout_starts = read_spike_data(os.path.join(data_dir, moth), period)
-    dataset = BatchedDataset(X, Y, bout_starts, params['window_size'])
-    subsets, mi, embed_dim = subsample_MI_vary_embed_dim(dataset, params, np.arange(1,10), embed_range=np.arange(1,15))
+    ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.05, neuron_label_filter=1)
+    this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
+    subsets, mi, embed_dim = subsample_MI_vary_embed_dim(ds, this_params, np.arange(1,10), embed_range=np.arange(1,15))
     all_subsets[moth] = subsets
     all_mi[moth] = mi
     all_embed_dim[moth] = embed_dim
