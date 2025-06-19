@@ -40,7 +40,7 @@ def max_events_in_window(event_times, window_size):
     for right in range(1, n):
         right_time = times[right]
         # Shrink window from left while it's too large
-        while right_time - times[left] > window_size:
+        while (right_time - times[left]) > window_size:
             left += 1
         # Update max count with potential early termination
         current_count = right - left + 1
@@ -51,10 +51,38 @@ def max_events_in_window(event_times, window_size):
                 break
     return max_count
 
+def max_events_in_window_ds(event_times, window_size):
+    """
+    Find the maximum number of events that can fit in a window of given size.
+    
+    Args:
+        event_times: Array-like of event timestamps
+        window_size: Length of the time window
+        
+    Returns:
+        Maximum number of events that fit in any window of the given size
+    """
+    times = np.array(event_times)    
+    max_count = 0
+    left = 0
+    for right in range(len(times)):
+        # Slide left pointer forward until window contains times[right] - window_size
+        while times[right] - times[left] > window_size:
+            left += 1
+        # Update max_count if current window is larger
+        max_count = max(max_count, right - left + 1)
+    
+    return max_count
+
 def dfill(a):
     n = a.size
     b = np.concatenate([[0], np.where(a[:-1] != a[1:])[0] + 1, [n]])
     return np.arange(n)[b[:-1]].repeat(np.diff(b))
+
+def monotonic_repeats_to_ranges(a):
+    unique, index, counts = np.unique(a, return_counts=True, return_index=True)
+    arg_s = np.argsort(index)
+    return np.concatenate(list(map(np.arange,counts[arg_s])), axis=0)
 
 
 class TimeWindowDataset(Dataset):
@@ -65,7 +93,7 @@ class TimeWindowDataset(Dataset):
     TODO: Could do times in milliseconds, would potentially enable a lower precision dtype 
     """
     def __init__(self, base_name, window_size, 
-            no_spike_value=0, time_offset=0,
+            no_spike_value=0, time_offset=0.0,
             sample_rate=30000, neuron_label_filter=None,
             select_x=None, select_y=None,
             check_activity=False):
@@ -124,7 +152,7 @@ class TimeWindowDataset(Dataset):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         self.Ymain[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
     
-    def move_data_to_windows(self, time_offset=0):
+    def move_data_to_windows(self, time_offset=0.0):
         """
         Take list of spike times, convert to matrices of spike times in given windows
         Args:
@@ -145,9 +173,15 @@ class TimeWindowDataset(Dataset):
         for i in range(len(self.bout_starts)):
             n_windows = np.ceil((bout_diffs[i] - time_offset) / self.window_size).astype(int)
             for j in range(n_windows):
-                start_idx = self.bout_starts[i] + time_offset + j * self.window_size
-                window_times.append(start_idx)
+                start_time = self.bout_starts[i] + time_offset + j * self.window_size
+                window_times.append(start_time)
                 valid_window.append(True)
+            # If in between bouts, make a window edge that's halfway, this window should always be invalid
+            if i < (len(self.bout_starts) - 1):
+                start_time = self.bout_ends[i] + (self.bout_starts[i+1] - self.bout_ends[i])
+                window_times.append(start_time)
+                valid_window.append(False)
+            # Last window in any bout is automatically made invalid
             valid_window[-1] = False
         self.valid_window = np.array(valid_window)
         self.window_times = np.array(window_times)
@@ -156,7 +190,8 @@ class TimeWindowDataset(Dataset):
         # This is by far the slowest part of this whole function!
         window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
         window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
-        # Get max number of spikes per chunk for X and Y, preallocate. This is only done once!
+        # Find max number of spikes per chunk for X and Y, preallocate. 
+        # This MUST only be done once, so that network size is consistent as windows get shifted
         if not hasattr(self, 'max_neuron'):
             self.max_neuron = np.max(np.array([max_events_in_window(x, self.window_size) for x in self.Xtimes]))
             self.max_muscle = np.max(np.array([max_events_in_window(y, self.window_size) for y in self.Ytimes]))
@@ -165,10 +200,10 @@ class TimeWindowDataset(Dataset):
         Ymain = np.full((self.n_windows, len(self.Ytimes), self.max_muscle), self.no_spike_value, dtype=np.float32)
         # Loop down each neuron, muscle, assign data to main arrays
         for i in range(len(self.Xtimes)):
-            column_inds = np.arange(len(window_inds_x[i])) - dfill(window_inds_x[i])
+            column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
             Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
         for i in range(len(self.Ytimes)):
-            column_inds = np.arange(len(window_inds_y[i])) - dfill(window_inds_y[i])
+            column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
             Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
         # Trim windows that are too short to be valid
         Xmain = Xmain[self.valid_window,:,:]
@@ -414,3 +449,65 @@ def load_dicts_from_h5(filename):
                     d[key] = dataset[()]
             dicts.append(d)
     return dicts
+
+
+if __name__ == '__main__':
+    import sys
+    import os
+
+    import torch
+    import time
+
+    import torch.nn as nn
+    import torch.multiprocessing as mp
+    import numpy as np
+    import torch.optim as optim
+
+    from torch.utils.data import Dataset, DataLoader
+    from scipy.ndimage import gaussian_filter1d
+    from itertools import product
+
+    from utils import *
+    from models import *
+    from estimators import *
+    from trainers import *
+
+    main_dir = os.getcwd()
+    data_dir = os.path.join(main_dir, '..', 'localdata')
+    model_cache_dir = os.path.join(data_dir, 'model_cache')
+
+    params = {
+        # Optimizer parameters (for training)
+        'epochs': 250,
+        'window_size': 0.05,
+        'batch_size': 512, # Number of windows estimator processes at any time
+        'learning_rate': 5e-3,
+        'patience': 50,
+        'min_delta': 0.001,
+        'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
+        'train_fraction': 0.95,
+        'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
+        'model_cache_dir': model_cache_dir,
+        # Critic parameters for the estimator
+        'model_func': DSIB, # DSIB or DVSIB
+        'layers': 3,
+        'hidden_dim': 32,
+        'activation': nn.LeakyReLU, #nn.Softplus
+        'embed_dim': 6,
+        'beta': 512, # Just used in DVSIB
+        'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
+        'mode': 'sep', # Almost always we'll use separable
+        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+    }
+
+
+    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=1.0, neuron_label_filter=1)
+    ds.move_data_to_windows(time_offset=0.89)
+    this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
+
+    mi = []
+    for i in range(20):
+        ds.move_data_to_windows(time_offset=0)
+        mis_test, train_id = train_model_no_eval(ds, this_params)
+        model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
+        ds.move_data_to_windows(time_offset=0.89)
