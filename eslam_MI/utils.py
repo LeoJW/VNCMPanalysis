@@ -462,6 +462,8 @@ def log_prob_gaussian(x):
     return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
 
+# NOTE: Due to time_offsets applied during training, subsets will not be completely independent.
+# Subsets will overap on window edges
 
 def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
     """
@@ -474,23 +476,23 @@ def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
         subsets: (np.array) Vector of how many subsamples a given MI value belongs to
         mi: (np.array) Vector of MI values
     """
-    # Generate random subsample indices
-    indices = []
+    # Get [start_time, end_time] pairs for each subsample
+    split_times = np.empty((0,2), dtype=int)
     for ss in split_sizes:
-        inds = np.random.choice(dataset.X.shape[0], dataset.X.shape[0], replace=False)
-        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1)).astype(int)
-        for i in range(ss):
-            indices.append(inds[edges[i]:edges[i+1]])
-    mi = np.zeros((len(indices)))
+        # Each row is start, end pair
+        split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
+        split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
+        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
+    mi = np.zeros((len(split_times)))
     subsets = np.hstack([np.repeat(x, x) for x in split_sizes]) # run length encoding of split_sizes
     # Loop over subsets
-    for i,inds in enumerate(indices):
+    for i in range(split_times.shape[0]):
         # Train model
-        mis_test, train_id = train_model_no_eval(dataset, params, subset_indices=inds)
+        mis_test, train_id, indices = train_model_no_eval(dataset, params, subset_times=split_times[i,:], return_indices=True)
         mod = retrieve_best_model(mis_test, params, train_id=train_id, remove_all=True)
         # Run model inference to get MI value
         with torch.no_grad():
-            mi[i] = - mod(dataset.X[inds,:,:,:], dataset.Y[inds,:,:,:]).detach().cpu().numpy()
+            mi[i] = - mod(dataset.X[indices,:,:], dataset.Y[indices,:,:]).detach().cpu().numpy()
     return subsets, mi
 
 
@@ -506,25 +508,24 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
         mi: (np.array) Vector of MI values
         embed_dim_vec: (np.array) Vector of embedding dims
     """
-    # Generate random subsample indices
-    indices = []
+    # Get [start_time, end_time] pairs for each subsample
+    split_times = np.empty((0,2), dtype=int)
     for ss in split_sizes:
-        inds = np.random.choice(dataset.X.shape[0], dataset.X.shape[0], replace=False)
-        edges = np.rint(np.linspace(0, dataset.X.shape[0]-1, ss+1)).astype(int)
-        for i in range(ss):
-            indices.append(inds[edges[i]:edges[i+1]])
+        # Each row is start, end pair
+        split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
+        split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
+        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
     mi, embed_dim_vec = [], []
     subsets = np.hstack([np.repeat(x, x) for x in split_sizes]) # run length encoding of split_sizes
     # Loop over subsets
     for subset_idx, embed_dim in product(range(len(subsets)), embed_range):
-        inds = indices[subset_idx]
         this_params = {**params, 'embed_dim': embed_dim}
         # Train model
-        mis_test, train_id = train_model_no_eval(dataset, this_params, subset_indices=inds)
+        mis_test, train_id, indices = train_model_no_eval(dataset, this_params, subset_times=split_times[subset_idx,:], return_indices=True)
         with torch.no_grad():
             # Retrieve model, run inference to get MI value
             mod = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
-            mi.append(- mod(dataset.X[inds,:,:,:], dataset.Y[inds,:,:,:]).detach().cpu().numpy())
+            mi.append(- mod(dataset.X[indices,:,:], dataset.Y[indices,:,:]).detach().cpu().numpy())
             embed_dim_vec.append(embed_dim)
     mi = np.array(mi)
     embed_dim_vec = np.array(embed_dim_vec)
