@@ -490,6 +490,7 @@ def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
         # Train model
         mis_test, train_id, indices = train_model_no_eval(dataset, params, subset_times=split_times[i,:], return_indices=True)
         mod = retrieve_best_model(mis_test, params, train_id=train_id, remove_all=True)
+        dataset.move_data_to_windows(time_offset=0)
         # Run model inference to get MI value
         with torch.no_grad():
             mi[i] = - mod(dataset.X[indices,:,:], dataset.Y[indices,:,:]).detach().cpu().numpy()
@@ -525,6 +526,7 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
         with torch.no_grad():
             # Retrieve model, run inference to get MI value
             mod = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
+            dataset.move_data_to_windows(time_offset=0)
             mi.append(- mod(dataset.X[indices,:,:], dataset.Y[indices,:,:]).detach().cpu().numpy())
             embed_dim_vec.append(embed_dim)
     mi = np.array(mi)
