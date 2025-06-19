@@ -462,8 +462,6 @@ def log_prob_gaussian(x):
     return torch.sum(torch.distributions.Normal(0., 1.).log_prob(x), -1)
 
 
-# NOTE: Due to time_offsets applied during training, subsets will not be completely independent.
-# Subsets will overap on window edges
 
 def subsample_MI(dataset, params, split_sizes=np.arange(1,6)):
     """
@@ -534,6 +532,24 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     return subsets, mi, embed_dim_vec
 
 
+def precision_rounding(precision_levels, dataset, model):
+    """
+    Run spike timing precision analysis
+    This version uses rounding instead of added noise
+    Args:
+        precision_levels: Range of precision levels to run over, in units of seconds
+        dataset: TimeWindowDataset
+        model: Trained model to run inference with
+    Returns:
+        mi: Matrix of mutual information at each noise level
+    """
+    with torch.no_grad():
+        mi = np.zeros((len(precision_levels)))
+        for i, prec_level in enumerate(precision_levels):
+            dataset.apply_precision(prec_level)
+            mi[i] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+        return mi
+
 def precision(noise_levels, dataset, model, n_repeats=3):
     """
     Run spike timing precision analysis, to get precision curve
@@ -557,90 +573,6 @@ def precision(noise_levels, dataset, model, n_repeats=3):
             for j1 in range(n_repeats):
                 dataset.apply_noise(prec_noise_amp)
                 mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
-        return mi
-
-def precision_parallel(noise_levels, dataset, model, n_repeats=3):
-    """
-    More memory-efficient precision approach: batch multiple noise realizations together
-    
-    Args:
-        noise_levels: Range of noise levels to run over
-        dataset: Your TimeWindowDataset instance  
-        model: Trained DSIB model
-        n_repeats: How many times per noise level to repeat
-        batch_size: How many noise realizations to process simultaneously
-    Returns:
-        mi: Matrix of mutual information values
-    """
-    # Set multiprocessing start method
-    if mp.get_start_method(allow_none=True) != 'spawn':
-        mp.set_start_method('spawn', force=True)
-    
-    with torch.no_grad():
-        mi = np.zeros((len(noise_levels), n_repeats))
-
-        for j0, prec_noise_amp in enumerate(noise_levels):
-            # Only run zero noise once, nothing changes between runs
-            if prec_noise_amp == 0:
-                dataset.apply_noise(prec_noise_amp)
-                mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
-                continue
-            # Process repeats all at once to manage memory
-            # Create batch of noisy versions
-            # Shape: [batch_size, n_windows, n_neurons, max_spikes]
-            X_expanded = dataset.Xmain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
-            Y_expanded = dataset.Ymain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
-            # Generate, apply noise
-            for b in range(n_repeats):
-                noise_x = torch.empty_like(dataset.noise_buffer_x).uniform_(0, prec_noise_amp)
-                X_expanded[b][dataset.spike_mask_x] = dataset.Xmain[dataset.spike_mask_x] + noise_x
-            # Run model on entire batch at once
-            mi_batch = - model(
-                X_expanded.view(-1, dataset.X.shape[1], dataset.X.shape[2]), 
-                Y_expanded.view(-1, dataset.Y.shape[1], dataset.Y.shape[2])
-            ).detach().cpu().numpy()
-            # Store results
-            mi[j0, :] = mi_batch
-        return mi
-
-def precision_vectorized(noise_levels, dataset, model, n_repeats=3):
-    """
-    More memory-efficient precision approach: batch multiple noise realizations together
-    
-    Args:
-        noise_levels: Range of noise levels to run over
-        dataset: Your TimeWindowDataset instance  
-        model: Trained DSIB model
-        n_repeats: How many times per noise level to repeat
-        batch_size: How many noise realizations to process simultaneously
-    Returns:
-        mi: Matrix of mutual information values
-    """
-    with torch.no_grad():
-        mi = np.zeros((len(noise_levels), n_repeats))
-
-        for j0, prec_noise_amp in enumerate(noise_levels):
-            # Only run zero noise once, nothing changes between runs
-            if prec_noise_amp == 0:
-                dataset.apply_noise(prec_noise_amp)
-                mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
-                continue
-            # Process repeats all at once to manage memory
-            # Create batch of noisy versions
-            # Shape: [batch_size, n_windows, n_neurons, max_spikes]
-            X_expanded = dataset.Xmain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
-            Y_expanded = dataset.Ymain.detach().unsqueeze(0).repeat(n_repeats, 1, 1, 1)
-            # Generate, apply noise
-            for b in range(n_repeats):
-                noise_x = torch.empty_like(dataset.noise_buffer_x).uniform_(0, prec_noise_amp)
-                X_expanded[b][dataset.spike_mask_x] = dataset.Xmain[dataset.spike_mask_x] + noise_x
-            # Run model on entire batch at once
-            mi_batch = - model(
-                X_expanded.view(-1, dataset.X.shape[1], dataset.X.shape[2]), 
-                Y_expanded.view(-1, dataset.Y.shape[1], dataset.Y.shape[2])
-            ).detach().cpu().numpy()
-            # Store results
-            mi[j0, :] = mi_batch
         return mi
 
 
