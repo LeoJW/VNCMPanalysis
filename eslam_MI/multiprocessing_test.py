@@ -1,6 +1,6 @@
 import sys
 import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 import torch
 import warnings
@@ -84,6 +84,7 @@ def train_models_worker(chunk_with_id):
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
+        
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
@@ -100,6 +101,8 @@ def train_models_worker(chunk_with_id):
     process_id, chunk = chunk_with_id
     results = []
     for condition in chunk:
+        synchronize()
+        chunktic = time.time()
         # Unpack chunk
         hidden_dim, window_size = condition
         # Enforce types (fuck python)
@@ -124,6 +127,8 @@ def train_models_worker(chunk_with_id):
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
         # Save results
         results.append({key : [model_path, thistime, this_params]})
+        synchronize()
+        print(f'-------------- Chunk took {time.time() - chunktic}')
     return results
 
 
@@ -131,7 +136,7 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 10
+    n_processes = 5
     save_every_n_iterations = 5
     precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.15), 100)))
 
@@ -140,7 +145,8 @@ if __name__ == '__main__':
     # window_size_range = np.logspace(np.log10(0.02), np.log10(1.0), 10)
     hidden_dim_range = np.array([32, 64, 128])
     window_size_range = np.logspace(np.log10(0.05), np.log10(1.0), 20)
-    main_iterator = product(hidden_dim_range, window_size_range)
+    # main_iterator = product(hidden_dim_range, window_size_range)
+    main_iterator = product(np.repeat(hidden_dim_range[0], 3), np.repeat(window_size_range[0], 20))
     # Split into chunks, add process id
     chunks = np.array_split(list(main_iterator), n_processes)
     chunks_with_ids = [(i, chunk) for i,chunk in enumerate(chunks)]

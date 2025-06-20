@@ -47,7 +47,7 @@ def sample_with_minimum_distance(n=40, k=4, d=10):
 
 
 
-def train_model_no_eval(dataset, params, device=device, subset_times=None, return_indices=False):
+def train_model_no_eval(dataset, params, device=device, subset_times=None, return_indices=False, verbose=True):
     """
     Generalized training function for DSIB and DVSIB models with early stopping.
     Version that does not run evaluation! Skimps on that to save time, returns only mi values from test
@@ -147,7 +147,9 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
             estimator_ts = estimator_ts.to('cpu').detach().numpy()
             estimates_mi_test.append(estimator_ts)
             # Shuffle time offset of data each epoch
-            dataset.move_data_to_windows(time_offset=np.random.uniform(high=dataset.window_size))
+            # Offsets applied after 5 epochs, and offset amount linearly increases to window size after 20 epochs
+            max_offset = np.clip(np.abs(epoch - 5) / 10, 0, 1) * dataset.window_size
+            dataset.move_data_to_windows(time_offset=np.random.uniform(high=max_offset))
             # Get new training set indices (things shift around after applying time offset)
             test_block_inds = np.searchsorted(dataset.window_times, test_block_times) - 1
             # If subsetting, generate new subset indices from subset times
@@ -174,7 +176,8 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
                 train_indices = use_ind[train_indices]
             train_indices = torch.tensor(train_indices, dtype=int).to(device)
         
-        print(f"Epoch: {epoch+1}, {model_name}, test: {estimator_ts}", flush=True)
+        if verbose:
+            print(f"Epoch: {epoch+1}, {model_name}, test: {estimator_ts}", flush=True)
         # Save snapshot of model
         torch.save(
             model.state_dict(), 
