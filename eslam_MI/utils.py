@@ -38,12 +38,11 @@ class mlp(nn.Module):
         # Flattening layer
         seq.append(nn.Flatten())
         # Input layer
-        seq.append(nn.Linear(in_dim, params['hidden_dim']))
+        seq.append(nn.Linear(in_dim, params['hidden_dim'], bias=params['use_bias']))
         seq.append(params['activation']())
         # Hidden layers
         for _ in range(params['layers']):
             layer = nn.Linear(params['hidden_dim'], params['hidden_dim'])
-            nn.init.xavier_uniform_(layer.weight)  # Xavier initialization for hidden layers
             seq.append(layer)
             seq.append(params['activation']())
         # Connect all together before the output

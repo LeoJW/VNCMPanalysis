@@ -82,7 +82,8 @@ def train_models_worker(chunk_with_id):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 256, # Number of windows estimator processes at any time
-        'learning_rate': 5e-3,
+        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
+        'learning_rate': 2e-3,
         'patience': 50,
         'min_delta': 0.001,
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
@@ -92,7 +93,8 @@ def train_models_worker(chunk_with_id):
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
-        'activation': nn.LeakyReLU,
+        'activation': nn.PReLU,#nn.LeakyReLU,
+        # 'use_bias': True, # Whether to use bias on first layer
         # 'layers': 3,
         # 'hidden_dim': 64,
         # 'embed_dim': 6,
@@ -108,30 +110,32 @@ def train_models_worker(chunk_with_id):
         synchronize()
         chunktic = time.time()
         # Unpack chunk
-        run_on, hidden_dim, window_size, layers, embed_dim, no_spike_val, use_ISI, rep = condition
+        run_on, hidden_dim, window_size, layers, embed_dim, use_ISI, use_bias, rep = condition
         # Enforce types (fuck python)
         hidden_dim = int(hidden_dim)
         window_size = float(window_size)
         layers = int(layers)
         embed_dim = int(embed_dim)
-        no_spike_val = int(no_spike_val)
         use_ISI = True if use_ISI == "True" else False
+        use_bias = True if use_bias == "True" else False
         rep = int(rep)
         # Make condition key
-        key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_nospikeval_{no_spike_val}_ISI_{use_ISI}_rep_{rep}_pid_{process_id}'
+        key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_ISI_{use_ISI}_bias_{use_bias}_rep_{rep}_pid_{process_id}'
         print(key)
         # Load dataset
         select = [10] if run_on == "neuron" else None
         ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size, 
-            neuron_label_filter=1, select_x=select, no_spike_value=no_spike_val, use_ISI=use_ISI)
+            neuron_label_filter=1, select_x=select, use_ISI=use_ISI)
         # Set params
         this_params = {**params, 
             'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
-            'window_size': window_size, 'hidden_dim': hidden_dim,
-            'layers': layers, 'embed_dim': embed_dim,
+            'window_size': window_size, 
+            'hidden_dim': hidden_dim,
+            'layers': layers, 
+            'embed_dim': embed_dim,
             'run_on': run_on, 
-            'no_spike_value': no_spike_val,
-            'use_ISI': use_ISI}
+            'use_ISI': use_ISI,
+            'use_bias': use_bias}
         # Train model, keep only best one based on early stopping
         synchronize()
         tic = time.time()
@@ -151,20 +155,17 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 10
-    save_every_n_iterations = 5
-    precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.6), 200)))
+    n_processes = 12
+    save_every_n_iterations = 20
+    precision_levels = np.logspace(np.log10(0.0001), np.log10(1.0), 250)
 
     # Package together main iterators
-    # hidden_dim_range = np.array([32, 64, 128, 256, 512])
-    window_size_range = np.logspace(np.log10(0.02), np.log10(0.5), 10)
-    # layers_range = np.array([3,4,5,6,7])
-    # embed_dim_range = np.array([1,2,6,10,14])
-    hidden_dim_range = np.array([32])
-    layers_range = np.array([3])
-    embed_dim_range = np.array([6])
-    no_spike_value_range = np.array([0])
+    hidden_dim_range = np.array([32, 64, 128, 256, 512])
+    window_size_range = np.logspace(np.log10(0.02), np.log10(1.0), 10)
+    layers_range = np.array([3,4,5,6,7])
+    embed_dim_range = np.array([1,2,6,10,14])
     use_ISI_range = [False, True]
+    use_bias_range = [False, True]
     repeats_range = np.arange(1)
 
     main_iterator = product(
@@ -173,8 +174,8 @@ if __name__ == '__main__':
         window_size_range, 
         layers_range, 
         embed_dim_range, 
-        no_spike_value_range, 
         use_ISI_range,
+        use_bias_range,
         repeats_range)
 
     # Split into chunks, add process id
@@ -201,12 +202,12 @@ if __name__ == '__main__':
     # Run inference serially on resulting models (as inference can take advantage of whole GPU)
     iteration_count = 0
     for key, single_result in results.items():
-        # Unpack this result
+        # Unpack this result. For some reason types don't change coming out of processes like they do going in
         model_path, this_time_per_epoch, this_params = single_result
         # Load dataset
         select = [10] if this_params['run_on'] == "neuron" else None
         ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=this_params['window_size'], 
-            neuron_label_filter=1, select_x=select, no_spike_value=this_params['no_spike_value'], use_ISI=this_params['use_ISI'])
+            neuron_label_filter=1, select_x=select, use_ISI=this_params['use_ISI'])
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)

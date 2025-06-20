@@ -64,7 +64,8 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_network_arch_file!(df, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task)_hour_13.h5"), task)
+    # read_network_arch_file!(df, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task)_hour_14.h5"), task)
+    read_network_arch_file!(df, joinpath(data_dir, "2025-06-19_network_comparison_PACE_task_$(task).h5"), task)
 end
 
 # Remove obvious failures, convert units
@@ -175,7 +176,7 @@ dt = @pipe df |>
 @subset(_, :neuron .== "neuron") #|> 
 # @subset(_, :nospikeval .== -1)
 
-# coldict = Dict("True" => 1, "False" => 2)
+coldict = Dict("True" => 1, "False" => 2)
 
 f = Figure()
 for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
@@ -185,10 +186,12 @@ for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
     # ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
     for row in eachrow(ggdf)
         curve = row.precision_curve
-        lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
-            color=Makie.wong_colors()[round(Int, row.nospikeval + 2)])
+        # lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
+        lines!(ax, row.precision_noise[2:end], curve[3:end], 
+            color=Makie.wong_colors()[coldict[row.ISI]])
     end
-    ylims!(ax, 0, maximum(dt.mi ./ dt.window))
+    # ylims!(ax, 0, maximum(dt.mi ./ dt.window))
+    ylims!(ax, 0, maximum(dt.mi))
     vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)
     # end
 end
@@ -212,28 +215,6 @@ for row in eachrow(dt)
 end
 ylims!(ax, 0, nothing)
 f
-
-## Theoretical max receptive field calculations
-RFs, RFdlin, RFdmult, RFdexp = 1, 1, 1, 1
-k = 3
-layers = 7
-s = vcat(1, fill(2, layers-1))
-sc = cumsum(s)
-dlin = collect(1:layers) # Linear dilation
-dmult = 2 .* collect(1:layers) # Multiplying dilation
-dexp = 2 .^ collect(0:layers-1) # Exponential dilation
-for i in 1:layers
-    println("------ Layer $(i) -------")
-    RFs = RFs + (k - 1) * sc[i]
-    println("Standard : $(RFs)")
-    RFdlin = RFdlin + (k - 1) * dlin[i] * sc[i]
-    RFdmult = RFdmult + (k - 1) * dmult[i] * sc[i]
-    RFdexp = RFdexp + (k - 1) * dexp[i] * sc[i]
-    println("Linear Dilation : $(RFdlin)")
-    println("Multiplicative Dilation : $(RFdmult)")
-    println("Exponential Dilation : $(RFdexp)")
-end
-
 
 ## ------------------------------------ Subsampling results ------------------------------------
 

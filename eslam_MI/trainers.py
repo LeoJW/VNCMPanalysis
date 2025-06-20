@@ -68,9 +68,11 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
     os.makedirs(params['model_cache_dir'], exist_ok=True)
     train_id = model_name + '_' + f'dz-{params["embed_dim"]}_' + f'bs-{params["window_size"]}_' + str(uuid.uuid4())
     # Set up batch size if not provided
-    # Uses nearest power of 2 that gives 5 seconds of data per batch
+    # Uses nearest power of 2 that gives default 10 seconds of data per batch
+    if 's_per_batch' not in params:
+        params['s_per_batch'] = 10
     if 'batch_size' not in params:
-        params['batch_size'] = int(2**np.round(np.log2(5 / params['window_size'])))
+        params['batch_size'] = int(2**np.round(np.log2(params['s_per_batch'] / params['window_size'])))
 
     # Deal with subsetting
     if subset_times is not None:
