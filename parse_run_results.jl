@@ -47,11 +47,11 @@ function read_network_arch_file!(df, file, task)
     for key in keys(time_per_epoch)
         keysplit = split(key, "_")[2:2:end]
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
-        vals[6] = task
+        # vals[6] = task
         push!(thisdf, vcat(
             vals,
             time_per_epoch[key], 
-            precision_curves[key][2] .* log2(exp(1)), 
+            precision_curves[key][1] .* log2(exp(1)), 
             1,
             # find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key] .* log2(exp(1))),
             [precision_curves[key] .* log2(exp(1))],
@@ -64,7 +64,7 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_network_arch_file!(df, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task).h5"), task)
+    read_network_arch_file!(df, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task)_hour_13.h5"), task)
 end
 
 # Remove obvious failures, convert units
@@ -169,10 +169,13 @@ draw(_)#, axis=(; xscale=log10))
 ##
 dt = @pipe df |> 
 # # @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
-@subset(_, :embed .== 6) |> 
-@subset(_, :layers .== 4) |> 
+# @subset(_, :embed .== 6) |> 
+# @subset(_, :layers .== 4) |> 
 # @transform(_, :n_params = :hiddendim .* :layers) |> 
-@subset(_, :neuron .== "neuron")
+@subset(_, :neuron .== "neuron") #|> 
+# @subset(_, :nospikeval .== -1)
+
+# coldict = Dict("True" => 1, "False" => 2)
 
 f = Figure()
 for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
@@ -182,8 +185,8 @@ for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
     # ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
     for row in eachrow(ggdf)
         curve = row.precision_curve
-        lines!(ax, row.precision_noise[2:end], curve[2:end] ./ row.window, 
-            color=log.(row.hiddendim), colorrange=log.(extrema(dt.hiddendim)))
+        lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
+            color=Makie.wong_colors()[round(Int, row.nospikeval + 2)])
     end
     ylims!(ax, 0, maximum(dt.mi ./ dt.window))
     vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)

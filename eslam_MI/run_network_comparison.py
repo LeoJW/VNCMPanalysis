@@ -52,6 +52,7 @@ if sys.platform == 'linux':
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
+    machine = 'PACE'
 # Home version
 else:
     main_dir = os.getcwd()
@@ -60,15 +61,16 @@ else:
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
     os.makedirs(result_dir, exist_ok=True)
+    machine = 'HOME'
 
 # Case where script got an input argument, means multiple separate runs
 if len(sys.argv) > 1: 
     task_id = sys.argv[1]
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + f'task_{task_id}' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_' + machine + '_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_' + machine + '_' + '.h5')
 # If file exists add hour to filename
 if os.path.isfile(filename):
     filename = filename[:-3] + '_hour_' + datetime.today().strftime('%H') + '.h5'
@@ -79,7 +81,7 @@ def train_models_worker(chunk_with_id):
         # Optimizer parameters (for training)
         'epochs': 300,
         # 'window_size': 0.05,
-        'batch_size': 256, # Number of windows estimator processes at any time
+        # 'batch_size': 256, # Number of windows estimator processes at any time
         'learning_rate': 5e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -113,7 +115,7 @@ def train_models_worker(chunk_with_id):
         layers = int(layers)
         embed_dim = int(embed_dim)
         no_spike_val = int(no_spike_val)
-        use_ISI = bool(use_ISI)
+        use_ISI = True if use_ISI == "True" else False
         rep = int(rep)
         # Make condition key
         key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_nospikeval_{no_spike_val}_ISI_{use_ISI}_rep_{rep}_pid_{process_id}'
@@ -149,7 +151,7 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 12
+    n_processes = 10
     save_every_n_iterations = 5
     precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.6), 200)))
 
@@ -158,10 +160,10 @@ if __name__ == '__main__':
     window_size_range = np.logspace(np.log10(0.02), np.log10(0.5), 10)
     # layers_range = np.array([3,4,5,6,7])
     # embed_dim_range = np.array([1,2,6,10,14])
-    hidden_dim_range = np.array([32, 64])
-    layers_range = np.array([3, 4])
+    hidden_dim_range = np.array([32])
+    layers_range = np.array([3])
     embed_dim_range = np.array([6])
-    no_spike_value_range = np.array([0, -1])
+    no_spike_value_range = np.array([0])
     use_ISI_range = [False, True]
     repeats_range = np.arange(1)
 
