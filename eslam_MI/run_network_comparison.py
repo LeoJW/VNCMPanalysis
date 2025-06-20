@@ -65,10 +65,10 @@ else:
 if len(sys.argv) > 1: 
     task_id = sys.argv[1]
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_singlemuscle_' + f'task_{task_id}' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_singlemuscle_' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + '.h5')
 
 # Define worker function
 def train_models_worker(chunk_with_id):
