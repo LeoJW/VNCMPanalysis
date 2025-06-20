@@ -4,13 +4,13 @@ import os
 import torch
 import warnings
 import time
+from datetime import datetime
 
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 import torchvision.transforms.functional as TF
 import numpy as np
-import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
 import torch.optim as optim
@@ -69,6 +69,9 @@ if len(sys.argv) > 1:
 # Otherwise just a single run
 else:
     filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + '.h5')
+# If file exists add hour to filename
+if os.path.isfile(filename):
+    filename = filename[:-3] + '_hour_' + datetime.today().strftime('%H') + '.h5'
 
 # Define worker function
 def train_models_worker(chunk_with_id):
@@ -83,8 +86,7 @@ def train_models_worker(chunk_with_id):
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        # 'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
-        'epochs_till_max_shift': 0, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
@@ -104,25 +106,30 @@ def train_models_worker(chunk_with_id):
         synchronize()
         chunktic = time.time()
         # Unpack chunk
-        run_on, hidden_dim, window_size, layers, embed_dim, rep = condition
+        run_on, hidden_dim, window_size, layers, embed_dim, no_spike_val, use_ISI, rep = condition
         # Enforce types (fuck python)
         hidden_dim = int(hidden_dim)
         window_size = float(window_size)
         layers = int(layers)
         embed_dim = int(embed_dim)
+        no_spike_val = int(no_spike_val)
+        use_ISI = bool(use_ISI)
         rep = int(rep)
         # Make condition key
-        key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_rep_{rep}_pid_{process_id}'
+        key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_nospikeval_{no_spike_val}_ISI_{use_ISI}_rep_{rep}_pid_{process_id}'
         print(key)
         # Load dataset
         select = [10] if run_on == "neuron" else None
-        ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size, neuron_label_filter=1, select_x=select)
+        ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size, 
+            neuron_label_filter=1, select_x=select, no_spike_value=no_spike_val, use_ISI=use_ISI)
         # Set params
         this_params = {**params, 
             'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
             'window_size': window_size, 'hidden_dim': hidden_dim,
             'layers': layers, 'embed_dim': embed_dim,
-            'run_on': run_on}
+            'run_on': run_on, 
+            'no_spike_value': no_spike_val,
+            'use_ISI': use_ISI}
         # Train model, keep only best one based on early stopping
         synchronize()
         tic = time.time()
@@ -154,9 +161,19 @@ if __name__ == '__main__':
     hidden_dim_range = np.array([32, 64])
     layers_range = np.array([3, 4])
     embed_dim_range = np.array([6])
+    no_spike_value_range = np.array([0, -1])
+    use_ISI_range = [False, True]
     repeats_range = np.arange(1)
 
-    main_iterator = product(["neuron", "all"], hidden_dim_range, window_size_range, layers_range, embed_dim_range, repeats_range)
+    main_iterator = product(
+        ["neuron", "all"], 
+        hidden_dim_range, 
+        window_size_range, 
+        layers_range, 
+        embed_dim_range, 
+        no_spike_value_range, 
+        use_ISI_range,
+        repeats_range)
 
     # Split into chunks, add process id
     chunks = np.array_split(list(main_iterator), n_processes)
@@ -186,7 +203,8 @@ if __name__ == '__main__':
         model_path, this_time_per_epoch, this_params = single_result
         # Load dataset
         select = [10] if this_params['run_on'] == "neuron" else None
-        ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=this_params['window_size'], neuron_label_filter=1, select_x=select)
+        ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), window_size=this_params['window_size'], 
+            neuron_label_filter=1, select_x=select, no_spike_value=this_params['no_spike_value'], use_ISI=this_params['use_ISI'])
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)

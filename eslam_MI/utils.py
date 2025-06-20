@@ -544,10 +544,12 @@ def precision_rounding(precision_levels, dataset, model):
         mi: Matrix of mutual information at each noise level
     """
     with torch.no_grad():
-        mi = np.zeros((len(precision_levels)))
+        # Will always do zero-noise MI
+        mi = np.zeros((len(precision_levels)+1))
+        mi[0] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
         for i, prec_level in enumerate(precision_levels):
             dataset.apply_precision(prec_level)
-            mi[i] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+            mi[i+1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
         return mi
 
 def precision(noise_levels, dataset, model, n_repeats=3):

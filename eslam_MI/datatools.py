@@ -59,6 +59,7 @@ class TimeWindowDataset(Dataset):
     """
     def __init__(self, base_name, window_size, 
             no_spike_value=0, time_offset=0.0,
+            use_ISI=False,
             sample_rate=30000, neuron_label_filter=None,
             select_x=None, select_y=None,
             check_activity=False):
@@ -67,12 +68,14 @@ class TimeWindowDataset(Dataset):
             batch_size (int): Size of each window
         """
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
+        
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
         if select_x is not None:
             self.Xtimes = [self.Xtimes[i] for i in select_x]
         if select_y is not None:
             self.Ytimes = [self.Ytimes[i] for i in select_y]
         
+        self.use_ISI = use_ISI
         self.window_size = window_size
         self.no_spike_value = no_spike_value
         
@@ -155,7 +158,7 @@ class TimeWindowDataset(Dataset):
         # This is by far the slowest part of this whole function!
         window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
         window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
-        # Find max number of spikes per chunk for X and Y, preallocate. 
+        # Find max possible number of spikes per window for X and Y, preallocate. 
         # This MUST only be done once, so that network size is consistent as windows get shifted
         if not hasattr(self, 'max_neuron'):
             self.max_neuron = np.max(np.array([max_events_in_window(x, self.window_size) for x in self.Xtimes]))
@@ -164,12 +167,26 @@ class TimeWindowDataset(Dataset):
         Xmain = np.full((self.n_windows, len(self.Xtimes), self.max_neuron), self.no_spike_value, dtype=np.float32)
         Ymain = np.full((self.n_windows, len(self.Ytimes), self.max_muscle), self.no_spike_value, dtype=np.float32)
         # Loop down each neuron, muscle, assign data to main arrays
-        for i in range(len(self.Xtimes)):
-            column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
-            Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
-        for i in range(len(self.Ytimes)):
-            column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
-            Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
+        if self.use_ISI:
+            for i in range(len(self.Xtimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
+                firstval = self.Xtimes[i][0] - self.window_times[window_inds_x[i]][0]
+                Xmain[window_inds_x[i],i,column_inds] = np.insert(np.diff(self.Xtimes[i] - self.window_times[window_inds_x[i]]), 0, firstval)
+                first = column_inds == 0
+                Xmain[window_inds_x[i][first], i, column_inds[first]] = self.Xtimes[i][first] - self.window_times[window_inds_x[i][first]]
+            for i in range(len(self.Ytimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
+                firstval = self.Ytimes[i][0] - self.window_times[window_inds_y[i]][0]
+                Ymain[window_inds_y[i],i,column_inds] = np.insert(np.diff(self.Ytimes[i] - self.window_times[window_inds_y[i]]), 0, firstval)
+                first = column_inds == 0
+                Ymain[window_inds_y[i][first], i, column_inds[first]] = self.Ytimes[i][first] - self.window_times[window_inds_y[i][first]]
+        else:    
+            for i in range(len(self.Xtimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
+                Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
+            for i in range(len(self.Ytimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
+                Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
         # Trim windows that are too short to be valid
         Xmain = Xmain[self.valid_window,:,:]
         Ymain = Ymain[self.valid_window,:,:]
