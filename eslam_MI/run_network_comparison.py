@@ -65,10 +65,10 @@ else:
 if len(sys.argv) > 1: 
     task_id = sys.argv[1]
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + f'task_{task_id}' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_singlemuscle_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_network_comparison_PACE_singlemuscle_' + '.h5')
 
 # Define worker function
 def train_models_worker(chunk_with_id):
@@ -83,7 +83,8 @@ def train_models_worker(chunk_with_id):
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        # 'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 0, # Number of epochs until random shifting is at max
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
@@ -143,13 +144,16 @@ if __name__ == '__main__':
     # Main options: How many processes to run in training, how often to save, etc
     n_processes = 12
     save_every_n_iterations = 5
-    precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.15), 100)))
+    precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.6), 200)))
 
     # Package together main iterators
-    hidden_dim_range = np.array([32, 64, 128, 256, 512])
-    window_size_range = np.logspace(np.log10(0.02), np.log10(1.0), 10)
-    layers_range = np.array([3,4,5,6,7])
-    embed_dim_range = np.array([1,2,6,10,14])
+    # hidden_dim_range = np.array([32, 64, 128, 256, 512])
+    window_size_range = np.logspace(np.log10(0.02), np.log10(0.5), 10)
+    # layers_range = np.array([3,4,5,6,7])
+    # embed_dim_range = np.array([1,2,6,10,14])
+    hidden_dim_range = np.array([32, 64])
+    layers_range = np.array([3, 4])
+    embed_dim_range = np.array([6])
     repeats_range = np.arange(1)
 
     main_iterator = product(["neuron", "all"], hidden_dim_range, window_size_range, layers_range, embed_dim_range, repeats_range)

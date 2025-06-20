@@ -148,7 +148,10 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
             estimates_mi_test.append(estimator_ts)
             # Shuffle time offset of data each epoch
             # Offsets applied after 5 epochs, and offset amount linearly increases to window size after 20 epochs
-            max_offset = np.clip(np.abs(epoch - 5) / params['epochs_till_max_shift'], 0, 1) * dataset.window_size
+            if params['epochs_till_max_shift'] == 0:
+                max_offset = dataset.window_size
+            else:
+                max_offset = np.clip(np.abs(epoch - 5) / params['epochs_till_max_shift'], 0, 1) * dataset.window_size
             dataset.move_data_to_windows(time_offset=np.random.uniform(high=max_offset))
             # Get new training set indices (things shift around after applying time offset)
             test_block_inds = np.searchsorted(dataset.window_times, test_block_times) - 1
