@@ -82,7 +82,7 @@ def train_models_worker(chunk_with_id):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 256, # Number of windows estimator processes at any time
-        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
+        's_per_batch': 30, # Alternatively specify seconds of data a batch should be
         'learning_rate': 2e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -93,7 +93,8 @@ def train_models_worker(chunk_with_id):
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
-        'activation': nn.PReLU,#nn.LeakyReLU,
+        # 'activation': nn.PReLU,#nn.LeakyReLU,
+        # 'linear_last_layer': True,
         # 'use_bias': True, # Whether to use bias on first layer
         # 'layers': 3,
         # 'hidden_dim': 64,
@@ -110,7 +111,7 @@ def train_models_worker(chunk_with_id):
         synchronize()
         chunktic = time.time()
         # Unpack chunk
-        run_on, hidden_dim, window_size, layers, embed_dim, use_ISI, use_bias, rep = condition
+        run_on, hidden_dim, window_size, layers, embed_dim, use_ISI, use_bias, linear_last, activation_str, rep = condition
         # Enforce types (fuck python)
         hidden_dim = int(hidden_dim)
         window_size = float(window_size)
@@ -118,9 +119,15 @@ def train_models_worker(chunk_with_id):
         embed_dim = int(embed_dim)
         use_ISI = True if use_ISI == "True" else False
         use_bias = True if use_bias == "True" else False
+        linear_last = True if linear_last == "True" else False
+        activation = getattr(nn, activation_str)
         rep = int(rep)
-        # Make condition key
-        key = f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_embed_{embed_dim}_ISI_{use_ISI}_bias_{use_bias}_rep_{rep}_pid_{process_id}'
+        # Make condition key (hideous but it works)
+        key = (
+            f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_'
+            f'embed_{embed_dim}_ISI_{use_ISI}_bias_{use_bias}_linearlast_{linear_last}_activation_{activation_str}_'
+            f'rep_{rep}_pid_{process_id}'
+        )
         print(key)
         # Load dataset
         select = [10] if run_on == "neuron" else None
@@ -135,7 +142,9 @@ def train_models_worker(chunk_with_id):
             'embed_dim': embed_dim,
             'run_on': run_on, 
             'use_ISI': use_ISI,
-            'use_bias': use_bias}
+            'use_bias': use_bias,
+            'linear_last_layer': linear_last, 
+            'activation': activation}
         # Train model, keep only best one based on early stopping
         synchronize()
         tic = time.time()
@@ -164,8 +173,10 @@ if __name__ == '__main__':
     window_size_range = np.logspace(np.log10(0.02), np.log10(1.0), 10)
     layers_range = np.array([3,4,5,6,7])
     embed_dim_range = np.array([1,2,6,10,14])
-    use_ISI_range = [False, True]
+    use_ISI_range = [True]
     use_bias_range = [False, True]
+    linear_last_range = [False, True]
+    activation_range = ["LeakyReLU", "PReLU"]
     repeats_range = np.arange(1)
 
     main_iterator = product(
@@ -176,6 +187,8 @@ if __name__ == '__main__':
         embed_dim_range, 
         use_ISI_range,
         use_bias_range,
+        linear_last_range, 
+        activation_range,
         repeats_range)
 
     # Split into chunks, add process id

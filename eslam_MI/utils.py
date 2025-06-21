@@ -41,10 +41,12 @@ class mlp(nn.Module):
         seq.append(nn.Linear(in_dim, params['hidden_dim'], bias=params['use_bias']))
         seq.append(params['activation']())
         # Hidden layers
-        for _ in range(params['layers']):
+        for i in range(params['layers']):
             layer = nn.Linear(params['hidden_dim'], params['hidden_dim'])
             seq.append(layer)
             seq.append(params['activation']())
+            if params['linear_last_layer'] and (i == (params['layers']-1)):
+                del seq[-1]
         # Connect all together before the output
         self.base_network = nn.Sequential(*seq)
         # Output layer
