@@ -168,8 +168,8 @@ if __name__ == '__main__':
     # Package together main iterators
     hidden_dim_range = np.array([32, 64, 128, 256, 512])
     window_size_range = np.logspace(np.log10(0.02), np.log10(1.0), 10)
-    layers_range = np.array([3,4,5,6,7])
-    embed_dim_range = np.array([1,2,6,10,14])
+    layers_range = np.array([3,4,5,6])
+    embed_dim_range = np.array([1,2,4,8,12])
     use_ISI_range = [True]
     use_bias_range = [False, True]
     activation_range = ["LeakyReLU", "PReLU"]
