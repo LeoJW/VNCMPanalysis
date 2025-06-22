@@ -94,7 +94,6 @@ def train_models_worker(chunk_with_id):
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
         # 'activation': nn.PReLU,#nn.LeakyReLU,
-        # 'linear_last_layer': True,
         # 'use_bias': True, # Whether to use bias on first layer
         # 'layers': 3,
         # 'hidden_dim': 64,
