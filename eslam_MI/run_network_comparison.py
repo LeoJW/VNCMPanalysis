@@ -111,7 +111,7 @@ def train_models_worker(chunk_with_id):
         synchronize()
         chunktic = time.time()
         # Unpack chunk
-        run_on, hidden_dim, window_size, layers, embed_dim, use_ISI, use_bias, linear_last, activation_str, rep = condition
+        run_on, hidden_dim, window_size, layers, embed_dim, use_ISI, use_bias, activation_str, rep = condition
         # Enforce types (fuck python)
         hidden_dim = int(hidden_dim)
         window_size = float(window_size)
@@ -119,13 +119,12 @@ def train_models_worker(chunk_with_id):
         embed_dim = int(embed_dim)
         use_ISI = True if use_ISI == "True" else False
         use_bias = True if use_bias == "True" else False
-        linear_last = True if linear_last == "True" else False
         activation = getattr(nn, activation_str)
         rep = int(rep)
         # Make condition key (hideous but it works)
         key = (
             f'neuron_{run_on}_hiddendim_{hidden_dim}_window_{window_size}_layers_{layers}_'
-            f'embed_{embed_dim}_ISI_{use_ISI}_bias_{use_bias}_linearlast_{linear_last}_activation_{activation_str}_'
+            f'embed_{embed_dim}_ISI_{use_ISI}_bias_{use_bias}_activation_{activation_str}_'
             f'rep_{rep}_pid_{process_id}'
         )
         print(key)
@@ -143,7 +142,6 @@ def train_models_worker(chunk_with_id):
             'run_on': run_on, 
             'use_ISI': use_ISI,
             'use_bias': use_bias,
-            'linear_last_layer': linear_last, 
             'activation': activation}
         # Train model, keep only best one based on early stopping
         synchronize()
@@ -175,7 +173,6 @@ if __name__ == '__main__':
     embed_dim_range = np.array([1,2,6,10,14])
     use_ISI_range = [True]
     use_bias_range = [False, True]
-    linear_last_range = [False, True]
     activation_range = ["LeakyReLU", "PReLU"]
     repeats_range = np.arange(1)
 
@@ -187,7 +184,6 @@ if __name__ == '__main__':
         embed_dim_range, 
         use_ISI_range,
         use_bias_range,
-        linear_last_range, 
         activation_range,
         repeats_range)
 
