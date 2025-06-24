@@ -1,11 +1,25 @@
 using HDF5
+using CSV
 using Statistics
+using GLM
+using CairoMakie
 using GLMakie
 using AlgebraOfGraphics
 using DataFrames
 using DataFramesMeta
 using Pipe
 using SavitzkyGolay
+
+analysis_dir = @__DIR__
+data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
+dark_or_light = "light"
+if dark_or_light .== "light"
+    set_theme!()
+    fig_dir = joinpath(analysis_dir, "figs_light")
+else
+    set_theme!(theme_dark())
+    fig_dir = joinpath(analysis_dir, "figs_dark")
+end
 
 function find_precision(noise_levels, mi; lower_bound=5e-4)
     sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
@@ -30,8 +44,6 @@ function find_precision_threshold(noise_levels, mi)
     return noise_levels[findfirst(cross)]
 end
 
-analysis_dir = @__DIR__
-data_dir = joinpath(analysis_dir, "..", "localdata", "estimation_runs")
 
 function read_network_arch_file!(df, file, task)
     precision_noise = h5read(joinpath(data_dir, file), "dict_0")
@@ -47,7 +59,7 @@ function read_network_arch_file!(df, file, task)
     for key in keys(time_per_epoch)
         keysplit = split(key, "_")[2:2:end]
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
-        # vals[6] = task
+        vals[9] = task
         push!(thisdf, vcat(
             vals,
             time_per_epoch[key], 
@@ -64,8 +76,7 @@ end
 
 df = DataFrame()
 for task in 0:5
-    # read_network_arch_file!(df, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task)_hour_14.h5"), task)
-    read_network_arch_file!(df, joinpath(data_dir, "2025-06-19_network_comparison_PACE_task_$(task).h5"), task)
+    read_network_arch_file!(df, joinpath(data_dir, "2025-06-22_network_comparison_PACE_task_$(task).h5"), task)
 end
 
 # Remove obvious failures, convert units
@@ -73,36 +84,140 @@ end
 # @subset(_, :mi .> 0.0)
 # @transform(_, :mi = :mi .* log2(exp(1)))
 
-##
-
+# Save to CSV for R and other things
 @pipe df |> 
-# @subset(_, :neuron .== "all") |> 
-# @subset(_, :embed .== 10) |> 
-@transform(_, :mi = :mi ./ :window) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:time, :mi, color=:window, row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric) * 
-visual(Scatter)
-) |> 
-draw(_, axis=(; limits=(nothing, (0,maximum(df.mi ./ df.window)))))
+    select(_, Not(:precision_curve, :precision_noise)) |> 
+    CSV.write(joinpath(data_dir, "network_arch_comparison.csv"), _)
+
 
 ##
 
 @pipe df |> 
 @subset(_, :neuron .== "all") |> 
+@subset(_, :activation .== "PReLU") |> 
+@subset(_, :bias .== "False") |> 
 # @subset(_, :embed .== 10) |> 
 @transform(_, :mi = :mi ./ :window) |> 
 @transform(_, :window = :window .* 1000) |> 
 groupby(_, [:window, :embed, :hiddendim, :layers]) |> 
-combine(_, :mi => mean => :mi, :precision=>mean=>:precision) |> 
+combine(_, :mi => mean => :mi, :mi=>std=>:mi_sd, :precision=>mean=>:precision) |> 
+@transform(_, :milo = :mi .- :mi_sd, :mihi = :mi .+ :mi_sd) |> 
+@transform(_, :window = log10.(:window)) |> 
+# @transform(_, :window = string.(round.(Int, log10.(:window)))) |> 
+(
+AlgebraOfGraphics.data(_) *
+(mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", 
+    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed, dodge_x=:embed=>nonnumeric) * visual(Scatter) +
+    # row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * visual(Scatter) +
+mapping(:window=>"Window length (ms)", :milo, :mihi,
+    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed, dodge_x=:embed=>nonnumeric) * visual(Rangebars))
+    # row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * visual(Rangebars))
+) |> 
+draw(_, scales(DodgeX = (; width = 0.1)))#, axis=(; xscale=log10))
+
+
+##---------------- Activation, bias comparison figure
+CairoMakie.activate!()
+
+dt = @pipe df |> 
+@subset(_, :embed .== 8) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers, :bias, :activation, :neuron]) |> 
+combine(_, :mi => mean => :mi, :precision=>mean=>:precision)
+
+# All neurons
+f_all = @pipe dt |> 
+@subset(_, :neuron .== "all") |> 
 (
 AlgebraOfGraphics.data(_) *
 mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", 
-# mapping(:window=>"Window length (ms)", :precision=>"Precision (ms)", 
-    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * 
+    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, 
+    color=:bias=>"1st layer bias", marker=:activation=>"Activation function") * 
+visual(Scatter)
+)
+
+# Single neuron
+f_single = @pipe dt |> 
+@subset(_, :neuron .== "neuron") |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", 
+    row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, 
+    color=:bias=>"1st layer bias", marker=:activation=>"Activation function") * 
+visual(Scatter)
+)
+
+f = Figure(size=(1600, 650))
+draw!(f[1,1], f_all, axis=(; xscale=log10, ))
+figuregrid = draw!(f[1,2], f_single, axis=(; xscale=log10))
+legend!(f[1,3], figuregrid)
+
+for (letter_label, neuron_label, thisf) in zip(["A", "B"], ["All neurons", "Single neuron"], [f[1,1], f[1,2]])
+    layout = contents(thisf)[1]
+    Label(layout[1, 1, TopLeft()], letter_label,
+        fontsize = 26,
+        font = :bold,
+        padding = (0, 5, 5, 0),
+        halign = :right)
+    Label(layout[0,:], neuron_label, 
+        fontsize = 20, font=:bold, halign=:center)
+    rowgap!(layout, Relative(0.02))
+    colgap!(layout, Relative(0.01))
+end
+
+save(joinpath(fig_dir, "network_comparison", "activation_and_bias.pdf"), f)
+
+f
+GLMakie.activate!()
+
+## Does activation function matter?
+using HypothesisTests
+
+dt = @pipe df |> 
+    @transform(_, :mi = :mi ./ :window) |> 
+    groupby(_, [:neuron, :hiddendim, :window, :layers, :embed, :bias, :rep, :activation]) |> 
+    combine(_, :mi => mean => :mi) |> 
+    unstack(_, [:neuron, :hiddendim, :window, :layers, :embed, :bias, :rep], :activation, :mi) |> 
+    @transform(_, :act_dif = :LeakyReLU .- :PReLU) |> 
+    disallowmissing(_)
+
+f, ax, hs = hist(dt.act_dif, normalization=:pdf)
+
+OneSampleTTest(dt.LeakyReLU, dt.PReLU)
+
+dt = @pipe df |> 
+    @transform(_, :mi = :mi ./ :window) |> 
+    @transform(_, :window = :window .* 1000) |> 
+    @subset(_, :window .< 100) |> 
+    @subset(_, :bias .== "False") |> 
+    groupby(_, [:neuron, :hiddendim, :window, :layers, :embed, :bias, :rep, :activation]) |> 
+    combine(_, :mi => mean => :mi) |> 
+    unstack(_, [:neuron, :hiddendim, :window, :layers, :embed, :bias, :rep], :activation, :mi) |>
+    disallowmissing(_)
+
+mean(dt.LeakyReLU - dt.PReLU)
+
+
+##
+windowlens = sort(unique(df.window))
+
+@pipe df |> 
+# @subset(_, :neuron .== "all") |> 
+@subset(_, :embed .== 12) |> 
+@subset(_, :window .== windowlens[2]) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers, :bias, :activation, :neuron]) |> 
+combine(_, :mi => mean => :mi, :precision=>mean=>:precision) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:hiddendim, :mi=>"I(X,Y) (bits/s)", 
+    row=:neuron, col=:layers=>nonnumeric, 
+    color=:bias, marker=:activation) * 
 visual(Scatter)
 ) |> 
-draw(_, axis=(; xscale=log10, limits=(nothing, (0,maximum(df.mi ./ df.window)))))
+draw(_, axis=(; xscale=log2), facet=(; linkyaxes=:rowwise))
 
 ## Embedding dim comparison
 
@@ -169,31 +284,29 @@ draw(_)#, axis=(; xscale=log10))
 
 ##
 dt = @pipe df |> 
-# # @subset(_, (:layout .!= "0") .&& (:layout .!= "all")) |> 
-# @subset(_, :embed .== 6) |> 
-# @subset(_, :layers .== 4) |> 
-# @transform(_, :n_params = :hiddendim .* :layers) |> 
-@subset(_, :neuron .== "neuron") #|> 
-# @subset(_, :nospikeval .== -1)
+@subset(_, :embed .== 8) |> 
+@subset(_, :layers .== 4) |> 
+# @subset(_, :activation .== "LeakyReLU") |> 
+@transform(_, :n_params = :hiddendim .* :layers) |> 
+@subset(_, :neuron .== "neuron")
 
 coldict = Dict("True" => 1, "False" => 2)
 
 f = Figure()
-for (i,ggdf) in enumerate(groupby(dt, :window, sort=true))
-    # for (j,ggdf) in enumerate(groupby(gdf, :n_params))
-    j = 1
-    ax = Axis(f[j,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
-    # ax2 = Axis(f[2,i], xscale=log10, title=string(round(ggdf.window[1] * 1000)))
-    for row in eachrow(ggdf)
-        curve = row.precision_curve
-        # lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
-        lines!(ax, row.precision_noise[2:end], curve[3:end], 
-            color=Makie.wong_colors()[coldict[row.ISI]])
+for (i,gdf) in enumerate(groupby(dt, :window, sort=true))
+    for (j,ggdf) in enumerate(groupby(gdf, :hiddendim))
+        titlestr = string(round(ggdf.window[1] * 1000)) * " " * string(round(ggdf.hiddendim[1]))
+        ax = Axis(f[j,i], xscale=log10, title=titlestr)
+        for row in eachrow(ggdf)
+            curve = row.precision_curve
+            lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
+            # lines!(ax, row.precision_noise[2:end], curve[3:end], 
+                color=Makie.wong_colors()[coldict[row.bias]])
+        end
+        ylims!(ax, 0, maximum(dt.mi ./ dt.window))
+        # ylims!(ax, 0, maximum(dt.mi))
+        vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)
     end
-    # ylims!(ax, 0, maximum(dt.mi ./ dt.window))
-    ylims!(ax, 0, maximum(dt.mi))
-    vlines!(ax, ggdf.window[1] * 1000, color="black", linestyle=:dash)
-    # end
 end
 Label(f[end+1,1:end], "Rounding level (ms)")
 Label(f[:,0], "I(X,Y) (bits/s)", rotation=pi/2)
