@@ -8,7 +8,7 @@ using GLMakie
 
 include("functions.jl")
 
-##
+
 
 moths = [
     "2025-02-25",
@@ -48,7 +48,7 @@ for moth in moths
     for unit in keys(neurons)
         deleteat!(neurons[unit], findall(diff(neurons[unit]) .< (fsamp * refractory_thresh / 1000)) .+ 1)
     end
-
+    
     # Write to npz file
     # Remove data that isn't in a flapping region (by DLM timing)
     # Get flapping periods
@@ -86,7 +86,7 @@ for moth in moths
             delete!(muscles, unit)
         end
     end
-
+    
     # Assemble export dict
     output_dict = Dict{String, Vector{Int64}}()
     label_dict = Dict{String, Int}()
@@ -101,7 +101,7 @@ for moth in moths
             label_dict[unit] = 2
         end
     end
-
+    
     npzwrite(joinpath(data_dir, moth * "_data.npz"), output_dict)
     npzwrite(joinpath(data_dir, moth * "_labels.npz"), label_dict)
     npzwrite(joinpath(data_dir, moth * "_bouts.npz"), Dict("starts" => bout_starts, "ends" => bout_ends))
