@@ -59,11 +59,13 @@ class TimeWindowDataset(Dataset):
     TODO: Could do times in milliseconds, would potentially enable a lower precision dtype 
     """
     def __init__(self, base_name, window_size, 
-            no_spike_value=0, time_offset=0.0,
-            use_ISI=False,
-            sample_rate=30000, neuron_label_filter=None,
-            select_x=None, select_y=None,
-            check_activity=False):
+            no_spike_value=0, # Value to use as filler for no spikes (leave at zero)
+            time_offset=0.0, # Time offset to apply to everything
+            use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
+            sample_rate=30000, # Don't change
+            neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
+            select_x=None, select_y=None, # Variable selection
+        ):
         """
         Args:
             batch_size (int): Size of each window
@@ -81,11 +83,6 @@ class TimeWindowDataset(Dataset):
         self.no_spike_value = no_spike_value
         
         self.move_data_to_windows(time_offset=time_offset)
-        
-        # If checking activity, remove chunks where there is no activity
-        if check_activity:
-            # Do something
-            print('I didnt get here yet lol')
     
     def __len__(self):
         return self.n_windows
@@ -277,11 +274,15 @@ class TimeWindowDatasetKinematics(Dataset):
     Will always return X, to protect master copy Xmain. 
     """
     def __init__(self, base_name, window_size, 
-            no_spike_value=0, time_offset=0.0,
-            use_ISI=False,
-            sample_rate=30000, neuron_label_filter=None,
-            select_x=None, select_y=None, angles_only=None,
-            check_activity=False):
+            no_spike_value=0, # Value to use as filler for no spikes (leave at zero)
+            time_offset=0.0, # Time offset to apply to everything
+            use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
+            sample_rate=30000, # Don't change
+            neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
+            select_x=None, select_y=None, # Variable selection
+            angles_only=True, # Only use wing angles (no xyz point data)
+            only_valid_kinematics=False # Only keep windows with kinematics
+        ):
         """
         Args:
             batch_size (int): Size of each window
@@ -299,13 +300,9 @@ class TimeWindowDatasetKinematics(Dataset):
         self.use_ISI = use_ISI
         self.window_size = window_size
         self.no_spike_value = no_spike_value
+        self.only_valid_kinematics = only_valid_kinematics
         
         self.move_data_to_windows(time_offset=time_offset)
-        
-        # If checking activity, remove chunks where there is no activity
-        if check_activity:
-            # Do something
-            print('I didnt get here yet lol')
     
     def __len__(self):
         return self.n_windows
@@ -423,17 +420,27 @@ class TimeWindowDatasetKinematics(Dataset):
                 Zmain[window_inds_z[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_offset, self.Ztimes[mask], self.Zorig[i,mask])
         else:
             Zmain[window_inds_z[mask],:,column_inds] = np.transpose(self.Zorig[:,mask])
-        self.Zmain = Zmain
         # Trim windows that aren't valid (too short, in between bouts, etc)
+        # Note that there can be windows that are valid for neurons & muscles but not kinematics!
         Xmain = Xmain[self.valid_window,:,:]
         Ymain = Ymain[self.valid_window,:,:]
         self.window_times = self.window_times[self.valid_window]
+        self.kine_valid_window = self.kine_valid_window[self.valid_window]
         self.n_windows = len(self.window_times)
+        # If only keeping windows with kinematics trim further
+        if self.only_valid_kinematics:
+            Xmain = Xmain[self.kine_valid_window,:,:]
+            Ymain = Ymain[self.kine_valid_window,:,:]
+            self.window_times = self.window_times[self.kine_valid_window]
+            self.kine_valid_window = self.kine_valid_window[self.kine_valid_window]
+            self.n_windows = len(self.window_times)
         # Convert to tensor, move to device. Make copies that noise will be applied on
         self.Xmain = torch.tensor(Xmain, device=device)
         self.Ymain = torch.tensor(Ymain, device=device)
+        self.Zmain = torch.tensor(Zmain, device=device)
         self.X = self.Xmain.detach().clone()
         self.Y = self.Ymain.detach().clone()
+        self.Z = self.Zmain.detach().clone()
         # Pre-compute mask of where actual spikes are
         self.spike_mask_x = torch.nonzero(self.Xmain != self.no_spike_value, as_tuple=True)
         self.spike_mask_y = torch.nonzero(self.Ymain != self.no_spike_value, as_tuple=True)
