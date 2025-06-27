@@ -7,6 +7,7 @@ using DataStructures
 using GLMakie
 
 include("functions.jl")
+include("functions_kinematics.jl")
 
 
 
@@ -17,6 +18,10 @@ moths = [
     "2025-03-12_1",
     "2025-03-20",
     "2025-03-21"
+]
+moths_kinematics = [
+    "2025-02-25",
+    "2025-02-25_1"
 ]
 data_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata"
 
@@ -32,7 +37,7 @@ for moth in moths
     dir_contents = readdir(moth_dir)
     phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
     mp_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("_spikesort", dir_contents))])
-
+    
     neurons, unit_details, sort_params = read_phy_spikes(phy_dir)
     muscles = read_mp_spikes(mp_dir)
 
@@ -105,6 +110,17 @@ for moth in moths
     npzwrite(joinpath(data_dir, moth * "_data.npz"), output_dict)
     npzwrite(joinpath(data_dir, moth * "_labels.npz"), label_dict)
     npzwrite(joinpath(data_dir, moth * "_bouts.npz"), Dict("starts" => bout_starts, "ends" => bout_ends))
+end
+
+## Read and save kinematics 
+for moth in moths_kinematics
+    data_dict = read_kinematics(moth; data_dir=data_dir)
+    # If this is 2025-02-25_1, also read and combine rep0
+    if moth == "2025-02-25_1"
+        data_dict_rep0 = read_kinematics(moth * "_rep0"; data_dir=data_dir)
+        data_dict = Dict(key => vcat(data_dict_rep0[key], data_dict[key]) for key in keys(data_dict))
+    end
+    npzwrite(joinpath(data_dir, moth * "_kinematics.npz"), data_dict)
 end
 
 
