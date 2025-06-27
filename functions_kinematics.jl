@@ -265,7 +265,7 @@ function read_kinematics(moth; data_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/
     interp_frames = round.(Int, range(frame_indices[1], step=fsamp/300, length=length(frame_indices)))
     # Set up output dict
     data_dict = Dict{String, Vector{}}()
-    data_dict["frame"] = interp_frames
+    data_dict["index"] = interp_frames
     # Add angles
     for (i,side) in enumerate(["L", "R"])
         data_dict[side * "phi"] = interpolate(frame_indices, ϕ[i], BSplineOrder(4)).(interp_frames)

@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from itertools import product
 
 # Check if CUDA or MPS is running
 if torch.cuda.is_available():
@@ -131,7 +132,7 @@ class TimeWindowDataset(Dataset):
         # Loop over bouts, cut up into chunks, assign start times
         bout_diffs = self.bout_ends - self.bout_starts
         window_times, valid_window = [], []
-        # Partial-length windows will often exist at end of botus, valid_window is used to trim this.
+        # Partial-length windows will often exist at end of bouts, valid_window is used to trim this.
         # If time offset added, this also ends up trimming partial-length window at start of next bout (great!).
         # Just leaves partial-length start of very first bout, if an offset is added
         # For that we add a starting window to catch spikes before initial time offset
@@ -266,6 +267,245 @@ class TimeWindowDataset(Dataset):
         data.close()
         bouts.close()
         labels_data.close()
+
+
+class TimeWindowDatasetKinematics(Dataset):
+    """
+    Reads in data, stores and outputs in form similar to previous KSG encoding
+    This version also reads in kinematics data, stores it as (Z)
+    Maintains master copy of data in memory, as well as duplicate on which noise/other things can be applied
+    Will always return X, to protect master copy Xmain. 
+    """
+    def __init__(self, base_name, window_size, 
+            no_spike_value=0, time_offset=0.0,
+            use_ISI=False,
+            sample_rate=30000, neuron_label_filter=None,
+            select_x=None, select_y=None, angles_only=None,
+            check_activity=False):
+        """
+        Args:
+            batch_size (int): Size of each window
+        """
+        self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
+        
+        # Could write this so this is adjustable after dataset is made. I'm lazy for now though
+        if select_x is not None:
+            self.Xtimes = [self.Xtimes[i] for i in select_x]
+        if select_y is not None:
+            self.Ytimes = [self.Ytimes[i] for i in select_y]
+        if angles_only is not None:
+            self.Zorig = self.Zorig[0:6,:]
+        
+        self.use_ISI = use_ISI
+        self.window_size = window_size
+        self.no_spike_value = no_spike_value
+        
+        self.move_data_to_windows(time_offset=time_offset)
+        
+        # If checking activity, remove chunks where there is no activity
+        if check_activity:
+            # Do something
+            print('I didnt get here yet lol')
+    
+    def __len__(self):
+        return self.n_windows
+    
+    def __getitem__(self, idx):
+        """Return a batch at the specified batch index."""
+        return self.X[idx,:,:], self.Y[idx,:,:]
+    
+    def apply_noise(self, amplitude):
+        """
+        Apply noise to spike times of noisy version of X. 
+        Args: 
+            amplitude: added uniform noise amplitude, units of seconds
+        """
+        # Generate noise directly into pre-allocated buffer
+        self.noise_buffer_x.uniform_(0, amplitude)
+        # Apply noise in-place
+        self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + self.noise_buffer_x
+    def apply_noise_y(self, amplitude):
+        """
+        Apply noise to spike times of noisy version of Y. 
+        Amplitude is in units of samples
+        """
+        # Generate noise directly into pre-allocated buffer
+        self.noise_buffer_y.uniform_(0, amplitude)
+        # Apply noise in-place
+        self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + self.noise_buffer_y
+    
+    def apply_precision(self, prec):
+        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
+        self.X[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
+    def apply_precision_y(self, prec):
+        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
+        self.Y[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
+    
+    def move_data_to_windows(self, time_offset=0.0):
+        """
+        Take list of spike times, convert to matrices of spike times in given windows
+        Args:
+            no_spike_value: Filler value used to indicate no spike occurred in that position
+            time_offset: Offset to window start time in s, should be positive!
+        """
+        # Make chunk start times
+        # Loop over bouts, cut up into chunks, assign start times
+        bout_diffs = self.bout_ends - self.bout_starts
+        window_times, valid_window = [], []
+        # Partial-length windows will often exist at end of bouts, valid_window is used to trim this.
+        # If time offset added, this also ends up trimming partial-length window at start of next bout (great!).
+        # Just leaves partial-length start of very first bout, if an offset is added
+        # For that we add a starting window to catch spikes before initial time offset
+        if time_offset > 0:
+            window_times.append(0)
+            valid_window.append(False)
+        for i in range(len(self.bout_starts)):
+            n_windows = np.ceil((bout_diffs[i] - time_offset) / self.window_size).astype(int)
+            for j in range(n_windows):
+                start_time = self.bout_starts[i] + time_offset + j * self.window_size
+                window_times.append(start_time)
+                valid_window.append(True)
+            # If in between bouts, make a window edge that's halfway, this window should always be invalid
+            if i < (len(self.bout_starts) - 1):
+                start_time = self.bout_ends[i] + (self.bout_starts[i+1] - self.bout_ends[i])
+                window_times.append(start_time)
+                valid_window.append(False)
+            # Last window in any bout is automatically made invalid
+            valid_window[-1] = False
+        self.valid_window = np.array(valid_window)
+        self.window_times = np.array(window_times)
+        self.n_windows = len(self.window_times)
+        # For kinematics valid windows are only those of the correct length (since it's not an event-based process)
+        window_valid_length = np.diff(self.window_times) < (self.window_size + np.finfo(np.float32).eps)
+        self.kine_valid_window = np.logical_and(self.valid_window, np.concatenate((window_valid_length, np.array([True]))))
+        # Use searchsorted on each neuron/muscle to assign to chunks
+        # This is by far the slowest part of this whole function!
+        window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
+        window_inds_y = [np.searchsorted(self.window_times, y) - 1 for y in self.Ytimes]
+        window_inds_z = np.searchsorted(self.window_times, self.Ztimes, side='right') - 1
+        # Find max possible number of spikes per window for X and Y, preallocate. 
+        # This MUST only be done once, so that network size is consistent as windows get shifted
+        if not hasattr(self, 'max_neuron'):
+            self.max_neuron = np.max(np.array([max_events_in_window(x, self.window_size) for x in self.Xtimes]))
+            self.max_muscle = np.max(np.array([max_events_in_window(y, self.window_size) for y in self.Ytimes]))
+            self.max_kine = np.ceil(self.window_size / np.mean(np.diff(self.Ztimes[:10]))).astype(int)
+        # Preallocate (size is [window, neuron/muscle, spike time])
+        Xmain = np.full((self.n_windows, len(self.Xtimes), self.max_neuron), self.no_spike_value, dtype=np.float32)
+        Ymain = np.full((self.n_windows, len(self.Ytimes), self.max_muscle), self.no_spike_value, dtype=np.float32)
+        Zmain = np.full((self.n_windows, self.Zorig.shape[0], self.max_kine), self.no_spike_value, dtype=np.float32)
+        # Loop down each neuron, muscle, assign data to main arrays
+        if self.use_ISI:
+            for i in range(len(self.Xtimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
+                firstval = self.Xtimes[i][0] - self.window_times[window_inds_x[i]][0]
+                Xmain[window_inds_x[i],i,column_inds] = np.insert(np.diff(self.Xtimes[i] - self.window_times[window_inds_x[i]]), 0, firstval)
+                first = column_inds == 0
+                Xmain[window_inds_x[i][first], i, column_inds[first]] = self.Xtimes[i][first] - self.window_times[window_inds_x[i][first]]
+            for i in range(len(self.Ytimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
+                firstval = self.Ytimes[i][0] - self.window_times[window_inds_y[i]][0]
+                Ymain[window_inds_y[i],i,column_inds] = np.insert(np.diff(self.Ytimes[i] - self.window_times[window_inds_y[i]]), 0, firstval)
+                first = column_inds == 0
+                Ymain[window_inds_y[i][first], i, column_inds[first]] = self.Ytimes[i][first] - self.window_times[window_inds_y[i][first]]
+        else:    
+            for i in range(len(self.Xtimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
+                Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
+            for i in range(len(self.Ytimes)):
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
+                Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
+        # Assign kinematics data
+        # Have to interpolate if time offset applied
+        mask = self.kine_valid_window[window_inds_z]
+        column_inds = monotonic_repeats_to_ranges(window_inds_z)[mask]
+        if time_offset > 0:
+            for i in range(self.Zorig.shape[0]):
+                Zmain[window_inds_z[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_offset, self.Ztimes[mask], self.Zorig[i,mask])
+        else:
+            Zmain[window_inds_z[mask],:,column_inds] = np.transpose(self.Zorig[:,mask])
+        self.Zmain = Zmain
+        # Trim windows that aren't valid (too short, in between bouts, etc)
+        Xmain = Xmain[self.valid_window,:,:]
+        Ymain = Ymain[self.valid_window,:,:]
+        self.window_times = self.window_times[self.valid_window]
+        self.n_windows = len(self.window_times)
+        # Convert to tensor, move to device. Make copies that noise will be applied on
+        self.Xmain = torch.tensor(Xmain, device=device)
+        self.Ymain = torch.tensor(Ymain, device=device)
+        self.X = self.Xmain.detach().clone()
+        self.Y = self.Ymain.detach().clone()
+        # Pre-compute mask of where actual spikes are
+        self.spike_mask_x = torch.nonzero(self.Xmain != self.no_spike_value, as_tuple=True)
+        self.spike_mask_y = torch.nonzero(self.Ymain != self.no_spike_value, as_tuple=True)
+        # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
+        self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
+        self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
+    
+    def read_data(self, base_name, sample_rate=30000, neuron_label_filter=None):
+        """
+        Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
+        """
+        # Construct file paths
+        data_file = f"{base_name}_data.npz"
+        labels_file = f"{base_name}_labels.npz"
+        bouts_file = f"{base_name}_bouts.npz"
+        kine_file = f"{base_name}_kinematics.npz"
+        # Load the spike data
+        if not os.path.exists(data_file):
+            raise FileNotFoundError(f"Data file '{data_file}' not found.")
+        data = np.load(data_file)
+        units = data.files  # List of unit labels
+
+        # Load the labels file if it exists
+        labels = {}
+        if os.path.exists(labels_file):
+            labels_data = np.load(labels_file)
+            labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+        
+        # Load bout start and end indices, rescale to seconds. (-1 is b/c coming from 1-index Julia)
+        bouts = np.load(bouts_file)
+        starts, ends = bouts['starts'], bouts['ends']
+        self.bout_starts = (starts - 1) / sample_rate
+        self.bout_ends = (ends - 1) / sample_rate
+
+        # Load kinematics data
+        if not os.path.exists(kine_file):
+            raise FileNotFoundError(f"This moth has no kinematics data found")
+        kine_data = np.load(kine_file)
+        kine_names = list(kine_data.keys())
+        angle_names = [side + angle for side, angle in product(['L', 'R'], ['phi', 'theta', 'alpha'])]
+        point_names = set(kine_names).difference(set(angle_names + ['index']))
+        # Allocate matrix to hold everything, fill main angles first
+        self.Ztimes = kine_data['index'] / sample_rate
+        self.Zorig = np.zeros((len(kine_names)-1, self.Ztimes.shape[0]), dtype=np.float32)
+        for i,key in enumerate(angle_names):
+            self.Zorig[i,:] = kine_data[key]
+        for i,key in enumerate(point_names):
+            self.Zorig[i+6,:] = kine_data[key]
+        
+        # Separate neurons and muscles, applying filtering if needed
+        self.neuron_labels, self.muscle_labels = [], []
+        for unit in units:
+            if unit.isnumeric():  # Numeric labels are neurons
+                if labels:
+                    label = labels.get(unit, None)
+                    if neuron_label_filter is None or label == neuron_label_filter:
+                        self.neuron_labels.append(unit)
+                else:
+                    self.neuron_labels.append(unit)  # No filtering if no labels file
+            else:  # Alphabetic labels are muscles
+                self.muscle_labels.append(unit)
+        # Make list of neuron (X) and muscle (Y) spike times
+        self.Xtimes, self.Ytimes = [], []
+        for unit in self.neuron_labels:
+            self.Xtimes.append(np.array(data[unit] / sample_rate))
+        for unit in self.muscle_labels:
+            self.Ytimes.append(np.array(data[unit] / sample_rate))
+        # Close all files
+        data.close()
+        bouts.close()
+        labels_data.close()
+        kine_data.close()
 
 
 def create_data_split(dataset, batch_size, train_fraction=0.95, eval_fraction=None, subset_indices=None):

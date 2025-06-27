@@ -112,7 +112,7 @@ for moth in moths
     npzwrite(joinpath(data_dir, moth * "_bouts.npz"), Dict("starts" => bout_starts, "ends" => bout_ends))
 end
 
-## Read and save kinematics 
+# Read and save kinematics 
 for moth in moths_kinematics
     data_dict = read_kinematics(moth; data_dir=data_dir)
     # If this is 2025-02-25_1, also read and combine rep0
@@ -126,7 +126,7 @@ end
 
 ##
 
-moth = moths[3]
+moth = moths[2]
 moth_dir = joinpath(data_dir, moth)
 dir_contents = readdir(moth_dir)
 phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
