@@ -91,32 +91,22 @@ class TimeWindowDataset(Dataset):
         """Return a batch at the specified batch index."""
         return self.X[idx,:,:], self.Y[idx,:,:]
     
-    def apply_noise(self, amplitude):
+    def apply_noise(self, amplitude, X='X'):
         """
-        Apply noise to spike times of noisy version of X. 
+        Apply noise to spike times of noisy version of whichever variable (X,Y,Z) selected
         Args: 
             amplitude: added uniform noise amplitude, units of seconds
         """
         # Generate noise directly into pre-allocated buffer
-        self.noise_buffer_x.uniform_(0, amplitude)
+        getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
         # Apply noise in-place
-        self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + self.noise_buffer_x
-    def apply_noise_y(self, amplitude):
-        """
-        Apply noise to spike times of noisy version of Y. 
-        Amplitude is in units of samples
-        """
-        # Generate noise directly into pre-allocated buffer
-        self.noise_buffer_y.uniform_(0, amplitude)
-        # Apply noise in-place
-        self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + self.noise_buffer_y
+        mask = getattr(self, 'spike_mask_' + X.lower())
+        getattr(self, X)[mask] = getattr(self, X + 'main')[mask] + getattr(self, 'noise_buffer_' + X.lower())
     
-    def apply_precision(self, prec):
+    def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.X[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
-    def apply_precision_y(self, prec):
-        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.Y[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
+        mask = getattr(self, 'spike_mask_' + X.lower())
+        getattr(self, X)[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
     
     def move_data_to_windows(self, time_offset=0.0):
         """
@@ -311,32 +301,22 @@ class TimeWindowDatasetKinematics(Dataset):
         """Return a batch at the specified batch index."""
         return self.X[idx,:,:], self.Y[idx,:,:]
     
-    def apply_noise(self, amplitude):
+    def apply_noise(self, amplitude, X='X'):
         """
-        Apply noise to spike times of noisy version of X. 
+        Apply noise to spike times of noisy version of whichever variable (X,Y,Z) selected
         Args: 
             amplitude: added uniform noise amplitude, units of seconds
         """
         # Generate noise directly into pre-allocated buffer
-        self.noise_buffer_x.uniform_(0, amplitude)
+        getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
         # Apply noise in-place
-        self.X[self.spike_mask_x] = self.Xmain[self.spike_mask_x] + self.noise_buffer_x
-    def apply_noise_y(self, amplitude):
-        """
-        Apply noise to spike times of noisy version of Y. 
-        Amplitude is in units of samples
-        """
-        # Generate noise directly into pre-allocated buffer
-        self.noise_buffer_y.uniform_(0, amplitude)
-        # Apply noise in-place
-        self.Y[self.spike_mask_y] = self.Ymain[self.spike_mask_y] + self.noise_buffer_y
+        mask = getattr(self, 'spike_mask_' + X.lower())
+        getattr(self, X)[mask] = getattr(self, X + 'main')[mask] + getattr(self, 'noise_buffer_' + X.lower())
     
-    def apply_precision(self, prec):
+    def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.X[self.spike_mask_x] = torch.round(self.Xmain[self.spike_mask_x] / prec) * prec
-    def apply_precision_y(self, prec):
-        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        self.Y[self.spike_mask_y] = torch.round(self.Ymain[self.spike_mask_y] / prec) * prec
+        mask = getattr(self, 'spike_mask_' + X.lower())
+        getattr(self, X)[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
     
     def move_data_to_windows(self, time_offset=0.0):
         """

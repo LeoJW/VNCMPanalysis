@@ -47,7 +47,13 @@ def sample_with_minimum_distance(n=40, k=4, d=10):
 
 
 
-def train_model_no_eval(dataset, params, device=device, subset_times=None, return_indices=False, verbose=True):
+def train_model_no_eval(dataset, params, 
+        device=device, 
+        subset_times=None, 
+        return_indices=False, 
+        verbose=True,
+        X='X', Y='Y' # What to calculate information between. Can be X, Y, or Z
+    ):
     """
     Generalized training function for DSIB and DVSIB models with early stopping.
     Version that does not run evaluation! Skimps on that to save time, returns only mi values from test
@@ -115,8 +121,8 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
         train_indices = use_ind[train_indices]
     test_indices = torch.tensor(test_indices, dtype=int).to(device)
     train_indices = torch.tensor(train_indices, dtype=int).to(device)
-    test_X = dataset.X[test_indices,:,:].detach().clone()
-    test_Y = dataset.Y[test_indices,:,:].detach().clone()
+    test_X = getattr(dataset, X)[test_indices,:,:].detach().clone()
+    test_Y = getattr(dataset, Y)[test_indices,:,:].detach().clone()
 
     # Initialize variables
     epochs = params['epochs']
@@ -131,8 +137,8 @@ def train_model_no_eval(dataset, params, device=device, subset_times=None, retur
         # Shuffle training indices for this epoch, train on batches
         shuffled_train_indices = train_indices[torch.randperm(train_indices.nelement())]
         for batch_indices in shuffled_train_indices.split(params['batch_size']):
-            x = dataset.X[batch_indices, :, :]
-            y = dataset.Y[batch_indices, :, :]
+            x = getattr(dataset, X)[batch_indices, :, :]
+            y = getattr(dataset, Y)[batch_indices, :, :]
             opt.zero_grad()
             # Compute loss based on model type
             if model_name == "DSIB":

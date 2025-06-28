@@ -531,7 +531,7 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     return subsets, mi, embed_dim_vec
 
 
-def precision_rounding(precision_levels, dataset, model):
+def precision_rounding(precision_levels, dataset, model, X='X', Y='Y'):
     """
     Run spike timing precision analysis
     This version uses rounding instead of added noise
@@ -545,13 +545,13 @@ def precision_rounding(precision_levels, dataset, model):
     with torch.no_grad():
         # Will always do zero-noise MI
         mi = np.zeros((len(precision_levels)+1))
-        mi[0] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+        mi[0] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
         for i, prec_level in enumerate(precision_levels):
-            dataset.apply_precision(prec_level)
-            mi[i+1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+            dataset.apply_precision(prec_level, X=X)
+            mi[i+1] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
         return mi
 
-def precision(noise_levels, dataset, model, n_repeats=3):
+def precision(noise_levels, dataset, model, n_repeats=3, X='X', Y='Y'):
     """
     Run spike timing precision analysis, to get precision curve
     Args:
@@ -568,57 +568,10 @@ def precision(noise_levels, dataset, model, n_repeats=3):
         for j0,prec_noise_amp in enumerate(noise_levels):
             # Only run zero noise once, nothing changes between runs
             if prec_noise_amp == 0:
-                dataset.apply_noise(prec_noise_amp)
-                mi[j0,:] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+                dataset.apply_noise(prec_noise_amp, X=X)
+                mi[j0,:] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
                 continue
             for j1 in range(n_repeats):
-                dataset.apply_noise(prec_noise_amp)
-                mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
+                dataset.apply_noise(prec_noise_amp, X=X)
+                mi[j0,j1] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
         return mi
-
-
-def precision_cnn(noise_levels, dataset, model, n_repeats=3):
-    """
-    Run spike timing precision analysis, to get precision curve
-    Args:
-        noise_levels: Range of noise levels to run over, in units of samples
-        dataset: BatchedDatasetWithNoise of X and Y data
-        model: Trained model to run inference with
-        n_repeats: How many times per noise level to repeat
-    Returns:
-        new_noise_levels: Noise levels actually used (units of samples), based on rounding to integers
-        mi: Matrix of mutual information at each noise level. Rows are repeats, columns noise levels
-    """
-    with torch.no_grad():
-        # Since datasets are discrete samples, only run noise levels that are actually unique (in no. of samples)
-        _, unique_inds = np.unique(np.round(noise_levels), return_index=True)
-        new_noise_levels = noise_levels[unique_inds]
-        mi = np.zeros((len(new_noise_levels), n_repeats))
-        for j0,prec_noise_amp in enumerate(new_noise_levels):
-            for j1 in range(n_repeats):
-                dataset.apply_noise(prec_noise_amp)
-                mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
-        return new_noise_levels, mi
-
-def precision_y(noise_levels, dataset, model, n_repeats=3):
-    """
-    Run spike timing precision analysis, to get precision curve
-    Args:
-        noise_levels: Range of noise levels to run over, in units of samples
-        dataset: BatchedDatasetWithNoise of X and Y data
-        model: Trained model to run inference with
-        n_repeats: How many times per noise level to repeat
-    Returns:
-        new_noise_levels: Noise levels actually used (units of samples), based on rounding to integers
-        mi: Matrix of mutual information at each noise level. Rows are repeats, columns noise levels
-    """
-    with torch.no_grad():
-        # Since datasets are discrete samples, only run noise levels that are actually unique (in no. of samples)
-        _, unique_inds = np.unique(np.round(noise_levels), return_index=True)
-        new_noise_levels = noise_levels[unique_inds]
-        mi = np.zeros((len(new_noise_levels), n_repeats))
-        for j0,prec_noise_amp in enumerate(new_noise_levels):
-            for j1 in range(n_repeats):
-                dataset.apply_noise_Y(prec_noise_amp)
-                mi[j0,j1] = - model(dataset.X, dataset.Y).detach().cpu().numpy()
-        return new_noise_levels, mi
