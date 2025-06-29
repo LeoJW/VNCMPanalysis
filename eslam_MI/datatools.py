@@ -280,12 +280,25 @@ class TimeWindowDatasetKinematics(Dataset):
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
-        if select_x is not None:
+        # Select from X by index, or by name
+        if select_x is not None and all(isinstance(x, (int, float)) for x in select_x):
             self.Xtimes = [self.Xtimes[i] for i in select_x]
-        if select_y is not None:
+            self.neuron_labels = [self.neuron_labels[i] for i in select_x]
+        elif select_x is not None:
+            keep_inds = [i for i,lab in enumerate(self.neuron_labels) if lab in select_x]
+            self.Xtimes = [self.Xtimes[i] for i in keep_inds]
+            self.neuron_labels = [self.neuron_labels[i] for i in keep_inds]
+        # Select from Y by index, or by name
+        if select_y is not None and all(isinstance(x, (int, float)) for x in select_y):
             self.Ytimes = [self.Ytimes[i] for i in select_y]
+            self.muscle_labels = [self.muscle_labels[i] for i in select_y]
+        elif select_y is not None:
+            keep_inds = [i for i,lab in enumerate(self.muscle_labels) if lab in select_y]
+            self.Ytimes = [self.Ytimes[i] for i in keep_inds]
+            self.muscle_labels = [self.muscle_labels[i] for i in keep_inds]
         if angles_only is not None:
             self.Zorig = self.Zorig[0:6,:]
+            self.kine_names = self.kine_names[0:6]
         
         self.use_ISI = use_ISI
         self.window_size = window_size
@@ -469,6 +482,7 @@ class TimeWindowDatasetKinematics(Dataset):
             self.Zorig[i,:] = kine_data[key]
         for i,key in enumerate(point_names):
             self.Zorig[i+6,:] = kine_data[key]
+        self.kine_names = angle_names + list(point_names)
         
         # Separate neurons and muscles, applying filtering if needed
         self.neuron_labels, self.muscle_labels = [], []

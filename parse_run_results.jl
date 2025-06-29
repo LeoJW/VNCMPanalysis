@@ -78,23 +78,29 @@ df = DataFrame()
 for task in 0:5
     read_network_arch_file!(df, joinpath(data_dir, "2025-06-22_network_comparison_PACE_task_$(task).h5"), task)
 end
+# Extra larger network runs
+for task in 0:5
+    read_network_arch_file!(df, joinpath(data_dir, "2025-06-23_network_comparison_PACE_task_$(task).h5"), task)
+end
 
 # Remove obvious failures, convert units
 # df = @pipe df |> 
 # @subset(_, :mi .> 0.0)
 # @transform(_, :mi = :mi .* log2(exp(1)))
 
-# Save to CSV for R and other things
-@pipe df |> 
-    select(_, Not(:precision_curve, :precision_noise)) |> 
-    CSV.write(joinpath(data_dir, "network_arch_comparison.csv"), _)
+# # Save to CSV for R and other things
+# @pipe df |> 
+#     select(_, Not(:precision_curve, :precision_noise)) |> 
+#     CSV.write(joinpath(data_dir, "network_arch_comparison.csv"), _)
 
 
 ##
+GLMakie.activate!()
 
 @pipe df |> 
-@subset(_, :neuron .== "all") |> 
+@subset(_, :neuron .== "neuron") |> 
 @subset(_, :activation .== "PReLU") |> 
+# @subset(_, :activation .== "LeakyReLU") |> 
 @subset(_, :bias .== "False") |> 
 # @subset(_, :embed .== 10) |> 
 @transform(_, :mi = :mi ./ :window) |> 
@@ -103,7 +109,6 @@ groupby(_, [:window, :embed, :hiddendim, :layers]) |>
 combine(_, :mi => mean => :mi, :mi=>std=>:mi_sd, :precision=>mean=>:precision) |> 
 @transform(_, :milo = :mi .- :mi_sd, :mihi = :mi .+ :mi_sd) |> 
 @transform(_, :window = log10.(:window)) |> 
-# @transform(_, :window = string.(round.(Int, log10.(:window)))) |> 
 (
 AlgebraOfGraphics.data(_) *
 (mapping(:window=>"Window length (ms)", :mi=>"I(X,Y) (bits/s)", 
@@ -113,7 +118,35 @@ mapping(:window=>"Window length (ms)", :milo, :mihi,
     row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed, dodge_x=:embed=>nonnumeric) * visual(Rangebars))
     # row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * visual(Rangebars))
 ) |> 
-draw(_, scales(DodgeX = (; width = 0.1)))#, axis=(; xscale=log10))
+draw(_, scales(DodgeX = (; width = 0.1)), axis=(; limits=(nothing, (0, maximum(df.mi ./ df.window)))))
+
+
+## At a given window length, how does hiddendim change MI?
+
+GLMakie.activate!()
+
+@pipe df |> 
+@subset(_, :activation .== "PReLU") |> 
+@subset(_, :window .== sort(unique(df.window))[2]) |> 
+# @subset(_, :activation .== "LeakyReLU") |> 
+@subset(_, :bias .== "False") |> 
+# @subset(_, :embed .== 10) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers, :neuron]) |> 
+combine(_, :mi => mean => :mi, :mi=>std=>:mi_sd, :precision=>mean=>:precision) |> 
+@transform(_, :milo = :mi .- :mi_sd, :mihi = :mi .+ :mi_sd) |> 
+@transform(_, :hiddendim = log2.(:hiddendim)) |> 
+(
+AlgebraOfGraphics.data(_) *
+(mapping(:hiddendim=>"Hidden dimension", :mi=>"I(X,Y) (bits/s)", 
+    row=:neuron, col=:layers=>nonnumeric, color=:embed, dodge_x=:embed=>nonnumeric) * visual(Scatter) +
+mapping(:hiddendim=>"Hidden dimension", :milo, :mihi,
+    row=:neuron, col=:layers=>nonnumeric, color=:embed, dodge_x=:embed=>nonnumeric) * visual(Rangebars))
+) |> 
+draw(_, scales(DodgeX = (; width = 0.1)), facet=(; linkyaxes=:minimal))
+
+
 
 
 ##---------------- Activation, bias comparison figure
@@ -285,23 +318,24 @@ draw(_)#, axis=(; xscale=log10))
 ##
 dt = @pipe df |> 
 @subset(_, :embed .== 8) |> 
-@subset(_, :layers .== 4) |> 
-# @subset(_, :activation .== "LeakyReLU") |> 
+@subset(_, :layers .== 4) |>
+@subset(_, :activation .== "PReLU") |> 
+@subset(_, :bias .== "False") |>  
 @transform(_, :n_params = :hiddendim .* :layers) |> 
-@subset(_, :neuron .== "neuron")
+@subset(_, :neuron .== "all")
 
-coldict = Dict("True" => 1, "False" => 2)
+coldict = Dict(hd => i for (i,hd) in enumerate(sort(unique(df.hiddendim))))
 
 f = Figure()
 for (i,gdf) in enumerate(groupby(dt, :window, sort=true))
+    titlestr = string(round(gdf.window[1] * 1000))
+    ax = Axis(f[1,i], xscale=log10, title=titlestr)
     for (j,ggdf) in enumerate(groupby(gdf, :hiddendim))
-        titlestr = string(round(ggdf.window[1] * 1000)) * " " * string(round(ggdf.hiddendim[1]))
-        ax = Axis(f[j,i], xscale=log10, title=titlestr)
         for row in eachrow(ggdf)
             curve = row.precision_curve
             lines!(ax, row.precision_noise[2:end], curve[3:end] ./ row.window, 
             # lines!(ax, row.precision_noise[2:end], curve[3:end], 
-                color=Makie.wong_colors()[coldict[row.bias]])
+                color=row.hiddendim, colorrange=extrema(df.hiddendim))
         end
         ylims!(ax, 0, maximum(dt.mi ./ dt.window))
         # ylims!(ax, 0, maximum(dt.mi))
