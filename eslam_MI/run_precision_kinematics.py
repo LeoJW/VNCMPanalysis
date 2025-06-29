@@ -114,7 +114,8 @@ def train_models_worker(chunk_with_id):
         rep = int(rep)
         moth = str(moth)
         # Make condition key (hideous but it works)
-        key = f'neuron_{run_on}_moth_{moth.replace('_','-')}_rep_{rep}_pid_{process_id}'
+        mothstring_no_underscore = moth.replace('_','-')
+        key = f'neuron_{run_on}_moth_{mothstring_no_underscore}_rep_{rep}_pid_{process_id}'
         print(key)
         # Set up which muscles to pull
         match run_on:
