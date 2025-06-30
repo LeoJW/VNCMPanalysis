@@ -271,7 +271,8 @@ class TimeWindowDatasetKinematics(Dataset):
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
             angles_only=True, # Only use wing angles (no xyz point data)
-            only_valid_kinematics=False # Only keep windows with kinematics
+            only_valid_kinematics=False, # Only keep windows with kinematics
+            only_flapping=False
         ):
         """
         Args:
@@ -304,6 +305,7 @@ class TimeWindowDatasetKinematics(Dataset):
         self.window_size = window_size
         self.no_spike_value = no_spike_value
         self.only_valid_kinematics = only_valid_kinematics
+        self.only_flapping = only_flapping
         
         self.move_data_to_windows(time_offset=time_offset)
     
@@ -417,6 +419,7 @@ class TimeWindowDatasetKinematics(Dataset):
         # Note that there can be windows that are valid for neurons & muscles but not kinematics!
         Xmain = Xmain[self.valid_window,:,:]
         Ymain = Ymain[self.valid_window,:,:]
+        Zmain = Zmain[self.valid_window,:,:]
         self.window_times = self.window_times[self.valid_window]
         self.kine_valid_window = self.kine_valid_window[self.valid_window]
         self.n_windows = len(self.window_times)
@@ -424,8 +427,19 @@ class TimeWindowDatasetKinematics(Dataset):
         if self.only_valid_kinematics:
             Xmain = Xmain[self.kine_valid_window,:,:]
             Ymain = Ymain[self.kine_valid_window,:,:]
+            Zmain = Zmain[self.kine_valid_window,:,:]
             self.window_times = self.window_times[self.kine_valid_window]
             self.kine_valid_window = self.kine_valid_window[self.kine_valid_window]
+            self.n_windows = len(self.window_times)
+        # Trim even further if using kinematics to only get flapping periods
+        if self.only_flapping:
+            maxvals = Zmain[:,[0],:].max(axis=2)
+            minvals = Zmain[:,[0],:].min(axis=2)
+            valid = (maxvals - minvals).flatten() > 0.4
+            Xmain = Xmain[valid,:,:]
+            Ymain = Ymain[valid,:,:]
+            Zmain = Zmain[valid,:,:]
+            self.window_times = self.window_times[valid]
             self.n_windows = len(self.window_times)
         # Convert to tensor, move to device. Make copies that noise will be applied on
         self.Xmain = torch.tensor(Xmain, device=device)

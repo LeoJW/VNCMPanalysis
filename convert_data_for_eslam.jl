@@ -113,6 +113,7 @@ for moth in moths
 end
 
 # Read and save kinematics 
+# Do some kind of flapping detection to drop data to only relevant regions?
 for moth in moths_kinematics
     data_dict = read_kinematics(moth; data_dir=data_dir)
     # If this is 2025-02-25_1, also read and combine rep0

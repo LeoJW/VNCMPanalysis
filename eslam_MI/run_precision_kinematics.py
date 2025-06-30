@@ -82,7 +82,7 @@ def train_models_worker(chunk_with_id):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 256, # Number of windows estimator processes at any time
-        's_per_batch': 5, # Alternatively specify seconds of data a batch should be
+        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 2e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -131,13 +131,15 @@ def train_models_worker(chunk_with_id):
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_valid_kinematics=True, angles_only=True)
+            only_flapping=True, only_valid_kinematics=True, angles_only=True)
         # Set params
         this_params = {**params, 
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
             'moth': moth,
             'window_size': window_size,
-            'run_on': run_on}
+            'run_on': run_on,
+            # Use nearest power of 2 that gives default 10 seconds of data per batch
+            'batch_size': int(2**np.round(np.log2(params['s_per_batch'] / params['window_size'])))}
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
@@ -205,7 +207,7 @@ if __name__ == '__main__':
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_valid_kinematics=True, angles_only=True)
+            only_flapping=True, only_valid_kinematics=True, angles_only=True)
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)

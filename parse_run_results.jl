@@ -21,7 +21,7 @@ else
     fig_dir = joinpath(analysis_dir, "figs_dark")
 end
 
-function find_precision(noise_levels, mi; lower_bound=5e-4)
+function find_precision_deriv(noise_levels, mi; lower_bound=5e-4)
     sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
     sg_window = sg_window < 2 ? 5 : sg_window
     curve = vec(mean(mi, dims=1))
@@ -34,14 +34,14 @@ function find_precision(noise_levels, mi; lower_bound=5e-4)
     end
 end
 
-function find_precision_threshold(noise_levels, mi)
-    curve = vec(mean(mi, dims=1))
-    threshold = mean(mi[:,2]) - (4 .* std(mi[:,2]))
-    cross = curve .< threshold
-    if !any(cross)
+function find_precision_threshold(noise_levels, mi; threshold=0.9)
+    curve = mi ./ mi[1]
+    ind = findfirst(curve .< threshold)
+    if isnothing(ind)
         return NaN
+    else
+        return noise_levels[ind]
     end
-    return noise_levels[findfirst(cross)]
 end
 
 
@@ -64,8 +64,7 @@ function read_network_arch_file!(df, file, task)
             vals,
             time_per_epoch[key], 
             precision_curves[key][1] .* log2(exp(1)), 
-            1,
-            # find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key] .* log2(exp(1))),
+            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key][2:end]),
             [precision_curves[key] .* log2(exp(1))],
             [precision_noise[key] .* 1000]
         ))
@@ -119,6 +118,30 @@ mapping(:window=>"Window length (ms)", :milo, :mihi,
     # row=:hiddendim=>nonnumeric, col=:layers=>nonnumeric, color=:embed) * visual(Rangebars))
 ) |> 
 draw(_, scales(DodgeX = (; width = 0.1)), axis=(; limits=(nothing, (0, maximum(df.mi ./ df.window)))))
+
+## How does precision vary?
+
+dt = @pipe df |> 
+@subset(_, :neuron .== "neuron") |> 
+# @subset(_, :activation .== "PReLU") |> 
+@subset(_, :activation .== "LeakyReLU") |> 
+@subset(_, :bias .== "False") |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+groupby(_, [:window, :embed, :hiddendim, :layers]) |> 
+combine(_, :mi => mean => :mi, :mi=>std=>:mi_sd, :precision=>mean=>:precision) |> 
+@subset(_, :mi .> 0) |> 
+@transform(_, :window = log10.(:window))
+
+@pipe dt[sortperm(dt.precision),:] |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, 
+    row=:embed=>nonnumeric, 
+    col=:layers=>nonnumeric, color=:hiddendim=>log2, group=:hiddendim=>nonnumeric) * 
+    (visual(Scatter) + visual(Lines))
+) |> 
+draw(_, axis=(; yscale=log10))
 
 
 ## At a given window length, how does hiddendim change MI?
@@ -346,21 +369,46 @@ Label(f[end+1,1:end], "Rounding level (ms)")
 Label(f[:,0], "I(X,Y) (bits/s)", rotation=pi/2)
 f
 
-##
+## Let's come up with a better precision change point detection method
+using GLM
 
-row = first(eachrow(df))
+row = rand(eachrow(df))
 
 f = Figure()
 ax = Axis(f[1,1], xscale=log10)
 scatterlines!(ax, row.precision_noise, row.precision_curve[2:end] .- row.precision_curve[2])
-curve = row.precision_curve[2:end]
-S = zero(curve)
-ω = 0.01
-for i in 1:length(curve)-1
-    S[i] = min(0, S[i] + curve[i+1] - ω)
+
+# Page Hinkley CUMSUM
+# curve = row.precision_curve[2:end] ./ row.precision_curve[2]
+# for (i,ω) in enumerate(logrange(0.001, 10, 10)) 
+#     S = zero(curve)
+#     for i in 1:length(curve)-1
+#         S[i+1] = max(0, S[i] - curve[i] - ω)
+#     end
+#     scatterlines!(ax, row.precision_noise, S, color=log.(ω), colorrange = log.([0.001, 10]))
+# end
+
+# Sliding linear regression
+function sliding_slope(y::Vector{Float64}, x::Vector{Float64}; window=12)
+    slopes = zeros(length(x))
+    for i in 1:(length(x) - window)
+        mod = lm(@formula(y ~ x), DataFrame(x=x[i:i+window], y=y[i:i+window]))
+        slopes[i] = coef(mod)[2]
+    end
+    return slopes
 end
-scatterlines!(ax, row.precision_noise, S)
-# scatterlines!(ax, row.precision_noise, cumsum(row.precision_curve[2:end]))
+curve = row.precision_curve[2:end] ./ row.precision_curve[2]
+slopes = sliding_slope(curve, log.(row.precision_noise); window=20)
+scatterlines!(ax, row.precision_noise, slopes)
+ind = findfirst(slopes .< -0.1)
+vlines!(ax, row.precision_noise[ind])
+
+# Dumb 90% threshold
+curve = row.precision_curve[2:end] ./ row.precision_curve[2]
+ind = findfirst(curve .< 0.9)
+vlines!(ax, row.precision_noise[ind], color=:black, linestyle=:dash)
+
+ylims!(ax, extrema(row.precision_curve[2:end] .- row.precision_curve[2]) .+ [0, 0.1])
 f
 
 ##
@@ -379,6 +427,48 @@ for row in eachrow(dt)
 end
 ylims!(ax, 0, nothing)
 f
+
+## ------------------------------------ Kinematics precision ------------------------------------
+
+function read_precision_kinematics_file!(df, file, task)
+    precision_noise = h5read(joinpath(data_dir, file), "dict_0")
+    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    # Construct dataframe
+    first_row = split(first(keys(precision_noise)), "_")
+    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_noise"])
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Vector{Float64}, Vector{Float64})
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(precision_noise)
+        keysplit = split(key, "_")[2:2:end]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        vals[findfirst(names .== "rep")] = task
+        push!(thisdf, vcat(
+            vals,
+            precision_curves[key][1] .* log2(exp(1)), 
+            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key][2:end]),
+            [precision_curves[key] .* log2(exp(1))],
+            [precision_noise[key] .* 1000]
+        ))
+    end
+    append!(df, thisdf)
+end
+
+
+df = DataFrame()
+for task in 2:5
+    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-06-30_kinematics_precision_PACE_task_$(task)_hour_11.h5"), task)
+end
+
+##
+
+@pipe df |> 
+@transform(_, :neuron = ifelse.(:neuron .== "None", "all", :neuron)) |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:moth, row=:neuron) * visual(Scatter)
+) |> 
+draw(_)
 
 ## ------------------------------------ Subsampling results ------------------------------------
 
