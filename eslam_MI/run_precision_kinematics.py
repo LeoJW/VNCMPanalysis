@@ -96,7 +96,7 @@ def train_models_worker(chunk_with_id):
         'activation': nn.LeakyReLU,
         'use_bias': False, # Whether to use bias on first layer
         'layers': 4,
-        'hidden_dim': 512,
+        'hidden_dim': 256,
         'embed_dim': 10,
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
@@ -115,7 +115,7 @@ def train_models_worker(chunk_with_id):
         moth = str(moth)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
-        key = f'neuron_{run_on}_moth_{mothstring_no_underscore}_rep_{rep}_pid_{process_id}'
+        key = f'neuron_{run_on}_moth_{mothstring_no_underscore}_window_{window_size}_rep_{rep}_pid_{process_id}'
         print(key)
         # Set up which muscles to pull
         match run_on:
@@ -123,8 +123,10 @@ def train_models_worker(chunk_with_id):
                 use_muscles = ['ldvm', 'ldlm', 'rdlm', 'rdvm']
             case 'steering':
                 use_muscles = ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax']
-            case _:
+            case 'all':
                 use_muscles = None
+            case _:
+                use_muscles = [run_on]
         # Load dataset
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
@@ -159,7 +161,8 @@ if __name__ == '__main__':
     repeats_range = np.arange(1)
 
     main_iterator = product(
-        [None, 'all', 'power', 'steering'], 
+        ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax', 
+         'all', 'power', 'steering'], 
         moth_range,
         window_size_range, 
         repeats_range)
@@ -194,8 +197,10 @@ if __name__ == '__main__':
                 use_muscles = ['ldvm', 'ldlm', 'rdlm', 'rdvm']
             case 'steering':
                 use_muscles = ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax']
-            case _:
+            case 'all':
                 use_muscles = None
+            case _:
+                use_muscles = [this_params['run_on']]
         # Load dataset
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[0], # Just load one neuron so things run faster
