@@ -82,7 +82,7 @@ def train_models_worker(chunk_with_id):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 256, # Number of windows estimator processes at any time
-        's_per_batch': 30, # Alternatively specify seconds of data a batch should be
+        's_per_batch': 15, # Alternatively specify seconds of data a batch should be
         'learning_rate': 2e-3,
         'patience': 50,
         'min_delta': 0.001,
