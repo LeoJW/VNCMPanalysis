@@ -56,8 +56,8 @@ class DSIB(nn.Module):
         if batch_size > self.params['max_n_batches']:
             zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
             zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
-            for i in range(0, batch_size, self.params['batch_size']):
-                end_idx = min(i + self.params['batch_size'], batch_size)
+            for i in range(0, batch_size, self.params['max_n_batches']):
+                end_idx = min(i + self.params['max_n_batches'], batch_size)
                 zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:])
                 zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:])
         else:
@@ -105,8 +105,8 @@ class DSIBconv(nn.Module):
         if batch_size > self.params['max_n_batches']:
             zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
             zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
-            for i in range(0, batch_size, self.params['batch_size']):
-                end_idx = min(i + self.params['batch_size'], batch_size)
+            for i in range(0, batch_size, self.params['max_n_batches']):
+                end_idx = min(i + self.params['max_n_batches'], batch_size)
                 zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:,:])
                 zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:,:])
         else:
@@ -153,8 +153,8 @@ class DVSIB(nn.Module):
         if batch_size > self.params['max_n_batches']:
             zX = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
             zY = torch.zeros(batch_size, self.params['embed_dim'], device=dataX.device)
-            for i in range(0, batch_size, self.params['batch_size']):
-                end_idx = min(i + self.params['batch_size'], batch_size)
+            for i in range(0, batch_size, self.params['max_n_batches']):
+                end_idx = min(i + self.params['max_n_batches'], batch_size)
                 zX[i:end_idx,:] = self.encoder_x(dataX[i:end_idx,:,:])[2].squeeze()
                 zY[i:end_idx,:] = self.encoder_y(dataY[i:end_idx,:,:])[2].squeeze()
         else:

@@ -101,7 +101,7 @@ def train_models_worker(chunk_with_id):
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 128, # If input has more than this many batches, encoder runs are split up for memory management
+        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
     }
 
     process_id, chunk = chunk_with_id
@@ -137,9 +137,7 @@ def train_models_worker(chunk_with_id):
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
             'moth': moth,
             'window_size': window_size,
-            'run_on': run_on,
-            # Use nearest power of 2 that gives default 10 seconds of data per batch
-            'batch_size': int(2**np.round(np.log2(params['s_per_batch'] / params['window_size'])))}
+            'run_on': run_on}
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)

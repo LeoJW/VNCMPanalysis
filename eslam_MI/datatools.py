@@ -66,10 +66,6 @@ class TimeWindowDataset(Dataset):
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
         ):
-        """
-        Args:
-            batch_size (int): Size of each window
-        """
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
@@ -274,10 +270,6 @@ class TimeWindowDatasetKinematics(Dataset):
             only_valid_kinematics=False, # Only keep windows with kinematics
             only_flapping=False
         ):
-        """
-        Args:
-            batch_size (int): Size of each window
-        """
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
@@ -332,6 +324,17 @@ class TimeWindowDatasetKinematics(Dataset):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         mask = getattr(self, 'spike_mask_' + X.lower())
         getattr(self, X)[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
+    
+    def time_shift(self, time_offset=0.0, X='X'):
+        """
+        Shift one variable (X, can be 'X', 'Y', or 'Z') in time by time_offset
+        Runs basically the same thing as move_data_to_windows, but on one variable, and matches the resulting windows up to 
+        windows for the rest of the dataset
+        """
+        # Do everything as you would
+
+        # Run a searchsorted on new window_times into main window_times. Use this to match 1:1
+        # Have some mechanism to mark these matches invalid if too far apart
     
     def move_data_to_windows(self, time_offset=0.0):
         """
