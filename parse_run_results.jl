@@ -348,6 +348,23 @@ f
 
 ##
 
+row = first(eachrow(df))
+
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+scatterlines!(ax, row.precision_noise, row.precision_curve[2:end] .- row.precision_curve[2])
+curve = row.precision_curve[2:end]
+S = zero(curve)
+ω = 0.01
+for i in 1:length(curve)-1
+    S[i] = min(0, S[i] + curve[i+1] - ω)
+end
+scatterlines!(ax, row.precision_noise, S)
+# scatterlines!(ax, row.precision_noise, cumsum(row.precision_curve[2:end]))
+f
+
+##
+
 dt = @pipe df |> 
     @subset(_, :window .< 0.1) |> 
     @subset(_, :neuron .== "neuron") |> 

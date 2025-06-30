@@ -82,7 +82,7 @@ def train_models_worker(chunk_with_id):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 256, # Number of windows estimator processes at any time
-        's_per_batch': 15, # Alternatively specify seconds of data a batch should be
+        's_per_batch': 5, # Alternatively specify seconds of data a batch should be
         'learning_rate': 2e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -101,7 +101,7 @@ def train_models_worker(chunk_with_id):
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+        'max_n_batches': 128, # If input has more than this many batches, encoder runs are split up for memory management
     }
 
     process_id, chunk = chunk_with_id
@@ -208,9 +208,11 @@ if __name__ == '__main__':
             model.eval()
             os.remove(model_path)
             precision_mi = precision_rounding(precision_levels, ds, model, X='Y', Y='Z')
+            del model
         precision_curves[key] = precision_mi
         precision_levels_dict[key] = precision_levels
         all_params[key] = [k + ' : ' + str(val) for k, val in this_params.items()]
+        empty_cache()
 
         iteration_count += 1
         if (iteration_count % save_every_n_iterations == 0):
