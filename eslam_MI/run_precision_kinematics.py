@@ -133,6 +133,7 @@ def train_models_worker(chunk_with_id):
         # Set params
         this_params = {**params, 
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
+            'moth': moth,
             'window_size': window_size,
             'run_on': run_on}
         # Train model, keep only best one based on early stopping
