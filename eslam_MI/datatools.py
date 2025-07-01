@@ -332,9 +332,78 @@ class TimeWindowDatasetKinematics(Dataset):
         windows for the rest of the dataset
         """
         # Do everything as you would
+        # bout_diffs = self.bout_ends - self.bout_starts
+        # window_times, valid_window = [], []
+        # window_times.append(0)
+        # valid_window.append(False)
+        # for i in range(len(self.bout_starts)):
+        #     n_windows = np.ceil((bout_diffs[i] - time_offset) / self.window_size).astype(int)
+        #     for j in range(n_windows):
+        #         start_time = self.bout_starts[i] + time_offset + j * self.window_size
+        #         window_times.append(start_time)
+        #         valid_window.append(True)
+        #     # If in between bouts, make a window edge that's halfway, this window should always be invalid
+        #     if i < (len(self.bout_starts) - 1):
+        #         start_time = self.bout_ends[i] + (self.bout_starts[i+1] - self.bout_ends[i])
+        #         window_times.append(start_time)
+        #         valid_window.append(False)
+        #     # Last window in any bout is automatically made invalid
+        #     valid_window[-1] = False
+        # this_valid_window = np.array(valid_window)
+        # this_window_times = np.array(window_times)
+        # # If variable is kinematics (Z) valid windows are only those of the correct length (since it's not an event-based process)
+        # if X == 'Z' or self.only_valid_kinematics:
+        #     window_valid_length = np.diff(this_window_times) < (self.window_size + np.finfo(np.float32).eps)
+        #     this_valid_window = np.logical_and(this_valid_window, np.concatenate((window_valid_length, np.array([True]))))
+        # this_n_windows = len(this_valid_window)
 
-        # Run a searchsorted on new window_times into main window_times. Use this to match 1:1
-        # Have some mechanism to mark these matches invalid if too far apart
+        # Windows that straddle bouts or other sections can end up technically longer than window time.
+        # Not usually a problem, until we start shifting data into long sections. 
+        # Make a temporary vector of window times with 
+        # window_valid_length = np.diff(self.window_times) < (self.window_size + np.finfo(np.float32).eps)
+        # this_valid_window = np.logical_and(this_valid_window, np.concatenate((window_valid_length, np.array([True]))))
+
+        if X in ['X', 'Y']:
+            window_inds = [np.searchsorted(self.window_times, x + time_offset) - 1 for x in getattr(self, X + 'times')]
+        else:
+            window_inds = np.searchsorted(self.window_times, self.Ztimes + time_offset, side='right') - 1
+        
+        match X:
+            case 'X':
+                main = np.full((self.n_windows, len(self.Xtimes), self.max_neuron), self.no_spike_value, dtype=np.float32)
+            case 'Y':
+                main = np.full((self.n_windows, len(self.Ytimes), self.max_muscle), self.no_spike_value, dtype=np.float32)
+            case 'Z':
+                main = np.full((self.n_windows, self.Zorig.shape[0], self.max_kine), self.no_spike_value, dtype=np.float32)
+        # Assign to main arrays, cases for neurons or muscles
+        if (X == 'X' or X == 'Y') and self.use_ISI:
+            for i in range(len(getattr(self, X+'times'))):
+                mask = self.valid_window[window_inds[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
+                firstval = getattr(self, X+'times')[i][mask][0] + time_offset - self.window_times[window_inds[i][mask]][0]
+                main[window_inds[i][mask],i,column_inds] = np.insert(np.diff(getattr(self, X+'times')[i][mask] + time_offset - self.window_times[window_inds[i][mask]]), 0, firstval)
+                first = column_inds == 0
+                main[window_inds[i][mask][first], i, column_inds[first]] = getattr(self, X+'times')[i][mask][first] + time_offset - self.window_times[window_inds[i][mask][first]]
+        elif (X == 'X' or X == 'Y') and not self.use_ISI:
+            for i in range(len(getattr(self, X+'times'))):
+                column_inds = monotonic_repeats_to_ranges(window_inds[i])
+                main[window_inds[i],i,column_inds] = getattr(self, X+'times')[i] + time_offset - self.window_times[window_inds[i]]
+        # Assign to main arrays, case for kinematics
+        elif X == 'Z':
+            mask = self.kine_valid_windows[window_inds]
+            column_inds = monotonic_repeats_to_ranges(window_inds)[mask]
+            for i in range(self.Zorig.shape[0]):
+                main[window_inds[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_offset, self.Ztimes[mask], self.Zorig[i,mask])
+        # Trim to windows that are valid
+        main = main[self.valid_window,:,:]
+        # this_window_times = this_window_times[this_valid_window]
+        # this_valid_window = this_valid_window[this_valid_window]
+        # this_n_windows = len(this_window_times)
+        # self.new_window_times = this_window_times
+        # self.new_valid_window = this_valid_window
+        self.main = main
+
+
     
     def move_data_to_windows(self, time_offset=0.0):
         """
@@ -343,36 +412,23 @@ class TimeWindowDatasetKinematics(Dataset):
             no_spike_value: Filler value used to indicate no spike occurred in that position
             time_offset: Offset to window start time in s, should be positive!
         """
-        # Make chunk start times
-        # Loop over bouts, cut up into chunks, assign start times
-        bout_diffs = self.bout_ends - self.bout_starts
-        window_times, valid_window = [], []
-        # Partial-length windows will often exist at end of bouts, valid_window is used to trim this.
-        # If time offset added, this also ends up trimming partial-length window at start of next bout (great!).
-        # Just leaves partial-length start of very first bout, if an offset is added
-        # For that we add a starting window to catch spikes before initial time offset
-        if time_offset > 0:
-            window_times.append(0)
-            valid_window.append(False)
-        for i in range(len(self.bout_starts)):
-            n_windows = np.ceil((bout_diffs[i] - time_offset) / self.window_size).astype(int)
-            for j in range(n_windows):
-                start_time = self.bout_starts[i] + time_offset + j * self.window_size
-                window_times.append(start_time)
-                valid_window.append(True)
-            # If in between bouts, make a window edge that's halfway, this window should always be invalid
-            if i < (len(self.bout_starts) - 1):
-                start_time = self.bout_ends[i] + (self.bout_starts[i+1] - self.bout_ends[i])
-                window_times.append(start_time)
-                valid_window.append(False)
-            # Last window in any bout is automatically made invalid
-            valid_window[-1] = False
-        self.valid_window = np.array(valid_window)
-        self.window_times = np.array(window_times)
+        window_times, valid_windows = [], []
+        # Make windows from each bout start to the next
+        # Valid windows are those where the entire window is within the bout, otherwise marked invalid
+        for i in range(len(self.bout_starts) - 1):
+            bout_windows = np.arange(self.bout_starts[i] + time_offset, self.bout_starts[i+1], self.window_size)
+            bout_valid_windows = np.roll(bout_windows < self.bout_ends[i], shift=-1)
+            bout_valid_windows[-1] = False
+            window_times.append(bout_windows)
+            valid_windows.append(bout_valid_windows)
+        self.window_times = np.concatenate(window_times)
+        self.valid_windows = np.concatenate(valid_windows)
         self.n_windows = len(self.window_times)
-        # For kinematics valid windows are only those of the correct length (since it's not an event-based process)
+        # For kinematics, stricter enforcement with valid windows only those of the correct length
         window_valid_length = np.diff(self.window_times) < (self.window_size + np.finfo(np.float32).eps)
-        self.kine_valid_window = np.logical_and(self.valid_window, np.concatenate((window_valid_length, np.array([True]))))
+        self.kine_valid_windows = np.logical_and(self.valid_windows, np.concatenate((window_valid_length, np.array([True]))))
+        if self.only_valid_kinematics:
+            self.valid_windows = self.kine_valid_windows
         # Use searchsorted on each neuron/muscle to assign to chunks
         # This is by far the slowest part of this whole function!
         window_inds_x = [np.searchsorted(self.window_times, x) - 1 for x in self.Xtimes]
@@ -391,49 +447,53 @@ class TimeWindowDatasetKinematics(Dataset):
         # Loop down each neuron, muscle, assign data to main arrays
         if self.use_ISI:
             for i in range(len(self.Xtimes)):
-                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
-                firstval = self.Xtimes[i][0] - self.window_times[window_inds_x[i]][0]
-                Xmain[window_inds_x[i],i,column_inds] = np.insert(np.diff(self.Xtimes[i] - self.window_times[window_inds_x[i]]), 0, firstval)
+                # Get where windows are valid (mask), which columns spike times will go in
+                mask = self.valid_windows[window_inds_x[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
+                maskXtimes = self.Xtimes[i][mask]
+                maskwindow_times = self.window_times[window_inds_x[i][mask]]
+                # Fill spike time values in
+                firstval = maskXtimes[0] - maskwindow_times[0]
+                Xmain[window_inds_x[i][mask],i,column_inds] = np.insert(np.diff(maskXtimes - maskwindow_times), 0, firstval)
+                # Change first column values to time from window start
                 first = column_inds == 0
-                Xmain[window_inds_x[i][first], i, column_inds[first]] = self.Xtimes[i][first] - self.window_times[window_inds_x[i][first]]
+                Xmain[window_inds_x[i][mask][first], i, column_inds[first]] = maskXtimes[first] - maskwindow_times[first]
             for i in range(len(self.Ytimes)):
-                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
-                firstval = self.Ytimes[i][0] - self.window_times[window_inds_y[i]][0]
-                Ymain[window_inds_y[i],i,column_inds] = np.insert(np.diff(self.Ytimes[i] - self.window_times[window_inds_y[i]]), 0, firstval)
+                # Get where windows are valid (mask), which columns spike times will go in
+                mask = self.valid_windows[window_inds_y[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
+                maskYtimes = self.Ytimes[i][mask]
+                maskwindow_times = self.window_times[window_inds_y[i]][mask]
+                # Fill spike time values in
+                firstval = maskYtimes[0] - maskwindow_times[0]
+                Ymain[window_inds_y[i][mask],i,column_inds] = np.insert(np.diff(maskYtimes - maskwindow_times), 0, firstval)
+                # Change first column values to time from window start
                 first = column_inds == 0
-                Ymain[window_inds_y[i][first], i, column_inds[first]] = self.Ytimes[i][first] - self.window_times[window_inds_y[i][first]]
+                Ymain[window_inds_y[i][mask][first],i,column_inds[first]] = maskYtimes[first] - maskwindow_times[first]
         else:    
             for i in range(len(self.Xtimes)):
-                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])
-                Xmain[window_inds_x[i],i,column_inds] = self.Xtimes[i] - self.window_times[window_inds_x[i]]
+                mask = self.valid_windows[window_inds_x[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
+                Xmain[window_inds_x[i][mask],i,column_inds] = self.Xtimes[i][mask] - self.window_times[window_inds_x[i][mask]]
             for i in range(len(self.Ytimes)):
-                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])
-                Ymain[window_inds_y[i],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i]]
+                mask = self.valid_windows[window_inds_y[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
+                Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i][mask]]
         # Assign kinematics data
         # Have to interpolate if time offset applied
-        mask = self.kine_valid_window[window_inds_z]
+        mask = self.kine_valid_windows[window_inds_z]
         column_inds = monotonic_repeats_to_ranges(window_inds_z)[mask]
         if time_offset > 0:
             for i in range(self.Zorig.shape[0]):
                 Zmain[window_inds_z[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_offset, self.Ztimes[mask], self.Zorig[i,mask])
         else:
             Zmain[window_inds_z[mask],:,column_inds] = np.transpose(self.Zorig[:,mask])
-        # Trim windows that aren't valid (too short, in between bouts, etc)
-        # Note that there can be windows that are valid for neurons & muscles but not kinematics!
-        Xmain = Xmain[self.valid_window,:,:]
-        Ymain = Ymain[self.valid_window,:,:]
-        Zmain = Zmain[self.valid_window,:,:]
-        self.window_times = self.window_times[self.valid_window]
-        self.kine_valid_window = self.kine_valid_window[self.valid_window]
-        self.n_windows = len(self.window_times)
-        # If only keeping windows with kinematics trim further
-        if self.only_valid_kinematics:
-            Xmain = Xmain[self.kine_valid_window,:,:]
-            Ymain = Ymain[self.kine_valid_window,:,:]
-            Zmain = Zmain[self.kine_valid_window,:,:]
-            self.window_times = self.window_times[self.kine_valid_window]
-            self.kine_valid_window = self.kine_valid_window[self.kine_valid_window]
-            self.n_windows = len(self.window_times)
+        # Trim windows that aren't valid (in between bouts)
+        # Will keep window times long, to include invalid windows, as time shifting variables needs to refer to windows again
+        Xmain = Xmain[self.valid_windows,:,:]
+        Ymain = Ymain[self.valid_windows,:,:]
+        Zmain = Zmain[self.valid_windows,:,:]
+        self.window_times = self.window_times[self.valid_windows]
         # Trim even further if using kinematics to only get flapping periods
         if self.only_flapping:
             maxvals = Zmain[:,[0],:].max(axis=2)
@@ -442,8 +502,9 @@ class TimeWindowDatasetKinematics(Dataset):
             Xmain = Xmain[valid,:,:]
             Ymain = Ymain[valid,:,:]
             Zmain = Zmain[valid,:,:]
-            self.window_times = self.window_times[valid]
-            self.n_windows = len(self.window_times)
+            self.valid_windows[self.valid_windows] = valid
+            self.kine_valid_windows[self.kine_valid_windows] = valid
+        self.n_windows = Xmain.shape[0]
         # Convert to tensor, move to device. Make copies that noise will be applied on
         self.Xmain = torch.tensor(Xmain, device=device)
         self.Ymain = torch.tensor(Ymain, device=device)
@@ -689,3 +750,79 @@ def load_dicts_from_h5(filename):
                     d[key] = dataset[()]
             dicts.append(d)
     return dicts
+
+
+if __name__ == '__main__':
+    import sys
+    import os
+
+    import torch
+    import warnings
+    import time
+    from datetime import datetime
+
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import torch.multiprocessing as mp
+    import torchvision.transforms.functional as TF
+    import numpy as np
+    from scipy.ndimage import gaussian_filter1d
+    import matplotlib.pyplot as plt
+    import torch.optim as optim
+
+    from torch.utils.data import Dataset, DataLoader
+    from itertools import islice
+
+    warnings.filterwarnings("ignore")
+
+    # Import MI files
+    from utils import *
+    from models import *
+    from estimators import *
+    from trainers import *
+    from datatools import *
+
+    main_dir = os.getcwd()
+    data_dir = os.path.join(main_dir, '..', 'localdata')
+    model_cache_dir = os.path.join(data_dir, 'model_cache')
+    os.makedirs(model_cache_dir, exist_ok=True)
+    result_dir = os.path.join(data_dir, 'estimation_runs')
+    os.makedirs(result_dir, exist_ok=True)
+    machine = 'HOME'
+
+    params = {
+        # Optimizer parameters (for training)
+        'epochs': 300,
+        'window_size': 0.04,
+        # 'batch_size': 512, # Number of windows estimator processes at any time
+        's_per_batch': 25, # Alternatively specify seconds of data a batch should be
+        'learning_rate': 5e-3,
+        'patience': 50,
+        'min_delta': 0.001,
+        'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
+        'train_fraction': 0.95,
+        'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
+        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'model_cache_dir': model_cache_dir,
+        # Critic parameters for the estimator
+        'model_func': DSIB, # DSIB or DVSIB
+        'activation': nn.PReLU,
+        'layers': 3,
+        'hidden_dim': 1024,
+        'embed_dim': 12,
+        'use_bias': False,
+        'beta': 512, # Just used in DVSIB
+        'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
+        'mode': 'sep', # Almost always we'll use separable
+        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+    }
+    precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.15), 100)))
+
+    # All muscles together
+    ds = TimeWindowDatasetKinematics(os.path.join(data_dir, '2025-02-25_1'), 
+        window_size=params['window_size'], neuron_label_filter=1, 
+        # select_y=['rdvm'],
+        use_ISI=True, only_valid_kinematics=True, angles_only=True)
+
+    toff = 0.05
+    ds.time_shift(time_offset=toff, X='X')
