@@ -158,6 +158,14 @@ if __name__ == '__main__':
     # Package together main iterators
     window_size_range = np.logspace(np.log10(0.02), np.log10(0.2), 10)
     moth_range = ['2025-02-25', '2025-02-25_1']
+    # [start_time, end_time] pairs for each subsample
+    split_sizes = split_sizes=[1,2,3,4,5,6]
+    split_times = np.empty((0,2), dtype=int)
+    for ss in split_sizes:
+        # Each row is start, end pair
+        split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
+        split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
+        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
     repeats_range = np.arange(1)
 
     main_iterator = product(

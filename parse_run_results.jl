@@ -457,23 +457,52 @@ end
 
 
 df = DataFrame()
-for task in 2:5
-    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-06-30_kinematics_precision_PACE_task_$(task)_hour_11.h5"), task)
+for task in 0:5
+    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-06-30_kinematics_precision_PACE_task_$(task)_hour_17.h5"), task)
 end
+
+single_muscles = [
+    "lax", "lba", "lsa", "ldvm", "ldlm", 
+    "rdlm", "rdvm", "rsa", "rba", "rax"
+]
 
 ##
 
 @pipe df |> 
-@transform(_, :neuron = ifelse.(:neuron .== "None", "all", :neuron)) |> 
+@transform(_, :neuron = ifelse.(in.(:neuron, (single_muscles,)), "single", :neuron)) |> 
 (AlgebraOfGraphics.data(_) *
 mapping(:mi, :precision, color=:moth, row=:neuron) * visual(Scatter)
 ) |> 
-draw(_)
+draw(_, axis=(; yscale=log10))
+
+##
+
+@pipe df |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@subset(_, in.(:neuron, (single_muscles,))) |> 
+transform!(_, :neuron =>  ByRow(s ->s[2:end]) => :neuron) |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:window, col=:moth, row=:neuron) * visual(Scatter)
+) |> 
+draw(_)#, facet=(; linkyaxes=:none))
+
+## Effect of window size on precision; Depends on how many muscles used!
+
+@pipe df |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :single = in.(:neuron, (single_muscles,))) |> 
+@subset(_, (!).(:single)) |> 
+# transform!(_, :neuron =>  ByRow(s -> s[2:end]) => :neuron) |> 
+# map!(s -> s[2:end], dt[dt.single].neuron)
+(AlgebraOfGraphics.data(_) *
+mapping(:window=>log10, :precision, color=:mi, col=:moth, row=:neuron) * visual(Scatter)
+) |> 
+draw(_, axis=(; yscale=log10))
 
 ## ------------------------------------ Subsampling results ------------------------------------
 
 file = "subsampling_PACE_2025-06-06.h5"
-subsamples = h5read(joinpath(data_dir, file), "dict_0")
+#subsamples = h5read(joinpath(data_dir, file), "dict_0")
 mi = h5read(joinpath(data_dir, file), "dict_1")
 dim = h5read(joinpath(data_dir, file), "dict_2")
 
