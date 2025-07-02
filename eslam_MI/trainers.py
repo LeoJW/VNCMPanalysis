@@ -83,7 +83,7 @@ def train_model_no_eval(dataset, params,
     # Deal with subsetting
     if subset_times is not None:
         # Turn subset times into window indices
-        subset_inds = np.searchsorted(dataset.window_times, subset_times) - 1
+        subset_inds = np.searchsorted(dataset.window_times[dataset.valid_windows], subset_times) - 1
         if subset_inds[1] > subset_inds[0]:
             # Normal case, start time before end time
             num = subset_inds[1] - subset_inds[0]
@@ -109,8 +109,8 @@ def train_model_no_eval(dataset, params,
     test_block_inds = np.vstack((start_inds, start_inds + remainder_split + block_len))
     # Get time windows from indices, will use later as indices can move around when time offsets applied
     test_block_times = np.vstack((
-        dataset.window_times[use_ind][test_block_inds[0,:]],
-        dataset.window_times[use_ind][test_block_inds[1,:]]
+        dataset.window_times[dataset.valid_windows][use_ind][test_block_inds[0,:]],
+        dataset.window_times[dataset.valid_windows][use_ind][test_block_inds[1,:]]
     ))
     # Set arrays of indices for train/test, send to device
     test_indices = np.concatenate([np.arange(test_block_inds[0,i], test_block_inds[1,i]) for i in range(test_block_inds.shape[1])])
@@ -166,10 +166,10 @@ def train_model_no_eval(dataset, params,
                 max_offset = np.clip(np.abs(epoch - 5) / params['epochs_till_max_shift'], 0, 1) * dataset.window_size
             dataset.move_data_to_windows(time_offset=np.random.uniform(high=max_offset))
             # Get new training set indices (things shift around after applying time offset)
-            test_block_inds = np.searchsorted(dataset.window_times, test_block_times) - 1
+            test_block_inds = np.searchsorted(dataset.window_times[dataset.valid_windows], test_block_times) - 1
             # If subsetting, generate new subset indices from subset times
             if subset_times is not None:
-                subset_inds = np.searchsorted(dataset.window_times, subset_times) - 1
+                subset_inds = np.searchsorted(dataset.window_times[dataset.valid_windows], subset_times) - 1
                 if subset_inds[1] > subset_inds[0]:
                     # Normal case, start time before end time
                     num = subset_inds[1] - subset_inds[0]
@@ -222,7 +222,7 @@ def train_model_no_eval(dataset, params,
         dataset.move_data_to_windows(time_offset=0)
         # If subsetting, generate new subset indices from subset times
         if subset_times is not None:
-            subset_inds = np.searchsorted(dataset.window_times, subset_times) - 1
+            subset_inds = np.searchsorted(dataset.window_times[dataset.valid_windows], subset_times) - 1
             if subset_inds[1] > subset_inds[0]:
                 # Normal case, start time before end time
                 num = subset_inds[1] - subset_inds[0]

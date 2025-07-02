@@ -479,7 +479,7 @@ def subsample_MI(dataset, params, split_sizes=np.arange(1,6), X='X', Y='Y'):
         # Each row is start, end pair
         split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
         split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
-        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
+        split_times = np.concatenate((split_times, dataset.window_times[dataset.valid_windows][split_indices]))
     mi = np.zeros((len(split_times)))
     subsets = np.hstack([np.repeat(x, x) for x in split_sizes]) # run length encoding of split_sizes
     # Loop over subsets
@@ -512,7 +512,7 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
         # Each row is start, end pair
         split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
         split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
-        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
+        split_times = np.concatenate((split_times, dataset.window_times[dataset.valid_windows][split_indices]))
     mi, embed_dim_vec = [], []
     subsets = np.hstack([np.repeat(x, x) for x in split_sizes]) # run length encoding of split_sizes
     # Loop over subsets

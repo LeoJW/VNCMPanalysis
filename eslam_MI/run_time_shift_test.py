@@ -119,7 +119,7 @@ def train_models_worker(chunk_with_id):
         print(key)
         # Load dataset
         ds = TimeWindowDataset(os.path.join(data_dir, moth), params['window_size'], 
-            select_x=[10],
+            select_x=[10]
             # select_y=use_muscles,
         )
         # Set params
@@ -184,7 +184,7 @@ if __name__ == '__main__':
         model_path, this_params = single_result
         # Load dataset
         ds = TimeWindowDataset(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
-            select_x=[0], # Just load one neuron so things run faster
+            select_x=[10]
             # select_y=use_muscles,
         )
         # Load model, run inference tasks
