@@ -428,6 +428,44 @@ end
 ylims!(ax, 0, nothing)
 f
 
+## ------------------------------------ TIme shifting test ------------------------------------
+
+function read_timeshift_file!(df, file)
+    precision_noise = h5read(joinpath(data_dir, file), "dict_0")
+    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    # Construct dataframe
+    first_row = split(first(keys(precision_noise)), "_")
+    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_noise"])
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Vector{Float64}, Vector{Float64})
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(precision_noise)
+        keysplit = split(key, "_")[2:2:end]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        # vals[findfirst(names .== "rep")] = task
+        push!(thisdf, vcat(
+            vals,
+            precision_curves[key][1] .* log2(exp(1)), 
+            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key][2:end]),
+            [precision_curves[key] .* log2(exp(1))],
+            [precision_noise[key] .* 1000]
+        ))
+    end
+    append!(df, thisdf)
+end
+
+df = DataFrame()
+read_timeshift_file!(df, joinpath(data_dir, "2025-07-02_timeshift_test_PACE_.h5"))
+
+##
+@pipe df |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:shift, :mi) * visual(Scatter)
+) |> 
+draw(_)
+
 ## ------------------------------------ Kinematics precision ------------------------------------
 
 function read_precision_kinematics_file!(df, file, task)
@@ -454,7 +492,6 @@ function read_precision_kinematics_file!(df, file, task)
     end
     append!(df, thisdf)
 end
-
 
 df = DataFrame()
 for task in 0:5

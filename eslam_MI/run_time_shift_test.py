@@ -108,26 +108,29 @@ def train_models_worker(chunk_with_id):
     results = []
     for condition in chunk:
         # Unpack chunk
-        moth, time_shift, rep = condition
+        moth, time_shift, shift_variable, rep = condition
         # Enforce types (fuck python)
         rep = int(rep)
         moth = str(moth)
         time_shift = float(time_shift)
+        shift_variable = str(shift_variable)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
-        key = f'moth_{mothstring_no_underscore}_shift_{time_shift}_rep_{rep}_pid_{process_id}'
+        key = f'moth_{mothstring_no_underscore}_shift_{time_shift}_var_{shift_variable}_rep_{rep}_pid_{process_id}'
         print(key)
         # Load dataset
         ds = TimeWindowDataset(os.path.join(data_dir, moth), params['window_size'], 
             select_x=[10]
-            # select_y=use_muscles,
         )
         # Set params
         this_params = {**params, 
             'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
-            'moth': moth
+            'moth': moth,
+            'time_shift': time_shift,
+            'shift_variable': shift_variable
             # 'window_size': window_size,}
         }
+        ds.time_shift(time_shift, X=shift_variable)
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
@@ -153,6 +156,7 @@ if __name__ == '__main__':
     main_iterator = product(
         moth_range,
         time_shifts,
+        ['X','Y'],
         # window_size_range,
         repeats_range
     )
@@ -185,8 +189,8 @@ if __name__ == '__main__':
         # Load dataset
         ds = TimeWindowDataset(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[10]
-            # select_y=use_muscles,
         )
+        ds.time_shift(this_params['time_shift'], X=this_params['shift_variable'])
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)
