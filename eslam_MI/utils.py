@@ -519,7 +519,9 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     for subset_idx, embed_dim in product(range(len(subsets)), embed_range):
         this_params = {**params, 'embed_dim': embed_dim}
         # Train model
-        mis_test, train_id, indices = train_model_no_eval(dataset, this_params, subset_times=split_times[subset_idx,:], return_indices=True)
+        mis_test, train_id, indices = train_model_no_eval(dataset, this_params, 
+            subset_times=split_times[subset_idx,:], return_indices=True, verbose=False
+        )
         with torch.no_grad():
             # Retrieve model, run inference to get MI value
             mod = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)

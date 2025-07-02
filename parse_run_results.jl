@@ -471,11 +471,16 @@ draw(_)
 function read_precision_kinematics_file!(df, file, task)
     precision_noise = h5read(joinpath(data_dir, file), "dict_0")
     precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    subsets = h5read(joinpath(data_dir, file), "dict_2")
+    mi_subsets = h5read(joinpath(data_dir, file), "dict_3")
     # Construct dataframe
     first_row = split(first(keys(precision_noise)), "_")
-    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_noise"])
+    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_noise", "subset", "mi_subset"])
     is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
-    types = vcat([x ? Float64 : String for x in is_numeric], Float64, Float64, Vector{Float64}, Vector{Float64})
+    types = vcat(
+        [x ? Float64 : String for x in is_numeric], 
+        Float64, Float64, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}
+    )
     thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
     thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
     for key in keys(precision_noise)
@@ -487,7 +492,9 @@ function read_precision_kinematics_file!(df, file, task)
             precision_curves[key][1] .* log2(exp(1)), 
             find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key][2:end]),
             [precision_curves[key] .* log2(exp(1))],
-            [precision_noise[key] .* 1000]
+            [precision_noise[key] .* 1000],
+            [subsets[key]],
+            [mi_subsets[key]]
         ))
     end
     append!(df, thisdf)
@@ -495,7 +502,7 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-06-30_kinematics_precision_PACE_task_$(task)_hour_17.h5"), task)
+    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task).h5"), task)
 end
 
 single_muscles = [
@@ -528,7 +535,7 @@ draw(_)#, facet=(; linkyaxes=:none))
 @pipe df |> 
 @transform(_, :mi = :mi ./ :window) |> 
 @transform(_, :single = in.(:neuron, (single_muscles,))) |> 
-@subset(_, (!).(:single)) |> 
+@transform(_, :neuron = ifelse.(:single, "single", :neuron)) |> 
 # transform!(_, :neuron =>  ByRow(s -> s[2:end]) => :neuron) |> 
 # map!(s -> s[2:end], dt[dt.single].neuron)
 (AlgebraOfGraphics.data(_) *
