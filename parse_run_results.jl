@@ -456,13 +456,13 @@ function read_timeshift_file!(df, file)
 end
 
 df = DataFrame()
-read_timeshift_file!(df, joinpath(data_dir, "2025-07-02_timeshift_test_PACE_.h5"))
+read_timeshift_file!(df, joinpath(data_dir, "2025-07-02_timeshift_test_PACE__hour_09.h5"))
 
 ##
-@pipe df |> 
+@pipe df[sortperm(df.shift),:] |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:shift, :mi) * visual(Scatter)
+mapping(:shift, :mi, row=:var) * visual(ScatterLines)
 ) |> 
 draw(_)
 

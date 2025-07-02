@@ -80,7 +80,7 @@ def train_models_worker(chunk_with_id):
     params = {
         # Optimizer parameters (for training)
         'epochs': 300,
-        'window_size': 0.05,
+        # 'window_size': 0.05,
         # 'batch_size': 512, # Number of windows estimator processes at any time
         's_per_batch': 25, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
@@ -89,7 +89,7 @@ def train_models_worker(chunk_with_id):
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 5, # Number of epochs until random shifting is at max
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
@@ -108,27 +108,26 @@ def train_models_worker(chunk_with_id):
     results = []
     for condition in chunk:
         # Unpack chunk
-        moth, time_shift, shift_variable, rep = condition
+        moth, time_shift, shift_variable, window_size, rep = condition
         # Enforce types (fuck python)
         rep = int(rep)
         moth = str(moth)
         time_shift = float(time_shift)
         shift_variable = str(shift_variable)
+        window_size = float(window_size)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
-        key = f'moth_{mothstring_no_underscore}_shift_{time_shift}_var_{shift_variable}_rep_{rep}_pid_{process_id}'
+        key = f'moth_{mothstring_no_underscore}_shift_{time_shift}_var_{shift_variable}_window_{window_size}_rep_{rep}_pid_{process_id}'
         print(key)
         # Load dataset
-        ds = TimeWindowDataset(os.path.join(data_dir, moth), params['window_size'], 
-            select_x=[10]
-        )
+        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size, select_x=[10])
         # Set params
         this_params = {**params, 
             'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
             'moth': moth,
             'time_shift': time_shift,
-            'shift_variable': shift_variable
-            # 'window_size': window_size,}
+            'shift_variable': shift_variable,
+            'window_size': window_size,
         }
         ds.time_shift(time_shift, X=shift_variable)
         # Train model, keep only best one based on early stopping
@@ -149,7 +148,7 @@ if __name__ == '__main__':
     precision_levels = np.logspace(np.log10(0.0001), np.log10(1.0), 300)
 
     # Package together main iterators
-    # window_size_range = np.logspace(np.log10(0.02), np.log10(0.2), 10)
+    window_size_range = np.logspace(np.log10(0.01), np.log10(0.2), 10)
     moth_range = ['2025-03-11']
     time_shifts = np.concatenate([np.linspace(-0.5, -0.025, 40), np.array([0]), np.linspace(0.025, 0.5, 40)])
     repeats_range = np.arange(1)
@@ -157,7 +156,7 @@ if __name__ == '__main__':
         moth_range,
         time_shifts,
         ['X','Y'],
-        # window_size_range,
+        window_size_range,
         repeats_range
     )
     
