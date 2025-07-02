@@ -71,10 +71,22 @@ class TimeWindowDataset(Dataset):
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
-        if select_x is not None:
+        # Select from X by index, or by name
+        if select_x is not None and all(isinstance(x, (int, float)) for x in select_x):
             self.Xtimes = [self.Xtimes[i] for i in select_x]
-        if select_y is not None:
+            self.neuron_labels = [self.neuron_labels[i] for i in select_x]
+        elif select_x is not None:
+            keep_inds = [i for i,lab in enumerate(self.neuron_labels) if lab in select_x]
+            self.Xtimes = [self.Xtimes[i] for i in keep_inds]
+            self.neuron_labels = [self.neuron_labels[i] for i in keep_inds]
+        # Select from Y by index, or by name
+        if select_y is not None and all(isinstance(x, (int, float)) for x in select_y):
             self.Ytimes = [self.Ytimes[i] for i in select_y]
+            self.muscle_labels = [self.muscle_labels[i] for i in select_y]
+        elif select_y is not None:
+            keep_inds = [i for i,lab in enumerate(self.muscle_labels) if lab in select_y]
+            self.Ytimes = [self.Ytimes[i] for i in keep_inds]
+            self.muscle_labels = [self.muscle_labels[i] for i in keep_inds]
         
         self.use_ISI = use_ISI
         self.window_size = window_size
@@ -97,14 +109,19 @@ class TimeWindowDataset(Dataset):
         """
         # Generate noise directly into pre-allocated buffer
         getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
-        # Apply noise in-place
+        # Get references to the tensors
+        target_tensor = getattr(self, X)
+        source_tensor = getattr(self, X + 'main')
+        noise_buffer = getattr(self, 'noise_buffer_' + X.lower())
         mask = getattr(self, 'spike_mask_' + X.lower())
-        getattr(self, X)[mask] = getattr(self, X + 'main')[mask] + getattr(self, 'noise_buffer_' + X.lower())
+        # Apply noise in-place
+        target_tensor[mask] = source_tensor[mask] + noise_buffer[mask]
     
     def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         mask = getattr(self, 'spike_mask_' + X.lower())
-        getattr(self, X)[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
+        target_tensor = getattr(self, X)
+        target_tensor[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
 
     def time_shift(self, time_offset=0.0, X='X'):
         """
@@ -143,7 +160,8 @@ class TimeWindowDataset(Dataset):
                 column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
                 main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] + time_offset - self.window_times[window_inds[i]][mask]
         # Trim to windows that are valid
-        getattr(self, X + 'main') = main[self.valid_windows,:,:]
+        setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
+        setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
     
     def move_data_to_windows(self, time_offset=0.0):
         """
@@ -349,14 +367,19 @@ class TimeWindowDatasetKinematics(Dataset):
         """
         # Generate noise directly into pre-allocated buffer
         getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
-        # Apply noise in-place
+        # Get references to the tensors
+        target_tensor = getattr(self, X)
+        source_tensor = getattr(self, X + 'main')
+        noise_buffer = getattr(self, 'noise_buffer_' + X.lower())
         mask = getattr(self, 'spike_mask_' + X.lower())
-        getattr(self, X)[mask] = getattr(self, X + 'main')[mask] + getattr(self, 'noise_buffer_' + X.lower())
+        # Apply noise in-place
+        target_tensor[mask] = source_tensor[mask] + noise_buffer[mask]
     
     def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         mask = getattr(self, 'spike_mask_' + X.lower())
-        getattr(self, X)[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
+        target_tensor = getattr(self, X)
+        target_tensor[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
     
     def time_shift(self, time_offset=0.0, X='X'):
         """
@@ -407,7 +430,8 @@ class TimeWindowDatasetKinematics(Dataset):
             for i in range(self.Zorig.shape[0]):
                 main[window_inds[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_shifts[mask], self.Ztimes[mask] + time_offset, self.Zorig[i,mask])
         # Trim to windows that are valid
-        getattr(self, X + 'main') = main[self.valid_windows,:,:]
+        setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
+        setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
 
 
     

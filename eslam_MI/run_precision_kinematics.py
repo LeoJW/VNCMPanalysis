@@ -131,7 +131,7 @@ def train_models_worker(chunk_with_id):
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_flapping=True, only_valid_kinematics=True, angles_only=True)
+            only_flapping=True, angles_only=True)
         # Set params
         this_params = {**params, 
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
@@ -141,8 +141,10 @@ def train_models_worker(chunk_with_id):
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
+        # Run subsamples (for all subsets except 1, because we literally just did that)
+        subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,6), X='Y', Y='Z')
         # Save results
-        results.append({key : [model_path, this_params]})
+        results.append({key : [model_path, this_params, subsets, mi_subsets]})
         print(f'-------------- Chunk {key} done')
     return results
 
@@ -158,25 +160,15 @@ if __name__ == '__main__':
     # Package together main iterators
     window_size_range = np.logspace(np.log10(0.02), np.log10(0.2), 10)
     moth_range = ['2025-02-25', '2025-02-25_1']
-    # [start_time, end_time] pairs for each subsample
-    split_sizes = split_sizes=[1,2,3,4,5,6]
-    split_times = np.empty((0,2), dtype=int)
-    for ss in split_sizes:
-        # Each row is start, end pair
-        split_indices = np.array([[x[0], x[-1]] for x in np.array_split(np.arange(dataset.n_windows), ss)]) 
-        split_indices = (split_indices + np.random.choice(dataset.n_windows)) % dataset.n_windows # Shift a random amount
-        split_times = np.concatenate((split_times, dataset.window_times[split_indices]))
     repeats_range = np.arange(1)
-
-    main_iterator = product(
+    main_iterator = list(product(
         ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax', 
          'all', 'power', 'steering'], 
         moth_range,
-        window_size_range, 
-        repeats_range)
-
+        window_size_range))
+    
     # Split into chunks, add process id
-    chunks = np.array_split(list(main_iterator), n_processes)
+    chunks = np.array_split(main_iterator, n_processes)
     chunks_with_ids = [(i, chunk) for i,chunk in enumerate(chunks)]
 
     # ------------------------ TRAINING ------------------------
@@ -195,11 +187,13 @@ if __name__ == '__main__':
     precision_curves = {}
     precision_levels_dict = {}
     all_params = {}
+    all_subsets = {}
+    all_mi_subsets = {}
     # Run inference serially on resulting models (as inference can take advantage of whole GPU)
     iteration_count = 0
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
-        model_path, this_params = single_result
+        model_path, this_params, subsets, mi_subsets = single_result
         match this_params['run_on']:
             case 'power':
                 use_muscles = ['ldvm', 'ldlm', 'rdlm', 'rdvm']
@@ -213,7 +207,7 @@ if __name__ == '__main__':
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_flapping=True, only_valid_kinematics=True, angles_only=True)
+            only_flapping=True, angles_only=True)
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)
@@ -225,19 +219,21 @@ if __name__ == '__main__':
         precision_curves[key] = precision_mi
         precision_levels_dict[key] = precision_levels
         all_params[key] = [k + ' : ' + str(val) for k, val in this_params.items()]
+        all_subsets[key] = subsets
+        all_mi_subsets[key] = mi_subsets
         empty_cache()
 
         iteration_count += 1
         if (iteration_count % save_every_n_iterations == 0):
             try:
-                save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+                save_dicts_to_h5([precision_levels_dict, precision_curves, all_subsets, all_mi_subsets, all_params], filename)
                 print(f"Intermediate results saved")
             except Exception as e:
                 print(f"Warning: Failed to save intermediate results: {e}")
 
     # Save final output
     try:
-        save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+        save_dicts_to_h5([precision_levels_dict, precision_curves, all_subsets, all_mi_subsets, all_params], filename)
         print(f'Final results saved to {filename}')
     except Exception as e:
         print(f"Error saving final results: {e}")
