@@ -161,14 +161,16 @@ if __name__ == '__main__':
     window_size_range = np.logspace(np.log10(0.02), np.log10(0.2), 10)
     moth_range = ['2025-02-25', '2025-02-25_1']
     repeats_range = np.arange(1)
-    main_iterator = list(product(
+    main_iterator = product(
         ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax', 
          'all', 'power', 'steering'], 
         moth_range,
-        window_size_range))
+        window_size_range,
+        repeats_range
+    )
     
     # Split into chunks, add process id
-    chunks = np.array_split(main_iterator, n_processes)
+    chunks = np.array_split(list(main_iterator), n_processes)
     chunks_with_ids = [(i, chunk) for i,chunk in enumerate(chunks)]
 
     # ------------------------ TRAINING ------------------------
