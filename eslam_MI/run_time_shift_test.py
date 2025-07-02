@@ -101,7 +101,7 @@ def train_models_worker(chunk_with_id):
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+        'max_n_batches': 128, # If input has more than this many batches, encoder runs are split up for memory management
     }
 
     process_id, chunk = chunk_with_id
@@ -150,7 +150,7 @@ if __name__ == '__main__':
     # Package together main iterators
     window_size_range = np.logspace(np.log10(0.01), np.log10(0.2), 10)
     moth_range = ['2025-03-11']
-    time_shifts = np.concatenate([np.linspace(-0.5, -0.025, 40), np.array([0]), np.linspace(0.025, 0.5, 40)])
+    time_shifts = np.concatenate([np.linspace(-0.25, -0.025, 40), np.array([0]), np.linspace(0.025, 0.25, 40)])
     repeats_range = np.arange(1)
     main_iterator = product(
         moth_range,
