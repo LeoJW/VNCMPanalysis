@@ -142,7 +142,10 @@ def train_models_worker(chunk_with_id):
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
         # Run subsamples (for all subsets except 1, because we literally just did that)
-        subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,6), X='Y', Y='Z')
+        if task_id == 0:
+            subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,6), X='Y', Y='Z')
+        else:
+            subsets, mi_subsets = [], []
         # Save results
         results.append({key : [model_path, this_params, subsets, mi_subsets]})
         print(f'-------------- Chunk {key} done')
