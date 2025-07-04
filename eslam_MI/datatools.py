@@ -128,9 +128,14 @@ class TimeWindowDataset(Dataset):
         Shift one variable (X, can be 'X' or 'Y') in time by time_offset
         Runs basically the same thing as move_data_to_windows, but on one variable
         """
-        # Assign to main arrays, cases for neurons or muscles
+        # Apply time shift
+        times_target = getattr(self, X + 'times')
+        for i in range(len(times_target)):
+            times_target[i] = getattr(self, X + 'times_orig')[i] + time_offset
+        # Update windowed data in Xmain, X
+        # Cases for neurons or muscles
         if self.use_ISI:
-            window_inds = [np.searchsorted(self.window_times, x + time_offset) - 1 for x in getattr(self, X + 'times')]
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
             max_string = 'max_neuron' if X == 'X' else 'max_muscle'
             main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
             
@@ -142,7 +147,7 @@ class TimeWindowDataset(Dataset):
                 _, _, counts = np.unique(window_inds[i], return_counts=True, return_index=True)
                 column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 # Prep spike times, window times for each spike (offset applied here)
-                masktimes = getattr(self, X+'times')[i][mask] + time_offset
+                masktimes = getattr(self, X+'times')[i][mask]
                 maskwindow_times = self.window_times[window_inds[i][mask]]
                 # Fill spike time values in
                 firstval = masktimes[0] - maskwindow_times[0]
@@ -151,14 +156,14 @@ class TimeWindowDataset(Dataset):
                 first = column_inds == 0
                 main[window_inds[i][mask][first], i, column_inds[first]] = masktimes[first] - maskwindow_times[first]
         else:
-            window_inds = [np.searchsorted(self.window_times, x + time_offset) - 1 for x in getattr(self, X + 'times')]
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
             max_string = 'max_neuron' if X == 'X' else 'max_muscle'
             main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
             
             for i in range(len(getattr(self, X+'times'))):
                 mask = self.valid_windows[window_inds[i]]
                 column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
-                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] + time_offset - self.window_times[window_inds[i]][mask]
+                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] - self.window_times[window_inds[i]][mask]
         # Trim to windows that are valid
         setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
         setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
@@ -282,15 +287,17 @@ class TimeWindowDataset(Dataset):
         self.bout_starts = (starts - 1) / sample_rate
         self.bout_ends = (ends - 1) / sample_rate
         # Separate neurons and muscles, applying filtering if needed
-        self.neuron_labels, self.muscle_labels = [], []
+        self.neuron_labels, self.neuron_quality, self.muscle_labels = [], [], []
         for unit in units:
             if unit.isnumeric():  # Numeric labels are neurons
                 if labels:
                     label = labels.get(unit, None)
                     if neuron_label_filter is None or label == neuron_label_filter:
                         self.neuron_labels.append(unit)
+                        self.neuron_quality.append(label)
                 else:
                     self.neuron_labels.append(unit)  # No filtering if no labels file
+                    self.neuron_quality.append(label)
             else:  # Alphabetic labels are muscles
                 self.muscle_labels.append(unit)
         # Make list of neuron (X) and muscle (Y) spike times
@@ -299,6 +306,8 @@ class TimeWindowDataset(Dataset):
             self.Xtimes.append(np.array(data[unit] / sample_rate))
         for unit in self.muscle_labels:
             self.Ytimes.append(np.array(data[unit] / sample_rate))
+        self.Xtimes_orig = [np.array(x) for x in self.Xtimes]
+        self.Ytimes_orig = [np.array(y) for y in self.Ytimes]
         # Close all files
         data.close()
         bouts.close()
@@ -386,9 +395,17 @@ class TimeWindowDatasetKinematics(Dataset):
         Shift one variable (X, can be 'X', 'Y', or 'Z') in time by time_offset
         Runs basically the same thing as move_data_to_windows, but on one variable
         """
+        # Apply time shift
+        times_target = getattr(self, X + 'times')
+        if isinstance(times_target, list):
+            for i in range(len(times_target)):
+                times_target[i] = getattr(self, X + 'times_orig')[i] + time_offset
+        else:
+            setattr(self, X + 'times', getattr(self, X + 'times_orig') + time_offset)
+        # Update windowed data in Xmain, X
         # Assign to main arrays, cases for neurons or muscles
         if (X == 'X' or X == 'Y') and self.use_ISI:
-            window_inds = [np.searchsorted(self.window_times, x + time_offset) - 1 for x in getattr(self, X + 'times')]
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
             max_string = 'max_neuron' if X == 'X' else 'max_muscle'
             main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
             
@@ -400,7 +417,7 @@ class TimeWindowDatasetKinematics(Dataset):
                 _, _, counts = np.unique(window_inds[i], return_counts=True, return_index=True)
                 column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 # Prep spike times, window times for each spike (offset applied here)
-                masktimes = getattr(self, X+'times')[i][mask] + time_offset
+                masktimes = getattr(self, X+'times')[i][mask]
                 maskwindow_times = self.window_times[window_inds[i][mask]]
                 # Fill spike time values in
                 firstval = masktimes[0] - maskwindow_times[0]
@@ -409,17 +426,17 @@ class TimeWindowDatasetKinematics(Dataset):
                 first = column_inds == 0
                 main[window_inds[i][mask][first], i, column_inds[first]] = masktimes[first] - maskwindow_times[first]
         elif (X == 'X' or X == 'Y') and not self.use_ISI:
-            window_inds = [np.searchsorted(self.window_times, x + time_offset) - 1 for x in getattr(self, X + 'times')]
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
             max_string = 'max_neuron' if X == 'X' else 'max_muscle'
             main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
             
             for i in range(len(getattr(self, X+'times'))):
                 mask = self.valid_windows[window_inds[i]]
                 column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
-                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] + time_offset - self.window_times[window_inds[i]][mask]
+                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] - self.window_times[window_inds[i]][mask]
         # Assign to main arrays, case for kinematics
         elif X == 'Z':
-            window_inds = np.searchsorted(self.window_times, self.Ztimes + time_offset, side='right') - 1
+            window_inds = np.searchsorted(self.window_times, self.Ztimes, side='right') - 1
             main = np.full((len(self.window_times), self.Zorig.shape[0], self.max_kine), self.no_spike_value, dtype=np.float32)
 
             mask = self.valid_windows[window_inds]
@@ -428,11 +445,10 @@ class TimeWindowDatasetKinematics(Dataset):
             first_inds = np.repeat(index, counts)
             time_shifts = self.Ztimes[first_inds] - self.window_times[window_inds][first_inds]
             for i in range(self.Zorig.shape[0]):
-                main[window_inds[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_shifts[mask], self.Ztimes[mask] + time_offset, self.Zorig[i,mask])
+                main[window_inds[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_shifts[mask], self.Ztimes[mask], self.Zorig[i,mask])
         # Trim to windows that are valid
         setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
         setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
-
 
     
     def move_data_to_windows(self, time_offset=0.0):
@@ -597,15 +613,17 @@ class TimeWindowDatasetKinematics(Dataset):
         self.kine_names = angle_names + list(point_names)
         
         # Separate neurons and muscles, applying filtering if needed
-        self.neuron_labels, self.muscle_labels = [], []
+        self.neuron_labels, self.neuron_quality, self.muscle_labels = [], [], []
         for unit in units:
             if unit.isnumeric():  # Numeric labels are neurons
                 if labels:
                     label = labels.get(unit, None)
                     if neuron_label_filter is None or label == neuron_label_filter:
                         self.neuron_labels.append(unit)
+                        self.neuron_quality.append(label)
                 else:
                     self.neuron_labels.append(unit)  # No filtering if no labels file
+                    self.neuron_quality.append(label)
             else:  # Alphabetic labels are muscles
                 self.muscle_labels.append(unit)
         # Make list of neuron (X) and muscle (Y) spike times
@@ -614,6 +632,10 @@ class TimeWindowDatasetKinematics(Dataset):
             self.Xtimes.append(np.array(data[unit] / sample_rate))
         for unit in self.muscle_labels:
             self.Ytimes.append(np.array(data[unit] / sample_rate))
+        # Copy of time arrays to act as immutable master (for things like time shifting)
+        self.Xtimes_orig = [np.array(x) for x in self.Xtimes]
+        self.Ytimes_orig = [np.array(y) for y in self.Ytimes]
+        self.Ztimes_orig = np.array(self.Ztimes)
         # Close all files
         data.close()
         bouts.close()
