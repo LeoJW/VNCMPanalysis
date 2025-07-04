@@ -494,7 +494,7 @@ function read_precision_kinematics_file!(df, file, task)
             [precision_curves[key] .* log2(exp(1))],
             [precision_noise[key] .* 1000],
             [subsets[key]],
-            [mi_subsets[key]]
+            [mi_subsets[key] .* log2(exp(1))]
         ))
     end
     append!(df, thisdf)
@@ -502,7 +502,7 @@ end
 
 df = DataFrame()
 for task in 0:5
-    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task).h5"), task)
+    read_precision_kinematics_file!(df, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task)_hour_09.h5"), task)
 end
 
 single_muscles = [
@@ -542,6 +542,50 @@ draw(_)#, facet=(; linkyaxes=:none))
 mapping(:window=>log10, :precision, color=:mi, col=:moth, row=:neuron) * visual(Scatter)
 ) |> 
 draw(_, axis=(; yscale=log10))
+
+
+##
+
+function add_subset(group)
+    # summary_row = DataFrame(group = first(group_df.group), value = avg_value)
+    row = group[1,:]
+    row.mi_subset = row.mi
+    row.subset = 1
+    (group, row)
+end
+
+dt = @pipe df |> 
+@subset(_, :rep .== 0) |> 
+@transform(_, :single = in.(:neuron, (single_muscles,))) |> 
+# @transform(_, :neuron = ifelse.(:single, "single", :neuron)) |> 
+@subset(_, (!).(:single)) |> 
+flatten(_, [:subset, :mi_subset]) |> 
+@transform(_, :mi_subset = :mi_subset ./ :window, :mi = :mi ./ :window) |> 
+@groupby(_, [:subset, :window, :moth, :neuron]) |> 
+combine(_, :mi_subset => mean => :mi_subset, :mi_subset => std => :mi_subset_std, :mi => first => :mi) |> 
+@groupby(_, [:window, :moth, :neuron]) |> 
+combine(_) do d
+    row = copy(DataFrame(d[1,:]))
+    row.mi_subset .= row.mi
+    row.subset .= 1
+    return vcat(row, d)
+end |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:subset, :mi_subset, color=:window=>log, col=:moth, row=:neuron, group=:window=>nonnumeric) * 
+visual(ScatterLines)
+) |> 
+draw(_)
+
+##
+f = Figure()
+ax = Axis(f[1,1])
+row = rand(eachrow(@subset(df, :rep .== 0)))
+scatterlines!(ax, 
+    vcat(1, sort(unique(row.subset))), 
+    vcat(row.mi, [mean(row.mi_subset[row.subset .== v]) for v in sort(unique(row.subset))])
+)
+f
 
 ## ------------------------------------ Subsampling results ------------------------------------
 

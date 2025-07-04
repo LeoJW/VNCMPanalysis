@@ -154,9 +154,9 @@ if __name__ == '__main__':
     repeats_range = np.arange(1)
     main_iterator = product(
         moth_range,
-        time_shifts,
-        ['X','Y'],
-        window_size_range,
+        time_shifts[0:1],
+        ['X'],
+        window_size_range[0:1],
         repeats_range
     )
     

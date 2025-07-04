@@ -142,7 +142,7 @@ def train_models_worker(chunk_with_id):
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
-        # Run subsamples (for all subsets except 1, because we literally just did that)
+        # Run subsamples (for all subsets except 1, because we just do that when estimating precision)
         if int(task_id) == 0:
             subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,6), X='Y', Y='Z')
         else:

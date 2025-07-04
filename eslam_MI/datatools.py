@@ -74,18 +74,22 @@ class TimeWindowDataset(Dataset):
         # Select from X by index, or by name
         if select_x is not None and all(isinstance(x, (int, float)) for x in select_x):
             self.Xtimes = [self.Xtimes[i] for i in select_x]
+            self.Xtimes_orig = [self.Xtimes_orig[i] for i in select_x]
             self.neuron_labels = [self.neuron_labels[i] for i in select_x]
         elif select_x is not None:
             keep_inds = [i for i,lab in enumerate(self.neuron_labels) if lab in select_x]
             self.Xtimes = [self.Xtimes[i] for i in keep_inds]
+            self.Xtimes_orig = [self.Xtimes_orig[i] for i in keep_inds]
             self.neuron_labels = [self.neuron_labels[i] for i in keep_inds]
         # Select from Y by index, or by name
         if select_y is not None and all(isinstance(x, (int, float)) for x in select_y):
             self.Ytimes = [self.Ytimes[i] for i in select_y]
+            self.Ytimes_orig = [self.Ytimes_orig[i] for i in select_y]
             self.muscle_labels = [self.muscle_labels[i] for i in select_y]
         elif select_y is not None:
             keep_inds = [i for i,lab in enumerate(self.muscle_labels) if lab in select_y]
             self.Ytimes = [self.Ytimes[i] for i in keep_inds]
+            self.Ytimes_orig = [self.Ytimes_orig[i] for i in keep_inds]
             self.muscle_labels = [self.muscle_labels[i] for i in keep_inds]
         
         self.use_ISI = use_ISI
@@ -290,14 +294,9 @@ class TimeWindowDataset(Dataset):
         self.neuron_labels, self.neuron_quality, self.muscle_labels = [], [], []
         for unit in units:
             if unit.isnumeric():  # Numeric labels are neurons
-                if labels:
-                    label = labels.get(unit, None)
-                    if neuron_label_filter is None or label == neuron_label_filter:
-                        self.neuron_labels.append(unit)
-                        self.neuron_quality.append(label)
-                else:
-                    self.neuron_labels.append(unit)  # No filtering if no labels file
-                    self.neuron_quality.append(label)
+                label = labels.get(unit, None)
+                self.neuron_labels.append(unit)
+                self.neuron_quality.append(label)
             else:  # Alphabetic labels are muscles
                 self.muscle_labels.append(unit)
         # Make list of neuron (X) and muscle (Y) spike times
@@ -337,18 +336,22 @@ class TimeWindowDatasetKinematics(Dataset):
         # Select from X by index, or by name
         if select_x is not None and all(isinstance(x, (int, float)) for x in select_x):
             self.Xtimes = [self.Xtimes[i] for i in select_x]
+            self.Xtimes_orig = [self.Xtimes_orig[i] for i in select_x]
             self.neuron_labels = [self.neuron_labels[i] for i in select_x]
         elif select_x is not None:
             keep_inds = [i for i,lab in enumerate(self.neuron_labels) if lab in select_x]
             self.Xtimes = [self.Xtimes[i] for i in keep_inds]
+            self.Xtimes_orig = [self.Xtimes_orig[i] for i in keep_inds]
             self.neuron_labels = [self.neuron_labels[i] for i in keep_inds]
         # Select from Y by index, or by name
         if select_y is not None and all(isinstance(x, (int, float)) for x in select_y):
             self.Ytimes = [self.Ytimes[i] for i in select_y]
+            self.Ytimes_orig = [self.Ytimes_orig[i] for i in select_y]
             self.muscle_labels = [self.muscle_labels[i] for i in select_y]
         elif select_y is not None:
             keep_inds = [i for i,lab in enumerate(self.muscle_labels) if lab in select_y]
             self.Ytimes = [self.Ytimes[i] for i in keep_inds]
+            self.Ytimes_orig = [self.Ytimes_orig[i] for i in keep_inds]
             self.muscle_labels = [self.muscle_labels[i] for i in keep_inds]
         if angles_only is not None:
             self.Zorig = self.Zorig[0:6,:]
@@ -616,14 +619,9 @@ class TimeWindowDatasetKinematics(Dataset):
         self.neuron_labels, self.neuron_quality, self.muscle_labels = [], [], []
         for unit in units:
             if unit.isnumeric():  # Numeric labels are neurons
-                if labels:
-                    label = labels.get(unit, None)
-                    if neuron_label_filter is None or label == neuron_label_filter:
-                        self.neuron_labels.append(unit)
-                        self.neuron_quality.append(label)
-                else:
-                    self.neuron_labels.append(unit)  # No filtering if no labels file
-                    self.neuron_quality.append(label)
+                label = labels.get(unit, None)
+                self.neuron_labels.append(unit)
+                self.neuron_quality.append(label)
             else:  # Alphabetic labels are muscles
                 self.muscle_labels.append(unit)
         # Make list of neuron (X) and muscle (Y) spike times
@@ -846,10 +844,11 @@ if __name__ == '__main__':
     os.makedirs(result_dir, exist_ok=True)
     machine = 'HOME'
 
+    # Not kinematics version
     params = {
         # Optimizer parameters (for training)
         'epochs': 300,
-        'window_size': 0.04,
+        'window_size': 0.05,
         # 'batch_size': 512, # Number of windows estimator processes at any time
         's_per_batch': 25, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
@@ -862,10 +861,10 @@ if __name__ == '__main__':
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
-        'activation': nn.PReLU,
-        'layers': 3,
-        'hidden_dim': 1024,
-        'embed_dim': 12,
+        'activation': nn.LeakyReLU,
+        'layers': 4,
+        'hidden_dim': 256,
+        'embed_dim': 10,
         'use_bias': False,
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
@@ -873,15 +872,18 @@ if __name__ == '__main__':
         'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
     }
     precision_levels = np.hstack((0, np.logspace(np.log10(0.0001), np.log10(0.15), 100)))
+    time_shifts = np.concatenate([np.linspace(-0.5, -0.025, 10), np.array([0]), np.linspace(0.025, 0.5, 10)])
 
-    # All muscles together
-    ds = TimeWindowDatasetKinematics(os.path.join(data_dir, '2025-02-25_1'), 
+    # Train, then time shift
+    ds = TimeWindowDataset(os.path.join(data_dir, '2025-03-11'), 
         window_size=params['window_size'], neuron_label_filter=1, 
-        # select_y=['rdvm'],
-        time_offset = 0.001,
-        use_ISI=True, 
-        angles_only=True, 
-        only_flapping=True)
-
-    toff = 0.05
-    ds.time_shift(time_offset=toff, X='Y')
+        select_x=[10], select_y=['ldvm', 'ldlm', 'rdlm', 'rdvm'])
+    this_params = {**params, 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
+    mis_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
+    model = retrieve_best_model(mis_test, this_params, train_id=train_id, remove_all=True)
+    mi_inference = np.zeros_like(time_shifts)
+    with torch.no_grad():
+        ds.move_data_to_windows(time_offset=0)
+        for i,shift in enumerate(time_shifts):
+            ds.time_shift(shift, X='X')
+            mi_inference[i] = - model(ds.X, ds.Y).detach().cpu().numpy()
