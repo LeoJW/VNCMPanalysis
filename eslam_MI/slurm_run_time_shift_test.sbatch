@@ -2,7 +2,7 @@
 #SBATCH -Jrun_time_shift                        # Job name
 #SBATCH --account=gts-ssponberg3-paid           # charge account
 #SBATCH -N1                                     # Number of nodes and cores per node required
-#SBATCH --gres=gpu:RTX6000:1                       # GPU type (any) and number of GPUs
+#SBATCH --gres=gpu:RTX_6000:1                       # GPU type (any) and number of GPUs
 #SBATCH --mem-per-gpu=32G                       # Memory per GPU
 #SBATCH -t3000                                  # Duration of the job in minutes
 #SBATCH -qinferno                               # QOS Name
