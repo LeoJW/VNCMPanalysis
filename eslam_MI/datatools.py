@@ -249,8 +249,14 @@ class TimeWindowDataset(Dataset):
                 mask = self.valid_windows[window_inds_y[i]]
                 column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
                 Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i][mask]]
-        # Trim windows that aren't valid (in between bouts)
-        # Will keep window times long, to include invalid windows, as time shifting variables needs to refer to windows again
+        # Keep only windows that have spikes in X and Y
+        all_x = np.unique(np.concatenate(window_inds_x))
+        all_y = np.unique(np.concatenate(window_inds_y))
+        windows_with_spikes = np.intersect1d(all_x, all_y)
+        mask = np.ones(self.valid_windows.size, dtype=bool)
+        mask[windows_with_spikes] = False
+        self.valid_windows[mask] = False
+        # Will keep window times long, to include invalid windows, as time shifting variables need to refer to windows again
         Xmain = Xmain[self.valid_windows,:,:]
         Ymain = Ymain[self.valid_windows,:,:]
         self.n_windows = Xmain.shape[0]

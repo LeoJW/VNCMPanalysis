@@ -237,7 +237,7 @@ def train_model_no_eval(dataset, params,
         if subset_times is not None:
             train_indices = use_ind[train_indices]
         train_indices = torch.tensor(train_indices, dtype=int).to(device)
-
+        
         return np.array(estimates_mi_test), train_id, train_indices
     else:
         return np.array(estimates_mi_test), train_id
@@ -282,7 +282,7 @@ def retrieve_best_model(mi_test, params,
     return model
 
 def retrieve_best_model_path(mi_test, params, 
-        train_id=None, remove_others=True, smooth=True, sigma=1, device=device):
+        train_id=None, remove_others=True, smooth=True, sigma=1):
     """
     Given a directory for a training run and test MI/loss, removes all but the best model based on early stopping
     Version of retrieve_best_model that only returns path to good model file

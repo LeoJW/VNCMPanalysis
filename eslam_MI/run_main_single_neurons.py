@@ -131,13 +131,13 @@ def train_models_worker(chunk):
         print(f'Process {process_id} key {key}')
 
         # -------- Step 0: Check that there's even data for this muscle
+        wi = 5 # Window size to use
         has_muscles = check_label_present(os.path.join(data_dir, moth), muscles)
-        if np.all(np.lgoical_not(has_muscles)):
+        if np.all(np.logical_not(has_muscles)):
             continue
         ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles)
 
         # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
-        wi = 5 # Window size to use
         embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
         embed_model_paths = np.empty(embed_dim_mat.shape, dtype=str)
         for i,embed in enumerate(embed_dims):
@@ -153,13 +153,9 @@ def train_models_worker(chunk):
                 ds.move_data_to_windows(time_offset=0)
                 mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
                 model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
-                with torch.no_grad():
-                    model = this_params['model_func'](this_params).to(device)
-                    model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
-                    model.eval()
-                    ds.move_data_to_windows(time_offset=0)
-                    embed_mi[j,i] = - model(ds.X, ds.Y).detach().cpu().numpy()
-                    embed_model_paths[j,i] = model_path
+                # Just use max test information as MI estimate to save time
+                embed_mi[j,i] = mi_test[np.argmax(gaussian_filter1d(np.nan_to_num(mi_test), sigma=1))]
+                embed_model_paths[j,i] = model_path
         # Choose smallest embed_dim within 10% of max mutual information value
         embed_mi[embed_mi < 0] = np.nan
         mean_embed_mi = np.nanmean(embed_mi, axis=0)
