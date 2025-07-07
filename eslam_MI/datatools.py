@@ -777,6 +777,17 @@ def read_spike_data(base_name,
     return X, Y, neuron_labels, muscle_labels, starts
 
 
+def check_label_present(base_name, checklabel):
+    labels_file = f"{base_name}_labels.npz"
+    if not os.path.exists(labels_file):
+        return False
+    labels_data = np.load(labels_file)
+    labels = {unit: labels_data[unit].item() for unit in labels_data.files}
+    labels_data.close()
+    if isinstance(checklabel, list):
+        return np.array([lab in labels for lab in checklabel])
+    else:
+        return checklabel in labels
 
 def save_dicts_to_h5(dicts, filename):
     with h5py.File(filename, 'w') as f:

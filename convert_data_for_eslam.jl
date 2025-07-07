@@ -128,28 +128,31 @@ end
 ##
 
 moth = moths[2]
-moth_dir = joinpath(data_dir, moth)
-dir_contents = readdir(moth_dir)
-phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
-mp_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("_spikesort", dir_contents))])
+for moth in moths
+    moth_dir = joinpath(data_dir, moth)
+    dir_contents = readdir(moth_dir)
+    phy_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("kilosort4", dir_contents))])
+    # mp_dir = joinpath(moth_dir, dir_contents[findfirst(occursin.("_spikesort", dir_contents))])
 
-neurons, unit_details, sort_params = read_phy_spikes(phy_dir)
-muscles = read_mp_spikes(mp_dir)
+    neurons, unit_details, sort_params = read_phy_spikes(phy_dir)
+    # muscles = read_mp_spikes(mp_dir)
 
-fsamp = parse(Float64, sort_params["sample_rate"])
+    fsamp = parse(Float64, sort_params["sample_rate"])
 
-# Remove noise units
-for (unit, quality) in unit_details["quality"]
-    if quality == "noise"
-        delete!(neurons, unit)
+    # Remove noise units
+    for (unit, quality) in unit_details["quality"]
+        if quality == "noise"
+            delete!(neurons, unit)
+        end
     end
+
+    ## Plot for fun
+
+    good_units = [unit for (unit, qual) in unit_details["quality"] if qual == "good"]
+    mua_units = [unit for (unit, qual) in unit_details["quality"] if qual == "mua"]
+    println("moth $(moth) good units: $(length(good_units))")
+    println("moth $(moth) MUA units: $(length(mua_units))")
 end
-
-## Plot for fun
-
-good_units = [unit for (unit, qual) in unit_details["quality"] if qual == "good"]
-mua_units = [unit for (unit, qual) in unit_details["quality"] if qual == "mua"]
-
 ##
 f = Figure()
 ax = Axis(f[1,1])

@@ -143,6 +143,17 @@ mapping(:mi, :precision,
 ) |> 
 draw(_, axis=(; yscale=log10))
 
+##
+@pipe df |> 
+@subset(_, :layers .== 4, :bias .== "False") |> 
+groupby(_, [:neuron, :hiddendim, :activation, :window, :embed]) |> 
+combine(_, :time => mean => :time, :mi => mean => :mi) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:embed, :mi, color=:window, row=:neuron, col=:hiddendim=>nonnumeric) * visual(Scatter)
+) |> 
+draw(_)
+
 
 ## At a given window length, how does hiddendim change MI?
 
@@ -456,13 +467,15 @@ function read_timeshift_file!(df, file)
 end
 
 df = DataFrame()
-read_timeshift_file!(df, joinpath(data_dir, "2025-07-02_timeshift_test_PACE__hour_09.h5"))
+read_timeshift_file!(df, joinpath(data_dir, "2025-07-04_timeshift_test_PACE_hour_15.h5"))
 
 ##
 @pipe df[sortperm(df.shift),:] |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = round.(:window, digits=2)) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:shift, :mi, row=:var) * visual(ScatterLines)
+mapping(:shift, :mi, row=:window=>nonnumeric) * visual(ScatterLines)
 ) |> 
 draw(_)
 
@@ -519,7 +532,7 @@ mapping(:mi, :precision, color=:moth, row=:neuron) * visual(Scatter)
 ) |> 
 draw(_, axis=(; yscale=log10))
 
-##
+## MI vs precision
 
 @pipe df |> 
 @transform(_, :mi = :mi ./ :window) |> 
@@ -528,31 +541,41 @@ transform!(_, :neuron =>  ByRow(s ->s[2:end]) => :neuron) |>
 (AlgebraOfGraphics.data(_) *
 mapping(:mi, :precision, color=:window, col=:moth, row=:neuron) * visual(Scatter)
 ) |> 
-draw(_)#, facet=(; linkyaxes=:none))
-
-## Effect of window size on precision; Depends on how many muscles used!
-
-@pipe df |> 
-@transform(_, :mi = :mi ./ :window) |> 
-@transform(_, :single = in.(:neuron, (single_muscles,))) |> 
-@transform(_, :neuron = ifelse.(:single, "single", :neuron)) |> 
-# transform!(_, :neuron =>  ByRow(s -> s[2:end]) => :neuron) |> 
-# map!(s -> s[2:end], dt[dt.single].neuron)
-(AlgebraOfGraphics.data(_) *
-mapping(:window=>log10, :precision, color=:mi, col=:moth, row=:neuron) * visual(Scatter)
-) |> 
 draw(_, axis=(; yscale=log10))
-
 
 ##
 
-function add_subset(group)
-    # summary_row = DataFrame(group = first(group_df.group), value = avg_value)
-    row = group[1,:]
-    row.mi_subset = row.mi
-    row.subset = 1
-    (group, row)
-end
+dt = @pipe df |> 
+@transform(_, :mi = :mi ./ :window) |> 
+# @subset(_, in.(:neuron, (single_muscles,))) |> 
+transform!(_, :neuron =>  ByRow(s ->s[2:end]) => :neuron) |> 
+groupby(_, [:window, :moth, :neuron]) |> 
+combine(_, :mi => mean => :mi, :precision => mean => :precision)
+@pipe dt[sortperm(dt.precision),:] |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:window, col=:moth, row=:neuron) * visual(ScatterLines)
+) |> 
+draw(_, axis=(; yscale=log10))
+
+## Effect of window size on precision; Depends on how many muscles used!
+
+dt = @pipe df |> 
+@transform(_, :mi = :mi ./ :window) |> 
+groupby(_, [:window, :neuron, :moth]) |> 
+combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
+groupby(_, [:neuron, :moth]) |> 
+@transform(_, :groupcol = string.(:neuron) .* string.(:moth)) |> 
+@transform(_, :single = in.(:neuron, (single_muscles,))) 
+# @transform(_, :neuron = ifelse.(:single, "single", :neuron))
+
+@pipe dt[sortperm(dt.window),:] |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:window, :mi, color=:mi, row=:moth, col=:neuron, group=:groupcol) * visual(ScatterLines)
+) |> 
+draw(_, axis=(; xscale=log10))#, yscale=log10))
+
+
+##
 
 dt = @pipe df |> 
 @subset(_, :rep .== 0) |> 

@@ -533,7 +533,8 @@ def subsample_MI_vary_embed_dim(dataset, params, split_sizes=[1,2,3,4,5,6], embe
     return subsets, mi, embed_dim_vec
 
 
-def precision_rounding(precision_levels, dataset, model, X='X', Y='Y'):
+def precision_rounding(precision_levels, dataset, model, X='X', Y='Y', 
+        early_stop=False, early_stop_threshold=0.5):
     """
     Run spike timing precision analysis
     This version uses rounding instead of added noise
@@ -551,6 +552,8 @@ def precision_rounding(precision_levels, dataset, model, X='X', Y='Y'):
         for i, prec_level in enumerate(precision_levels):
             dataset.apply_precision(prec_level, X=X)
             mi[i+1] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
+            if early_stop and (mi[i+1] < (mi[0] * early_stop_threshold)):
+                break
         return mi
 
 def precision(noise_levels, dataset, model, n_repeats=3, X='X', Y='Y'):
