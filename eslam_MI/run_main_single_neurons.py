@@ -262,11 +262,13 @@ if __name__ == '__main__':
         has_muscles = check_label_present(os.path.join(data_dir, cond_params['moth']), cond_params['muscles'])
         if np.all(np.logical_not(has_muscles)):
             continue
+        # Get embed dim used for this neuron/muscle pair
+        embed_dim = cond_params['embed_dim']
 
         # Loop over window sizes, run inference for all, choose winner
         zero_rounding_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         for i,window_size in enumerate(window_size_range):
-            new_key = key + f'_window_{window_size}'
+            new_key = key + f'_window_{window_size}_embed_{embed_dim}'
             
             ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
                 select_x=cond_params['neurons'], select_y=cond_params['muscles']
@@ -287,7 +289,6 @@ if __name__ == '__main__':
         
         # Get max MI window size for this neuron/muscle combo, move model weights to long-term storage
         max_window = np.argmax(zero_rounding_mi)
-        embed_dim = this_params['embed_dim']
         new_key = key + f'_window_{window_size_range[max_window]}_embed_{embed_dim}'
         copy2(model_paths[max_window], os.path.join(model_storage_dir, new_key + '.pt'))
         
