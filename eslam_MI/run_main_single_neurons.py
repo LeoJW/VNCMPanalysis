@@ -287,7 +287,8 @@ if __name__ == '__main__':
         
         # Get max MI window size for this neuron/muscle combo, move model weights to long-term storage
         max_window = np.argmax(zero_rounding_mi)
-        new_key = key + f'_window_{window_size_range[max_window]}_embed_{this_params['embed_dim']}'
+        embed_dim = this_params['embed_dim']
+        new_key = key + f'_window_{window_size_range[max_window]}_embed_{embed_dim}'
         copy2(model_paths[max_window], os.path.join(model_storage_dir, new_key + '.pt'))
         
         empty_cache()
