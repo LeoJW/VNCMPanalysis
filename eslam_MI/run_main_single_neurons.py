@@ -89,7 +89,7 @@ def train_models_worker(chunk):
         'epochs': 300,
         # 'window_size': 0.05,
         # 'batch_size': 512, # Number of windows estimator processes at any time
-        's_per_batch': 30, # Alternatively specify seconds of data a batch should be
+        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -102,7 +102,7 @@ def train_models_worker(chunk):
         'model_func': DSIB, # DSIB or DVSIB
         'activation': nn.LeakyReLU,
         'layers': 4,
-        'hidden_dim': 256,
+        'hidden_dim': 512,
         # 'embed_dim': 10,
         'use_bias': False,
         'beta': 512, # Just used in DVSIB
@@ -119,6 +119,8 @@ def train_models_worker(chunk):
 
     results = []
     for condition in thischunk:
+        synchronize()
+        tic = time.time()
         # Unpack chunk
         moth, neurons, muscles = condition
         # Enforce types (fuck python)
@@ -139,7 +141,7 @@ def train_models_worker(chunk):
 
         # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
         embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
-        embed_model_paths = np.empty(embed_dim_mat.shape, dtype=str)
+        embed_model_paths = np.empty(embed_dim_mat.shape, dtype=object)
         for i,embed in enumerate(embed_dims):
             for j in range(embed_repeats):
                 # Set params
@@ -168,7 +170,7 @@ def train_models_worker(chunk):
             os.remove(modpath)
 
         # -------- Step 2: Run over different window sizes
-        model_paths = np.empty(window_size_range.shape, dtype=str)
+        model_paths = np.empty(window_size_range.shape, dtype=object)
         # One window size was already done, so throw that in
         model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
         # Run over the rest of the window sizes
@@ -188,6 +190,8 @@ def train_models_worker(chunk):
 
         # Save results
         results.append({key : [model_paths, window_size_range, this_params]})
+        synchronize()
+        print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
 
 
@@ -200,7 +204,7 @@ if __name__ == '__main__':
     n_tasks = 6
     n_processes = 12
     save_every_n_iterations = 20
-    precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 300)
+    precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
 
     # Make iterator of moths, neurons for each moth
     moths = [
@@ -252,16 +256,23 @@ if __name__ == '__main__':
     iteration_count = 0
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
-        model_paths, window_size_range, this_params = single_result
+        model_paths, window_size_range, cond_params = single_result
+
+        # Skip if this moth doesn't have data for all muscles in this moth/neuron/muscle combination
+        has_muscles = check_label_present(os.path.join(data_dir, cond_params['moth']), cond_params['muscles'])
+        if np.all(np.logical_not(has_muscles)):
+            continue
 
         # Loop over window sizes, run inference for all, choose winner
         zero_rounding_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         for i,window_size in enumerate(window_size_range):
             new_key = key + f'_window_{window_size}'
             
-            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size, 
-                select_x=this_params['neurons'], select_y=this_params['muscles']
+            ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
+                select_x=cond_params['neurons'], select_y=cond_params['muscles']
             )
+            this_params = {**cond_params, 
+                'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
             # Load model, run inference tasks
             with torch.no_grad():
                 model = this_params['model_func'](this_params).to(device)
@@ -276,7 +287,7 @@ if __name__ == '__main__':
         
         # Get max MI window size for this neuron/muscle combo, move model weights to long-term storage
         max_window = np.argmax(zero_rounding_mi)
-        new_key = key + f'_window_{window_size_range[max_window]}'
+        new_key = key + f'_window_{window_size_range[max_window]}_embed_{this_params['embed_dim']}'
         copy2(model_paths[max_window], os.path.join(model_storage_dir, new_key + '.pt'))
         
         empty_cache()

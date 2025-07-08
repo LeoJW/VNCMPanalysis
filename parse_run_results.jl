@@ -97,7 +97,7 @@ end
 GLMakie.activate!()
 
 @pipe df |> 
-@subset(_, :neuron .== "neuron") |> 
+@subset(_, :neuron .== "all") |> 
 @subset(_, :activation .== "PReLU") |> 
 # @subset(_, :activation .== "LeakyReLU") |> 
 @subset(_, :bias .== "False") |> 
