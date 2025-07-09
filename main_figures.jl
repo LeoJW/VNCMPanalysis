@@ -168,52 +168,143 @@ for task in 0:5
     read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task)_hour_09.h5"), task)
 end
 
+# Clean up df kinematics
+df_kine = @pipe df_kine |> 
+    rename(_, :neuron => :muscle)
+
 # Add neuron stats to main dataframe
 df_neuronstats = @pipe get_neuron_statistics() |> 
-    @transform(_, 
-        :label = ifelse.(:label .== 1, "good", "MUA"),
-        :moth = ifelse.(occursin.("-1")))
+    transform!(_, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth) |> 
+    @transform(_, :label = ifelse.(:label .== 1, "good", "mua"))
 df = leftjoin(df, df_neuronstats, on=[:moth, :neuron])
 
+# Add neuron direction stats to main dataframe
+df_direction = @pipe CSV.read(joinpath(data_dir, "..", "direction_estimate_stats_all_units.csv"), DataFrame) |> 
+    rename(_, :unit => :neuron, Symbol("%>comp") => :prob_descend, Symbol("%<comp") => :prob_ascend) |> 
+    transform(_, [:HDIlo, :HDIup] =>
+        ByRow((HDIlo, HDIup) -> 
+            HDIlo < 0.5 && HDIup < 0.5 ? "ascending" :
+            HDIlo > 0.5 && HDIup > 0.5 ? "descending" :
+            "uncertain") =>
+        :direction
+    ) |> 
+    transform!(_, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth) |> 
+    select(_, [:moth, :neuron, :direction, :prob_descend, :prob_ascend])
+df = leftjoin(df, df_direction, on=[:moth, :neuron])
+
+# Clean up some aspects of main dataframe
 single_muscles = [
     "lax", "lba", "lsa", "ldvm", "ldlm", 
     "rdlm", "rdvm", "rsa", "rba", "rax"
 ]
+muscle_names_dict = Dict(
+    "lax-lba-lsa-rsa-rba-rax" => "steering",
+    "lax-lba-lsa" => "Lsteering",
+    "rax-rba-rsa" => "Rsteering",
+    "ldvm-ldlm-rdlm-rdvm" => "power",
+    "ldvm-ldlm" => "Lpower",
+    "rdvm-rdlm" => "Rpower"
+)
+for muscle in single_muscles
+    muscle_names_dict[muscle] = muscle
+end
+df = @pipe df |> 
+    @transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
+    @transform(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
 
 
-##
-
+## Summary stats table
 bob = @pipe df |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
 # combine(_, sdf -> sdf[argmax(sdf.precision), :]) |> 
 @transform(_, :mi = :mi ./ :window) |> 
 @transform(_, :window = :window .* 1000) |> 
-@transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
 @subset(_, :mi .> 0) |> 
 groupby(_, [:muscle]) |> 
 combine(_, :precision => mean, :precision => std, :mi => mean, :mi => std)
 
+
+## Kinematics has strong dependency on window size
+@pipe df_kine |> 
+groupby(_, [:moth, :muscle, :window]) |> 
+combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
+@transform(_, 
+    :mi = :mi ./ :window,
+    :single = in.(:muscle, (single_muscles,))) |> 
+# @subset(_, (!).(:single)) |> 
+@subset(_, :single) |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:window, col=:moth, row=:muscle) * visual(Scatter)
+) |> 
+draw(_, axis=(; yscale=log10))
+
 ##
+
+dt = @pipe df_kine |> 
+@subset(_, :rep .== 0) |> 
+@transform(_, :single = in.(:muscle, (single_muscles,))) |> 
+# @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+# @subset(_, (!).(:single)) |> 
+@subset(_, :single) |> 
+flatten(_, [:subset, :mi_subset]) |> 
+@transform(_, :mi_subset = :mi_subset ./ :window, :mi = :mi ./ :window) |> 
+@groupby(_, [:subset, :window, :moth, :muscle]) |> 
+combine(_, :mi_subset => mean => :mi_subset, :mi_subset => std => :mi_subset_std, :mi => first => :mi) |> 
+@groupby(_, [:window, :moth, :muscle]) |> 
+combine(_) do d
+    row = copy(DataFrame(d[1,:]))
+    row.mi_subset .= row.mi
+    row.subset .= 1
+    return vcat(row, d)
+end |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:subset, :mi_subset, color=:window=>log, col=:moth, row=:muscle, group=:window=>nonnumeric) * 
+visual(ScatterLines)
+) |> 
+draw(_)
+
+
+##
+@pipe df_kine |> 
+groupby(_, [:muscle, :moth]) |> 
+combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
+@transform(_, 
+    :mi = :mi ./ :window,
+    :single = in.(:muscle, (single_muscles,))) |> 
+# transform!(_, :muscle => ByRow(s ->s[2:end]) => :neuron) |> 
+# @subset(_, (!).(:single)) |> 
+@transform(_, :isall = (:muscle .== "all") .+ 0) |> 
+(AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:muscle, marker=:single, col=:moth) * visual(Scatter)
+) |> 
+draw(_)#, axis=(; yscale=log10))
+
+## Main plot
 
 @pipe df |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# combine(_, sdf -> sdf[argmax(sdf.precision), :]) |> 
 @transform(_, :mi = :mi ./ :window) |> 
+# @transform(_, :mi = :mi ./ :meanrate) |>  # Convert to bits/spike
+# @transform(_, :mi = :mi .* :timeactive ./ :nspikes) |> # Alternative bits/spike
 @transform(_, :window = :window .* 1000) |> 
-@transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
-@subset(_, (!).(:single)) |> 
-# @subset(_, :single) |> 
-@subset(_, :mi .> 0) |> 
+# @subset(_, (!).(:single)) |> 
+@subset(_, :single) |> 
+@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+@subset(_, :mi .> 10^-1.5) |> 
 (AlgebraOfGraphics.data(_) * 
-mapping(:mi, :precision, 
-    row=:moth, col=:muscle, 
-    color=:label=>nonnumeric
+mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision (ms)", 
+    # row=:moth, 
+    col=:muscle, 
+    row=:direction,
+    color=:direction
+    # color=:label=>nonnumeric
     # color=:embed=>nonnumeric
-) * visual(Scatter)
+) * visual(Scatter, alpha=0.4)
 ) |> 
-draw(_, axis=(; xscale=log10, yscale=log10))
+draw(_, axis=(; yscale=log10, xscale=log10))#, xscale=log10))
 
 ## Single muscles, on same plot
 @pipe df |> 
@@ -221,7 +312,6 @@ groupby(_, [:moth, :neuron, :muscle]) |>
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
 @transform(_, :mi = :mi ./ :window) |> 
 @transform(_, :window = :window .* 1000) |> 
-@transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
 @subset(_, :single) |> 
 @subset(_, :mi .> 0) |> 
 # groupby(_, [:moth, :muscle]) |> 
@@ -234,6 +324,123 @@ mapping(:mi, :precision,
 ) * visual(Scatter)
 ) |> 
 draw(_, axis=(; xscale=log10, yscale=log10))
+
+## Stacked bar plot for each neuron 
+# categories = ["power", "steering"]
+# categories = ["Lpower", "Rpower"]
+# categories = ["Lsteering", "Rsteering"]
+# categories = ["Rpower", "Rsteering"]
+# categories = ["Lsteering", "Lpower", "Rpower", "Rsteering"]
+# categories = ["ldvm", "rdvm"]
+categories = single_muscles
+
+ddt = @pipe df |> 
+select(_, Not([:precision_curve, :precision_levels])) |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+@transform(_, :stack = indexin(:muscle, categories)) |> 
+@subset(_, (!).(isnothing.(:stack)), :stack .!= 0) |> 
+groupby(_, [:moth, :neuron]) |> 
+transform(_, [:mi, :muscle] => ((mi, muscle) -> first(mi[muscle .== categories[1]])) => :mi_sort)
+ddt.stack = Vector{Int64}(ddt.stack)
+
+colors = Makie.wong_colors()
+
+f = Figure()
+ax = [Axis(f[i,j]) for i in 1:length(unique(df.moth)), j in 1:3]
+for (i,moth) in enumerate(unique(df.moth))
+    for (j,direct) in enumerate(unique(df.direction))
+        dt = @subset(ddt, :moth .== moth, :direction .== direct)
+        if nrow(dt) == 0
+            continue
+        end
+        sort!(dt, [order(:muscle), order(:label), order(:mi_sort)])
+        nlevels = length(unique(dt.muscle))
+
+        barplot!(ax[i,j], repeat(1:nrow(dt)÷nlevels, nlevels), dt.mi,
+            dodge=dt.stack, 
+            # color=colors[dt.stack]
+            color=dt.stack, colorrange=extrema(dt.stack)
+        )
+        ax[i,j].xticks = (1:nrow(dt)÷nlevels, string.(trunc.(Int, unique(dt.neuron))))
+        ax[i,j].title = moth * " poke side: " * poke_side[dt.moth[1]] * " direction: " * direct
+    end
+end
+linkyaxes!(ax...)
+colsize!(f.layout, 1, Auto(4))
+f
+
+
+## Stacked bar plots for PRECISION
+
+# categories = ["power", "steering"]
+# categories = ["Lpower", "Rpower"]
+# categories = ["Lsteering", "Rsteering"]
+# categories = ["Rpower", "Rsteering"]
+# categories = ["Lsteering", "Lpower", "Rpower", "Rsteering"]
+# categories = ["ldvm", "rdvm"]
+# categories = ["lax", "lba", "lsa"]
+categories = single_muscles
+
+ddt = @pipe df |> 
+select(_, Not([:precision_curve, :precision_levels])) |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
+@transform(_, :stack = indexin(:muscle, categories)) |> 
+@subset(_, (!).(isnothing.(:stack)), :stack .!= 0) |> 
+groupby(_, [:moth, :neuron]) |> 
+transform(_, [:precision, :muscle] => ((x, muscle) -> first(x[muscle .== categories[1]])) => :mi_sort)
+ddt.stack = Vector{Int64}(ddt.stack)
+
+colors = Makie.wong_colors()
+
+f = Figure()
+ax = [Axis(f[i,j], yscale=log10) for i in 1:length(unique(df.moth)), j in 1:3]
+for (i,moth) in enumerate(unique(df.moth))
+    for (j,direct) in enumerate(unique(df.direction))
+        dt = @subset(ddt, :moth .== moth, :direction .== direct)
+        if nrow(dt) == 0
+            continue
+        end
+        sort!(dt, [order(:muscle), order(:label), order(:mi_sort, rev=true)])
+        nlevels = length(unique(dt.muscle))
+        
+        barplot!(ax[i,j], repeat(1:nrow(dt)÷nlevels, nlevels), dt.precision,
+            dodge=dt.stack, 
+            # color=colors[dt.stack]
+            color=dt.stack, colorrange=extrema(dt.stack)
+        )
+        ax[i,j].xticks = (1:nrow(dt)÷nlevels, string.(trunc.(Int, unique(dt.neuron))))
+        ax[i,j].title = moth * " poke side: " * poke_side[dt.moth[1]] * " direction: " * direct
+    end
+end
+linkyaxes!(ax...)
+colsize!(f.layout, 1, Auto(4))
+f
+
+
+## Information, precision, against neuron statistics
+
+@pipe df |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@transform(_, :window = :window .* 1000) |> 
+@transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
+@subset(_, (!).(:single)) |> 
+# @subset(_, :single) |> 
+@subset(_, :mi .> 0) |> 
+(AlgebraOfGraphics.data(_) * 
+mapping(:meanrate, :mi,
+    row=:moth, col=:muscle, 
+    color=:label=>nonnumeric,
+) * visual(Scatter)
+) |> 
+draw(_)#, axis=(; yscale=log10))
+
+
 
 ## Look at how window size affected precision, information
 
