@@ -67,11 +67,11 @@ else:
 if len(sys.argv) > 1: 
     task_id = sys.argv[1]
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_precision_' + machine + '_' + f'task_{task_id}' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_embed_' + machine + '_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
     task_id = '0'
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_precision_' + machine + '_' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_embed_' + machine + '_' + '.h5')
 # If file exists add hour to filename
 if os.path.isfile(filename):
     filename = filename[:-3] + '_hour_' + datetime.today().strftime('%H') + '.h5'
