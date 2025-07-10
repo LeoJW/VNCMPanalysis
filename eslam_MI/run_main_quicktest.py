@@ -59,7 +59,7 @@ if sys.platform == 'linux':
 # Home version
 else:
     main_dir = os.getcwd()
-    data_dir = os.path.join(main_dir, '..', 'localdata')
+    data_dir = os.path.join(main_dir, '..', '..', 'localdata')
     model_cache_dir = os.path.join(data_dir, 'model_cache')
     os.makedirs(model_cache_dir, exist_ok=True)
     result_dir = os.path.join(data_dir, 'estimation_runs')
@@ -130,7 +130,7 @@ def train_models_worker(chunk):
         mothstring_no_underscore = moth.replace('_','-')
         neuronstring = '-'.join(neurons)
         musclestring = '-'.join(muscles)
-        key = f'moth_{mothstring_no_underscore}_neuron_{neuronstring}_muscle_{musclestring}'
+        key = f'moth_{mothstring_no_underscore}_neuron_{neuronstring}_muscle_{musclestring}_bs_{batch_size}'
         print(f'Process {process_id} key {key}')
 
         # -------- Step 0: Check that there's even data for this muscle
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
     n_tasks = 6
-    n_processes = 12
+    n_processes = 10
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
 
@@ -270,11 +270,13 @@ if __name__ == '__main__':
         # Get embed dim used for this neuron/muscle pair
         embed_dim = cond_params['embed_dim']
         batch_size = cond_params['batch_size']
+        print(key)
 
         # Loop over window sizes, run inference for all, choose winner
         zero_rounding_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         for i,window_size in enumerate(window_size_range):
-            new_key = key + f'_window_{window_size}_embed_{embed_dim}_bs_{batch_size}'
+            new_key = key + f'_window_{window_size}_embed_{embed_dim}'
+            print(new_key)
             
             ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
                 select_x=cond_params['neurons'], select_y=cond_params['muscles']
