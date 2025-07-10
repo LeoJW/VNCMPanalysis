@@ -113,7 +113,7 @@ def train_models_worker(chunk):
     embed_repeats = 2
     embed_dims = np.array([4, 8, 12])
     embed_dim_mat = np.vstack([embed_dims for i in range(embed_repeats)])
-    window_size_range = np.linspace(0.02, 0.1, 10)
+    window_size_range = np.linspace(0.02, 0.2, 20)
 
     process_id, thischunk = chunk
 
@@ -192,7 +192,7 @@ def train_models_worker(chunk):
             model_paths[i] = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
 
         # Save results
-        results.append({key : [model_paths, window_size_range, this_params]})
+        results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
         synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
@@ -218,7 +218,7 @@ if __name__ == '__main__':
         "2025-03-20",
         # "2025-03-21"
     ]
-    batch_size_range = [8, 16, 32, 64, 128, 256]
+    batch_size_range = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]
     moth_neuron_itr = []
     for moth in moths:
         # labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
@@ -227,12 +227,6 @@ if __name__ == '__main__':
             moth_neuron_itr.append((moth, [lab]))
     # Main iterator is muscle combinations for each neuron
     main_iterator = [(*item, muscles) for item in moth_neuron_itr for muscles in [
-        # ['lax'], ['lba'], ['lsa'], ['ldvm'], ['ldlm'], ['rdlm'], ['rdvm'], ['rsa'], ['rba'], ['rax'], # Single muscles
-        # ['lax', 'lba', 'lsa'], # L steering
-        # ['rax', 'rba', 'rsa'], # R steering
-        # ['ldvm', 'ldlm'], # L power
-        # ['rdvm', 'rdlm'], # R power
-        # ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'], # All steering
         ['ldvm', 'ldlm', 'rdlm', 'rdvm'] # All power
     ]]
     main_iterator = [(*item, bs) for item in main_iterator for bs in batch_size_range]
@@ -256,12 +250,13 @@ if __name__ == '__main__':
     # Set up dicts to save
     precision_curves = {}
     precision_levels_dict = {}
+    embed_mi_dict = {}
     all_params = {}
     # Run inference serially on resulting models (as inference can take advantage of whole GPU)
     iteration_count = 0
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
-        model_paths, window_size_range, cond_params = single_result
+        model_paths, window_size_range, embed_mi, cond_params = single_result
 
         # Skip if this moth doesn't have data for all muscles in this moth/neuron/muscle combination
         has_muscles = check_label_present(os.path.join(data_dir, cond_params['moth']), cond_params['muscles'])
@@ -293,6 +288,7 @@ if __name__ == '__main__':
             zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi
             precision_levels_dict[new_key] = precision_levels
+            embed_mi_dict[new_key] = embed_mi.flatten()
             all_params[new_key] = [k + ' : ' + str(val) for k, val in this_params.items()]
         
         empty_cache()
