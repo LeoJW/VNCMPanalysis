@@ -178,7 +178,7 @@ def train_models_worker(chunk):
         model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
         # Run over the rest of the window sizes
         for i in np.delete(np.arange(len(window_size_range)), wi):
-            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False)
+            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False, use_phase=True)
             this_params = {**params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
                 'moth': moth,
@@ -197,6 +197,10 @@ def train_models_worker(chunk):
         synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
+
+
+
+
 
 
 if __name__ == '__main__':
@@ -219,7 +223,7 @@ if __name__ == '__main__':
         "2025-03-20",
         # "2025-03-21"
     ]
-    batch_size_range = [8, 32, 128, 512, 2048]
+    batch_size_range = [256, 512, 1024, 2048]
     moth_neuron_itr = []
     for moth in moths:
         # labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
@@ -276,7 +280,8 @@ if __name__ == '__main__':
             
             ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
                 select_x=cond_params['neurons'], select_y=cond_params['muscles'],
-                use_ISI=False
+                use_ISI=False,
+                use_phase=True
             )
             this_params = {**cond_params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}

@@ -65,6 +65,7 @@ class TimeWindowDataset(Dataset):
             time_offset=0.0, # Time offset to apply to everything
             use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
             ISI_offset=True,
+            use_phase=False,
             sample_rate=30000, # Don't change
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
@@ -95,6 +96,7 @@ class TimeWindowDataset(Dataset):
         
         self.use_ISI = use_ISI
         self.ISI_offset = ISI_offset
+        self.use_phase = use_phase
         self.window_size = window_size
         self.no_spike_value = no_spike_value
         
@@ -128,51 +130,7 @@ class TimeWindowDataset(Dataset):
         mask = getattr(self, 'spike_mask_' + X.lower())
         target_tensor = getattr(self, X)
         target_tensor[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
-    def apply_precision_to_times(self, prec, X='X'):
-        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
-        # Apply rounding to times
-        times_target = getattr(self, X + 'times')
-        if isinstance(times_target, list):
-            for i in range(len(times_target)):
-                times_target[i] = np.rint(getattr(self, X + 'times_orig')[i] / prec) * prec
-        else:
-            times_target = np.rint(getattr(self, X + 'times_orig') / prec) * prec
-        # Update windowed data on Xmain, X
-        # Assign to main arrays, cases for neurons or muscles
-        if (X == 'X' or X == 'Y') and self.use_ISI:
-            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
-            max_string = 'max_neuron' if X == 'X' else 'max_muscle'
-            main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
-            
-            for i in range(len(getattr(self, X+'times'))):
-                # Get where windows are valid (mask), which columns spike times will go in
-                mask = self.valid_windows[window_inds[i]]
-                if not np.any(mask):
-                    continue
-                _, _, counts = np.unique(window_inds[i], return_counts=True, return_index=True)
-                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
-                # Prep spike times, window times for each spike (offset applied here)
-                masktimes = getattr(self, X+'times')[i][mask]
-                maskwindow_times = self.window_times[window_inds[i][mask]]
-                # Fill spike time values in
-                firstval = masktimes[0] - maskwindow_times[0]
-                main[window_inds[i][mask],i,column_inds] = np.insert(np.diff(masktimes), 0, firstval)
-                # Change first column values to time from window start
-                first = column_inds == 0
-                main[window_inds[i][mask][first], i, column_inds[first]] = masktimes[first] - maskwindow_times[first]
-        elif (X == 'X' or X == 'Y') and not self.use_ISI:
-            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
-            max_string = 'max_neuron' if X == 'X' else 'max_muscle'
-            main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
-            
-            for i in range(len(getattr(self, X+'times'))):
-                mask = self.valid_windows[window_inds[i]]
-                column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
-                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] - self.window_times[window_inds[i]][mask]
-        # Trim to windows that are valid
-        setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
-        setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
-
+    
     def time_shift(self, time_offset=0.0, X='X'):
         """
         Shift one variable (X, can be 'X' or 'Y') in time by time_offset
@@ -320,6 +278,12 @@ class TimeWindowDataset(Dataset):
         # Pre-compute mask of where actual spikes are
         self.spike_mask_x = torch.nonzero(self.Xmain != self.no_spike_value, as_tuple=True)
         self.spike_mask_y = torch.nonzero(self.Ymain != self.no_spike_value, as_tuple=True)
+        # Change to phase (% of window) if requested
+        if self.use_phase:
+            self.Xmain[self.spike_mask_x] /= self.window_size
+            self.Ymain[self.spike_mask_y] /= self.window_size
+            self.X[self.spike_mask_x] /= self.window_size
+            self.Y[self.spike_mask_y] /= self.window_size
         # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
         self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
         self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
