@@ -163,7 +163,7 @@ def train_model_no_eval(dataset, params,
             if params['epochs_till_max_shift'] == 0:
                 max_offset = dataset.window_size
             else:
-                max_offset = np.clip(np.abs(epoch - 5) / params['epochs_till_max_shift'], 0, 1) * dataset.window_size
+                max_offset = np.clip(np.abs(epoch - params['start_shifting_epoch']) / params['epochs_till_max_shift'], 0, 1) * dataset.window_size
             dataset.move_data_to_windows(time_offset=np.random.uniform(high=max_offset))
             # Get new training set indices (things shift around after applying time offset)
             test_block_inds = np.searchsorted(dataset.window_times[dataset.valid_windows], test_block_times) - 1

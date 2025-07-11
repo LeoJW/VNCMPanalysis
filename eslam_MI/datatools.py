@@ -64,6 +64,7 @@ class TimeWindowDataset(Dataset):
             no_spike_value=0, # Value to use as filler for no spikes (leave at zero)
             time_offset=0.0, # Time offset to apply to everything
             use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
+            ISI_offset=True,
             sample_rate=30000, # Don't change
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
@@ -93,6 +94,7 @@ class TimeWindowDataset(Dataset):
             self.muscle_labels = [self.muscle_labels[i] for i in keep_inds]
         
         self.use_ISI = use_ISI
+        self.ISI_offset = ISI_offset
         self.window_size = window_size
         self.no_spike_value = no_spike_value
         
@@ -112,20 +114,64 @@ class TimeWindowDataset(Dataset):
             amplitude: added uniform noise amplitude, units of seconds
         """
         # Generate noise directly into pre-allocated buffer
-        getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
+        getattr(self, 'noise_buffer_' + X.lower()).uniform_(-amplitude/2, amplitude/2)
         # Get references to the tensors
         target_tensor = getattr(self, X)
         source_tensor = getattr(self, X + 'main')
         noise_buffer = getattr(self, 'noise_buffer_' + X.lower())
         mask = getattr(self, 'spike_mask_' + X.lower())
         # Apply noise in-place
-        target_tensor[mask] = source_tensor[mask] + noise_buffer[mask]
+        target_tensor[mask] = source_tensor[mask] + noise_buffer
     
     def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
         mask = getattr(self, 'spike_mask_' + X.lower())
         target_tensor = getattr(self, X)
         target_tensor[mask] = torch.round(getattr(self, X + 'main')[mask] / prec) * prec
+    def apply_precision_to_times(self, prec, X='X'):
+        """ Set data to a specific precision level prec. Units are same as spike times (s)"""
+        # Apply rounding to times
+        times_target = getattr(self, X + 'times')
+        if isinstance(times_target, list):
+            for i in range(len(times_target)):
+                times_target[i] = np.rint(getattr(self, X + 'times_orig')[i] / prec) * prec
+        else:
+            times_target = np.rint(getattr(self, X + 'times_orig') / prec) * prec
+        # Update windowed data on Xmain, X
+        # Assign to main arrays, cases for neurons or muscles
+        if (X == 'X' or X == 'Y') and self.use_ISI:
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
+            max_string = 'max_neuron' if X == 'X' else 'max_muscle'
+            main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
+            
+            for i in range(len(getattr(self, X+'times'))):
+                # Get where windows are valid (mask), which columns spike times will go in
+                mask = self.valid_windows[window_inds[i]]
+                if not np.any(mask):
+                    continue
+                _, _, counts = np.unique(window_inds[i], return_counts=True, return_index=True)
+                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
+                # Prep spike times, window times for each spike (offset applied here)
+                masktimes = getattr(self, X+'times')[i][mask]
+                maskwindow_times = self.window_times[window_inds[i][mask]]
+                # Fill spike time values in
+                firstval = masktimes[0] - maskwindow_times[0]
+                main[window_inds[i][mask],i,column_inds] = np.insert(np.diff(masktimes), 0, firstval)
+                # Change first column values to time from window start
+                first = column_inds == 0
+                main[window_inds[i][mask][first], i, column_inds[first]] = masktimes[first] - maskwindow_times[first]
+        elif (X == 'X' or X == 'Y') and not self.use_ISI:
+            window_inds = [np.searchsorted(self.window_times, x) - 1 for x in getattr(self, X + 'times')]
+            max_string = 'max_neuron' if X == 'X' else 'max_muscle'
+            main = np.full((len(self.window_times), len(getattr(self, X+'times')), getattr(self, max_string)), self.no_spike_value, dtype=np.float32)
+            
+            for i in range(len(getattr(self, X+'times'))):
+                mask = self.valid_windows[window_inds[i]]
+                column_inds = monotonic_repeats_to_ranges(window_inds[i])[mask]
+                main[window_inds[i][mask],i,column_inds] = getattr(self, X+'times')[i][mask] - self.window_times[window_inds[i]][mask]
+        # Trim to windows that are valid
+        setattr(self, X, torch.tensor(main[self.valid_windows,:,:], device=device))
+        setattr(self, X + 'main', torch.tensor(main[self.valid_windows,:,:], device=device))
 
     def time_shift(self, time_offset=0.0, X='X'):
         """
@@ -222,8 +268,9 @@ class TimeWindowDataset(Dataset):
                 firstval = maskXtimes[0] - maskwindow_times[0]
                 Xmain[window_inds_x[i][mask],i,column_inds] = np.insert(np.diff(maskXtimes), 0, firstval)
                 # Change first column values to time from window start
-                first = column_inds == 0
-                Xmain[window_inds_x[i][mask][first], i, column_inds[first]] = maskXtimes[first] - maskwindow_times[first]
+                if self.ISI_offset:
+                    first = column_inds == 0
+                    Xmain[window_inds_x[i][mask][first], i, column_inds[first]] = maskXtimes[first] - maskwindow_times[first]
             for i in range(len(self.Ytimes)):
                 # Get where windows are valid (mask), which columns spike times will go in
                 mask = self.valid_windows[window_inds_y[i]]
@@ -238,17 +285,22 @@ class TimeWindowDataset(Dataset):
                 firstval = maskYtimes[0] - maskwindow_times[0]
                 Ymain[window_inds_y[i][mask],i,column_inds] = np.insert(np.diff(maskYtimes), 0, firstval)
                 # Change first column values to time from window start
-                first = column_inds == 0
-                Ymain[window_inds_y[i][mask][first],i,column_inds[first]] = maskYtimes[first] - maskwindow_times[first]
+                if self.ISI_offset:
+                    first = column_inds == 0
+                    Ymain[window_inds_y[i][mask][first],i,column_inds[first]] = maskYtimes[first] - maskwindow_times[first]
         else:    
             for i in range(len(self.Xtimes)):
                 mask = self.valid_windows[window_inds_x[i]]
-                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
+                # column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
+                _, _, counts = np.unique(window_inds_x[i], return_counts=True, return_index=True)
+                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 Xmain[window_inds_x[i][mask],i,column_inds] = self.Xtimes[i][mask] - self.window_times[window_inds_x[i][mask]]
             for i in range(len(self.Ytimes)):
                 mask = self.valid_windows[window_inds_y[i]]
-                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
-                Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i][mask]]
+                # column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
+                _, _, counts = np.unique(window_inds_y[i], return_counts=True, return_index=True)
+                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
+                Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i][mask] - self.window_times[window_inds_y[i][mask]]
         # Keep only windows that have spikes in X and Y
         all_x = np.unique(np.concatenate(window_inds_x))
         all_y = np.unique(np.concatenate(window_inds_y))

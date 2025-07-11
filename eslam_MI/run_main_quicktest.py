@@ -91,18 +91,19 @@ def train_models_worker(chunk):
         # 'batch_size': 512, # Number of windows estimator processes at any time
         # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
-        'patience': 50,
+        'patience': 100,
         'min_delta': 0.001,
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 20, # Number of epochs until random shifting is at max
+        'start_shifting_epoch': 10,
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
         'activation': nn.LeakyReLU,
         'layers': 4,
-        'hidden_dim': 512,
+        'hidden_dim': 128,
         # 'embed_dim': 10,
         'use_bias': False,
         'beta': 512, # Just used in DVSIB
@@ -138,7 +139,7 @@ def train_models_worker(chunk):
         has_muscles = check_label_present(os.path.join(data_dir, moth), muscles)
         if np.all(np.logical_not(has_muscles)):
             continue
-        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles)
+        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles, use_ISI=False)
 
         # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
         embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
@@ -177,7 +178,7 @@ def train_models_worker(chunk):
         model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
         # Run over the rest of the window sizes
         for i in np.delete(np.arange(len(window_size_range)), wi):
-            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles)
+            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False)
             this_params = {**params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
                 'moth': moth,
@@ -218,11 +219,11 @@ if __name__ == '__main__':
         "2025-03-20",
         # "2025-03-21"
     ]
-    batch_size_range = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+    batch_size_range = [8, 32, 128, 512, 2048]
     moth_neuron_itr = []
     for moth in moths:
-        # labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
-        labels = ['7']
+        labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
+        # labels = ['7']
         for lab in labels:
             moth_neuron_itr.append((moth, [lab]))
     # Main iterator is muscle combinations for each neuron
@@ -274,7 +275,8 @@ if __name__ == '__main__':
             print(new_key)
             
             ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
-                select_x=cond_params['neurons'], select_y=cond_params['muscles']
+                select_x=cond_params['neurons'], select_y=cond_params['muscles'],
+                use_ISI=False
             )
             this_params = {**cond_params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
@@ -295,14 +297,14 @@ if __name__ == '__main__':
         iteration_count += 1
         if (iteration_count % save_every_n_iterations == 0):
             try:
-                save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+                save_dicts_to_h5([precision_levels_dict, precision_curves, all_params, embed_mi_dict], filename)
                 print(f"Intermediate results saved")
             except Exception as e:
                 print(f"Warning: Failed to save intermediate results: {e}")
 
     # Save final output
     try:
-        save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+        save_dicts_to_h5([precision_levels_dict, precision_curves, all_params, embed_mi_dict], filename)
         print(f'Final results saved to {filename}')
     except Exception as e:
         print(f"Error saving final results: {e}")
