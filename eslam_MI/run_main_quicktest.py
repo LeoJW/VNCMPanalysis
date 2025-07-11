@@ -206,7 +206,7 @@ if __name__ == '__main__':
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
     n_tasks = 6
-    n_processes = 10
+    n_processes = 8
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
 
@@ -222,8 +222,8 @@ if __name__ == '__main__':
     batch_size_range = [8, 32, 128, 512, 2048]
     moth_neuron_itr = []
     for moth in moths:
-        labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
-        # labels = ['7']
+        # labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
+        labels = ['7']
         for lab in labels:
             moth_neuron_itr.append((moth, [lab]))
     # Main iterator is muscle combinations for each neuron
