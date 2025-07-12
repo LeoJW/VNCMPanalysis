@@ -140,64 +140,68 @@ def train_models_worker(chunk):
         has_muscles = check_label_present(os.path.join(data_dir, moth), muscles)
         if np.all(np.logical_not(has_muscles)):
             continue
-        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles, use_ISI=False)
+        try:
+            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles, use_ISI=False)
+        except:
+            print('FAILURE!')
+            print(key)
 
-        # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
-        embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
-        embed_model_paths = np.empty(embed_dim_mat.shape, dtype=object)
-        for i,embed in enumerate(embed_dims):
-            for j in range(embed_repeats):
-                # Set params
-                this_params = {**params, 
-                    'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
-                    'moth': moth,
-                    'window_size': window_size_range[wi],
-                    'embed_dim': embed,
-                    'batch_size': batch_size,
-                    'hidden_dim': hidden_dim
-                }
-                # Train model, keep only best one based on early stopping
-                ds.move_data_to_windows(time_offset=0)
-                mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
-                model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
-                # Just use max test information as MI estimate to save time
-                embed_mi[j,i] = mi_test[np.argmax(gaussian_filter1d(np.nan_to_num(mi_test), sigma=1))]
-                embed_model_paths[j,i] = model_path
-        # Choose smallest embed_dim within 10% of max mutual information value
-        embed_mi[embed_mi < 0] = np.nan
-        mean_embed_mi = np.nanmean(embed_mi, axis=0)
-        max_mi_threshold = np.nanmax(mean_embed_mi) * 0.9
-        chosen_embed_ind = np.argmax(mean_embed_mi > max_mi_threshold)
-        chosen_rep_ind = np.argmax(embed_mi[:,chosen_embed_ind])
-        chosen_embed = embed_dims[chosen_embed_ind]
-        # Remove all but chosen model
-        for modpath in embed_model_paths[embed_model_paths != embed_model_paths[chosen_rep_ind, chosen_embed_ind]]:
-            os.remove(modpath)
+        # # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
+        # embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
+        # embed_model_paths = np.empty(embed_dim_mat.shape, dtype=object)
+        # for i,embed in enumerate(embed_dims):
+        #     for j in range(embed_repeats):
+        #         # Set params
+        #         this_params = {**params, 
+        #             'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
+        #             'moth': moth,
+        #             'window_size': window_size_range[wi],
+        #             'embed_dim': embed,
+        #             'batch_size': batch_size,
+        #             'hidden_dim': hidden_dim
+        #         }
+        #         # Train model, keep only best one based on early stopping
+        #         ds.move_data_to_windows(time_offset=0)
+        #         mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
+        #         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
+        #         # Just use max test information as MI estimate to save time
+        #         embed_mi[j,i] = mi_test[np.argmax(gaussian_filter1d(np.nan_to_num(mi_test), sigma=1))]
+        #         embed_model_paths[j,i] = model_path
+        # # Choose smallest embed_dim within 10% of max mutual information value
+        # embed_mi[embed_mi < 0] = np.nan
+        # mean_embed_mi = np.nanmean(embed_mi, axis=0)
+        # max_mi_threshold = np.nanmax(mean_embed_mi) * 0.9
+        # chosen_embed_ind = np.argmax(mean_embed_mi > max_mi_threshold)
+        # chosen_rep_ind = np.argmax(embed_mi[:,chosen_embed_ind])
+        # chosen_embed = embed_dims[chosen_embed_ind]
+        # # Remove all but chosen model
+        # for modpath in embed_model_paths[embed_model_paths != embed_model_paths[chosen_rep_ind, chosen_embed_ind]]:
+        #     os.remove(modpath)
 
-        # -------- Step 2: Run over different window sizes
-        model_paths = np.empty(window_size_range.shape, dtype=object)
-        # One window size was already done, so throw that in
-        model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
-        # Run over the rest of the window sizes
-        for i in np.delete(np.arange(len(window_size_range)), wi):
-            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False, use_phase=True)
-            this_params = {**params, 
-                'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
-                'moth': moth,
-                'window_size': window_size_range[i],
-                'embed_dim': chosen_embed,
-                'neurons': neurons,
-                'muscles': muscles,
-                'batch_size': batch_size,
-                'hidden_dim': hidden_dim
-            }
-            # Train models
-            mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
-            model_paths[i] = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
+        # # -------- Step 2: Run over different window sizes
+        # model_paths = np.empty(window_size_range.shape, dtype=object)
+        # # One window size was already done, so throw that in
+        # model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
+        # # Run over the rest of the window sizes
+        # for i in np.delete(np.arange(len(window_size_range)), wi):
+        #     ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False, use_phase=True)
+        #     this_params = {**params, 
+        #         'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
+        #         'moth': moth,
+        #         'window_size': window_size_range[i],
+        #         'embed_dim': chosen_embed,
+        #         'neurons': neurons,
+        #         'muscles': muscles,
+        #         'batch_size': batch_size,
+        #         'hidden_dim': hidden_dim
+        #     }
+        #     # Train models
+        #     mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
+        #     model_paths[i] = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
 
-        # Save results
-        results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
-        synchronize()
+        # # Save results
+        # results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
+        # synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
 
