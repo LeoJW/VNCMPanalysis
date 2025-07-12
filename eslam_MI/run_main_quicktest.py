@@ -103,7 +103,7 @@ def train_models_worker(chunk):
         'model_func': DSIB, # DSIB or DVSIB
         'activation': nn.LeakyReLU,
         'layers': 4,
-        'hidden_dim': 128,
+        # 'hidden_dim': 128,
         # 'embed_dim': 10,
         'use_bias': False,
         'beta': 512, # Just used in DVSIB
@@ -123,15 +123,16 @@ def train_models_worker(chunk):
         synchronize()
         tic = time.time()
         # Unpack chunk
-        moth, neurons, muscles, batch_size = condition
+        moth, neurons, muscles, batch_size, hidden_dim = condition
         # Enforce types (fuck python)
         moth = str(moth)
         batch_size = int(batch_size)
+        hidden_dim = int(hidden_dim)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
         neuronstring = '-'.join(neurons)
         musclestring = '-'.join(muscles)
-        key = f'moth_{mothstring_no_underscore}_neuron_{neuronstring}_muscle_{musclestring}_bs_{batch_size}'
+        key = f'moth_{mothstring_no_underscore}_neuron_{neuronstring}_muscle_{musclestring}_bs_{batch_size}_hiddendim_{hidden_dim}'
         print(f'Process {process_id} key {key}')
 
         # -------- Step 0: Check that there's even data for this muscle
@@ -152,7 +153,8 @@ def train_models_worker(chunk):
                     'moth': moth,
                     'window_size': window_size_range[wi],
                     'embed_dim': embed,
-                    'batch_size': batch_size
+                    'batch_size': batch_size,
+                    'hidden_dim': hidden_dim
                 }
                 # Train model, keep only best one based on early stopping
                 ds.move_data_to_windows(time_offset=0)
@@ -186,7 +188,8 @@ def train_models_worker(chunk):
                 'embed_dim': chosen_embed,
                 'neurons': neurons,
                 'muscles': muscles,
-                'batch_size': batch_size
+                'batch_size': batch_size,
+                'hidden_dim': hidden_dim
             }
             # Train models
             mi_test, train_id = train_model_no_eval(ds, this_params, X='X', Y='Y', verbose=False)
@@ -209,8 +212,8 @@ if __name__ == '__main__':
     # ------------------------ SETUP ------------------------
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
-    n_tasks = 6
-    n_processes = 8
+    n_tasks = 2
+    n_processes = 10
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
 
@@ -223,21 +226,27 @@ if __name__ == '__main__':
         "2025-03-20",
         # "2025-03-21"
     ]
-    batch_size_range = [256, 512, 1024, 2048]
+    batch_size_range = [512, 1024, 2048]
+    hidden_dim_range = [64, 128, 256, 512, 1024]
     moth_neuron_itr = []
     for moth in moths:
         # labels = TimeWindowDataset(os.path.join(data_dir, moth), window_size=0.6).neuron_labels
-        labels = ['7']
+        labels = ['16', '7', '42', '39']
         for lab in labels:
             moth_neuron_itr.append((moth, [lab]))
     # Main iterator is muscle combinations for each neuron
     main_iterator = [(*item, muscles) for item in moth_neuron_itr for muscles in [
-        ['ldvm', 'ldlm', 'rdlm', 'rdvm'] # All power
+        ['lba'], # Single muscle example
+        ['ldvm', 'ldlm', 'rdlm', 'rdvm'], # All power
+        ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'] # All steering
     ]]
     main_iterator = [(*item, bs) for item in main_iterator for bs in batch_size_range]
+    main_iterator = [(*item, hd) for item in main_iterator for hd in hidden_dim_range]
     
     # Split into chunks for n tasks, then chunks for n processes
-    chunk_inds = np.array_split(np.arange(len(main_iterator)), n_processes)
+    task_chunk_inds = np.array_split(np.arange(len(main_iterator)), n_tasks)[task_id]
+    chunk_inds = np.array_split(task_chunk_inds, n_processes)
+    # chunk_inds = np.array_split(np.arange(len(main_iterator)), n_processes)
     chunks = [(ii,[main_iterator[i] for i in inds]) for ii,inds in enumerate(chunk_inds)]
 
     # ------------------------ TRAINING ------------------------
@@ -254,6 +263,7 @@ if __name__ == '__main__':
     # ------------------------ INFERENCE ------------------------
     # Set up dicts to save
     precision_curves = {}
+    precision_noise_curves = {}
     precision_levels_dict = {}
     embed_mi_dict = {}
     all_params = {}
@@ -273,7 +283,6 @@ if __name__ == '__main__':
         print(key)
 
         # Loop over window sizes, run inference for all, choose winner
-        zero_rounding_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         for i,window_size in enumerate(window_size_range):
             new_key = key + f'_window_{window_size}_embed_{embed_dim}'
             print(new_key)
@@ -291,9 +300,10 @@ if __name__ == '__main__':
                 model.load_state_dict(torch.load(model_paths[i], weights_only=True, map_location=device))
                 model.eval()
                 precision_mi = precision_rounding(precision_levels, ds, model, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
+                precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
                 del model
-            zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi
+            precision_noise_curves[new_key] = precision_noise
             precision_levels_dict[new_key] = precision_levels
             embed_mi_dict[new_key] = embed_mi.flatten()
             all_params[new_key] = [k + ' : ' + str(val) for k, val in this_params.items()]
@@ -302,14 +312,14 @@ if __name__ == '__main__':
         iteration_count += 1
         if (iteration_count % save_every_n_iterations == 0):
             try:
-                save_dicts_to_h5([precision_levels_dict, precision_curves, all_params, embed_mi_dict], filename)
+                save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
                 print(f"Intermediate results saved")
             except Exception as e:
                 print(f"Warning: Failed to save intermediate results: {e}")
 
     # Save final output
     try:
-        save_dicts_to_h5([precision_levels_dict, precision_curves, all_params, embed_mi_dict], filename)
+        save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
         print(f'Final results saved to {filename}')
     except Exception as e:
         print(f"Error saving final results: {e}")

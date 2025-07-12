@@ -558,27 +558,28 @@ def precision_rounding(precision_levels, dataset, model, X='X', Y='Y',
                 break
         return mi
 
-def precision(noise_levels, dataset, model, n_repeats=3, X='X', Y='Y'):
+def precision(noise_levels, dataset, model, n_repeats=3, X='X', Y='Y',
+        early_stop=False, early_stop_threshold=0.5):
     """
     Run spike timing precision analysis, to get precision curve
     Args:
-        noise_levels: Range of noise levels to run over, in units of samples
+        noise_levels: Range of noise levels to run over, in units of seconds
         dataset: BatchedDatasetWithNoise of X and Y data
         model: Trained model to run inference with
         n_repeats: How many times per noise level to repeat
     Returns:
-        new_noise_levels: Noise levels actually used (units of samples), based on rounding to integers
         mi: Matrix of mutual information at each noise level. Rows are repeats, columns noise levels
     """
+    if dataset.use_phase:
+        noise_levels = noise_levels / dataset.window_size
     with torch.no_grad():
-        mi = np.zeros((len(noise_levels), n_repeats))
-        for j0,prec_noise_amp in enumerate(noise_levels):
-            # Only run zero noise once, nothing changes between runs
-            if prec_noise_amp == 0:
+        # Will always do zero-noise MI
+        mi = np.zeros((len(noise_levels)+1, n_repeats))
+        mi[0,:] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
+        for i,prec_noise_amp in enumerate(noise_levels):
+            for j in range(n_repeats):
                 dataset.apply_noise(prec_noise_amp, X=X)
-                mi[j0,:] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
-                continue
-            for j1 in range(n_repeats):
-                dataset.apply_noise(prec_noise_amp, X=X)
-                mi[j0,j1] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
+                mi[i+1,j] = - model(getattr(dataset, X), getattr(dataset, Y)).detach().cpu().numpy()
+            if early_stop and (np.mean(mi[i+1,:]) < (mi[0,0] * early_stop_threshold)):
+                break
         return mi
