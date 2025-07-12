@@ -212,7 +212,7 @@ if __name__ == '__main__':
     # ------------------------ SETUP ------------------------
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
-    n_tasks = 2
+    n_tasks = 4
     n_processes = 10
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
