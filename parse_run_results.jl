@@ -35,7 +35,25 @@ function find_precision_deriv(noise_levels, mi; lower_bound=5e-4)
 end
 
 function find_precision_threshold(noise_levels, mi; threshold=0.9)
-    curve = mi ./ mi[1]
+    # sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
+    # sg_window = sg_window < 2 ? 5 : sg_window
+    sg_window = 51
+    curve = savitzky_golay(mi[2:end], sg_window, 2; deriv=0).y ./ mi[1]
+
+    # curve = mi ./ mi[1]
+    ind = findfirst(curve .< threshold)
+    if isnothing(ind)
+        return NaN
+    else
+        return noise_levels[ind]
+    end
+end
+function find_precision_noise_threshold(noise_levels::Vector{Float64}, mi::Array{Float64,2}; threshold=0.9)
+    # sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
+    # sg_window = sg_window < 2 ? 5 : sg_window
+    sg_window = 51
+    curve = savitzky_golay(vec(mean(mi[:,2:end], dims=1)), sg_window, 2; deriv=0).y ./ mi[1,1]
+
     ind = findfirst(curve .< threshold)
     if isnothing(ind)
         return NaN
@@ -64,7 +82,7 @@ function read_network_arch_file!(df, file, task)
             vals,
             time_per_epoch[key], 
             precision_curves[key][1] .* log2(exp(1)), 
-            find_precision_threshold(precision_noise[key] .* 1000, precision_curves[key][2:end]),
+            find_precision_threshold(precision_noise[key][2:end] .* 1000, precision_curves[key][3:end]),
             [precision_curves[key] .* log2(exp(1))],
             [precision_noise[key] .* 1000]
         ))
@@ -82,15 +100,31 @@ for task in 0:5
     read_network_arch_file!(df, joinpath(data_dir, "2025-06-23_network_comparison_PACE_task_$(task).h5"), task)
 end
 
-# Remove obvious failures, convert units
-# df = @pipe df |> 
-# @subset(_, :mi .> 0.0)
-# @transform(_, :mi = :mi .* log2(exp(1)))
 
-# # Save to CSV for R and other things
-# @pipe df |> 
-#     select(_, Not(:precision_curve, :precision_noise)) |> 
-#     CSV.write(joinpath(data_dir, "network_arch_comparison.csv"), _)
+## What really did ISI do?
+dfisi = DataFrame()
+for task in 0:5
+    read_network_arch_file!(dfisi, joinpath(data_dir, "2025-06-20_network_comparison_PACE_task_$(task)_hour_14.h5"), task)
+end
+
+@pipe dfisi |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:window, :precision, col=:neuron, color=:ISI) *
+visual(Scatter)
+) |> 
+draw(_)
+##
+coldict = Dict("True" => Makie.wong_colors()[1], "False" => Makie.wong_colors()[2])
+
+rows = eachrow(@subset(dfisi, :window .> 0.4))
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+for row in rows
+    lines!(ax, row.precision_noise[2:end], row.precision_curve[3:end],
+        color=coldict[row.ISI])
+end
+f
 
 
 ##
@@ -479,6 +513,84 @@ mapping(:shift, :mi, row=:window=>nonnumeric) * visual(ScatterLines)
 ) |> 
 draw(_)
 
+
+## ------------------------------------ Kinematics choosing embedding dim ------------------------------------
+
+function read_kinematics_embed_file!(df, file)
+    mi = h5read(joinpath(data_dir, file), "dict_0")
+    # Construct dataframe
+    first_row = split(first(keys(mi)), "_")
+    names = vcat(first_row[1:2:end], "mi")
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat([x ? Float64 : String for x in is_numeric], Float64)
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(mi)
+        keysplit = split(key, "_")[2:2:end]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        push!(thisdf, vcat(vals, mi[key] .* log2(exp(1))))
+    end
+    append!(df, thisdf)
+end
+
+df = DataFrame()
+for i in 0:3
+    read_kinematics_embed_file!(df, joinpath(data_dir, "2025-07-09_kinematics_embed_PACE_task_$(i).h5"))
+end
+muscle_names_dict = Dict(
+    "lax-lba-lsa-rsa-rba-rax" => "steering",
+    "lax-lba-lsa" => "Lsteering",
+    "rax-rba-rsa" => "Rsteering",
+    "ldvm-ldlm-rdlm-rdvm" => "power",
+    "ldvm-ldlm" => "Lpower",
+    "rdvm-rdlm" => "Rpower"
+)
+for muscle in single_muscles
+    muscle_names_dict[muscle] = muscle
+end
+df = @pipe df |> 
+    @transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
+    @transform(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
+##
+
+@pipe df[sortperm(df.embed),:] |> 
+@transform(_, :mi = :mi ./ :window) |> 
+groupby(_, [:muscle, :moth, :embed, :window]) |> 
+combine(_, 
+    :mi => mean => :mi, 
+    :mi => (x->mean(x) - std(x)) => :mi_lo,
+    :mi => (x->mean(x) + std(x)) => :mi_hi) |> 
+@subset(_, :mi .> 0) |> 
+# groupby(_, [:muscle, :moth, :window]) |> 
+# transform(_, [:mi, :embed] => ((mi, embed) -> mi .- first(mi[embed .== 4])) => :mi) |> 
+(
+AlgebraOfGraphics.data(_) * (
+mapping(:embed, :mi, dodge_x=:window=>nonnumeric, color=:window, group=:window=>nonnumeric, row=:muscle, col=:moth) * 
+visual(ScatterLines) + 
+mapping(:embed, :mi_lo, :mi_hi, dodge_x=:window=>nonnumeric, color=:window, group=:window=>nonnumeric, row=:muscle, col=:moth) *
+visual(Rangebars)
+)
+) |> 
+draw(_, scales(DodgeX = (; width = 2)))
+
+##
+
+@pipe df[sortperm(df.window),:] |> 
+@transform(_, :mi = :mi ./ :window) |> 
+groupby(_, [:muscle, :moth, :embed, :window]) |> 
+combine(_, 
+    :mi => mean => :mi, 
+    :mi => (x->mean(x) - std(x)) => :mi_lo,
+    :mi => (x->mean(x) + std(x)) => :mi_hi) |> 
+@subset(_, :mi .> 0) |> 
+(
+AlgebraOfGraphics.data(_) * (
+mapping(:window, :mi, color=:embed, group=:embed=>nonnumeric, row=:moth=>nonnumeric, col=:muscle) * 
+visual(ScatterLines)
+)
+) |> 
+draw(_)
+
 ## ------------------------------------ Kinematics precision ------------------------------------
 
 function read_precision_kinematics_file!(df, file, task)
@@ -826,115 +938,104 @@ f
 
 
 
-## ------------------------------------ Precision fixed results ------------------------------------
+##
 
-# file = joinpath(data_dir, "precision_groundtruth_PACE_2025-06-09.h5")
-function find_precision(noise_levels, mi; lower_bound=5e-4)
-    sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
-    sg_window = sg_window < 2 ? 5 : sg_window
-    curve = vec(mean(mi, dims=1))
-    deriv = savitzky_golay(curve, sg_window, 2; deriv=2).y
-    bound_mask = deriv .<= - lower_bound
-    if !isempty(deriv[bound_mask])
-        return noise_levels[bound_mask][findmin(deriv[bound_mask])[2]]
-    else
+function find_precision_noise_threshold(noise_levels::Vector{Float64}, mi::Array{Float64,2}; threshold=0.9)
+    # sg_window = 2 * floor(Int, length(noise_levels) / 5) + 1
+    # sg_window = sg_window < 2 ? 5 : sg_window
+    sg_window = 51
+    meanmi = vec(mean(mi[:,2:end], dims=1))
+    curve = savitzky_golay(meanmi, sg_window, 2; deriv=0).y ./ meanmi[1]
+
+    ind = findfirst(curve .< threshold)
+    if isnothing(ind)
         return NaN
+    else
+        return noise_levels[ind]
     end
 end
 
-function read_precision_file(file)
-    # Returns in units of bits/window, time units in ms
-    precision_noise = h5read(file, "dict_0")
-    precision_curves = h5read(file, "dict_1")
-    precision_noise_y = h5read(file, "dict_2")
-    precision_curves_y = h5read(file, "dict_3")
-    
-    period = 0.0001
-    
+function read_run_file!(df, file, task)
+    precision_levels = h5read(joinpath(data_dir, file), "dict_0")
+    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    precision_noise_curves = h5read(joinpath(data_dir, file), "dict_2")
     # Construct dataframe
-    added_names = [
-        "mi", "precision_est", "mi_y", "precision_est_y", 
-        "precision_curve", "precision_noise", 
-        "precision_curve_y", "precision_noise_y"]
-    added_types = [
-        Float64, Float64, Float64, Float64, 
-        Matrix{Float64}, Vector{Float64}, 
-        Matrix{Float64}, Vector{Float64}]
-
-    first_row = split(first(keys(precision_noise)), "_")
-    last_ind = (length(first_row) ÷ 2) * 2
-
-    names = vcat(first_row[1:2:last_ind], added_names)
-    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
-    types = vcat([x ? Float64 : String for x in is_numeric], added_types)
-    print(names)
+    first_row = split(first(keys(precision_levels)), "_")
+    not_has_noise = typeof(first(values(precision_noise_curves))) == Vector{String}
+    if !not_has_noise # Onlder runs without noise precision
+        names = vcat(first_row[1:2:end], ["mi", "precision", "precision_noise", "precision_curve", "precision_levels"])
+        is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+        types = vcat(
+            [x ? Float64 : String for x in is_numeric], 
+            Float64, Float64, Float64, Vector{Float64}, Vector{Float64}
+        )
+    else
+        names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_levels"])
+        is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+        types = vcat(
+            [x ? Float64 : String for x in is_numeric], 
+            Float64, Float64, Vector{Float64}, Vector{Float64}
+        )
+    end
     thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
     thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
-    for key in keys(precision_noise)
-        keysplit = split(key, "_")[2:2:last_ind]
+    for key in keys(precision_levels)
+        keysplit = split(key, "_")[2:2:end]
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
-        mean_curve = mean(precision_curves[key], dims=1) .* log2(exp(1))
-        mean_curve_y = mean(precision_curves_y[key], dims=1) .* log2(exp(1))
-        prec = ifelse(
-            all(mean_curve[2:end] .< 0), 
-            NaN,
-            find_precision(precision_noise[key] .* period .* 1000, precision_curves[key], lower_bound=5e-5))
-        prec_y = ifelse(
-            all(mean_curve_y[2:end] .< 0),
-            NaN,
-            find_precision(precision_noise_y[key] .* period .* 1000, precision_curves_y[key], lower_bound=5e-5))
-        push!(thisdf, vcat(
-            vals,
-            mean_curve[1], prec,
-            mean_curve_y[1], prec_y,
-            [precision_curves[key] .* log2(exp(1))], [precision_noise[key] .* period .* 1000],
-            [precision_curves_y[key] .* log2(exp(1))], [precision_noise_y[key] .* period .* 1000]
-        ))
+        if !not_has_noise
+            push!(thisdf, vcat(
+                vals,
+                precision_curves[key][1] .* log2(exp(1)), 
+                find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]),
+                find_precision_noise_threshold(precision_levels[key] .* 1000, precision_noise_curves[key]),
+                [precision_curves[key] .* log2(exp(1))],
+                [precision_levels[key] .* 1000]
+            ))
+        else
+            push!(thisdf, vcat(
+                vals,
+                precision_curves[key][1] .* log2(exp(1)), 
+                find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]),
+                [precision_curves[key] .* log2(exp(1))],
+                [precision_levels[key] .* 1000]
+            ))
+        end
     end
-    return thisdf
+    append!(df, thisdf)
 end
 
 
-df = read_precision_file(joinpath(data_dir, "precision_groundtruth_PACE_2025-06-09.h5"))
+
+dfisi = DataFrame()
+read_run_file!(dfisi, joinpath(data_dir, "2025-07-10_quicktest_single_neurons_PACE_task_0_hour_23.h5"), 0)
+# read_run_file!(dfisi, joinpath(data_dir, "2025-07-10_quicktest_single_neurons_PACE_task_0_hour_17.h5"), 0)
+df = DataFrame()
+for task in 0:3
+    read_run_file!(df, joinpath(data_dir, "2025-07-12_quicktest_single_neurons_PACE_task_$(task).h5"), 0)
+end
 
 ##
 
-@pipe df |> 
-@transform(_, :precision = :precision .* 1000) |> 
-# @subset(_, :setOn .== "muscles") |> 
-@subset(_, :neuron .== "neuron") |> 
+# @pipe dfisi[sortperm(dfisi.window),:] |> 
+@pipe df[sortperm(df.window),:] |> 
+@subset(_, :hiddendim .< 129) |> 
+@subset(_, :bs .== 1024, :neuron .== 7) |> 
+@transform(_, :comp = :window .* :bs) |> 
+@transform(_, :mi = :mi ./ :window) |> 
+@subset(_, :mi .> 0) |> 
+stack(_, [:mi, :precision, :precision_noise]) |> 
+# stack(_, [:mi, :precision]) |> 
 (
-AlgebraOfGraphics.data(_) * 
-(mapping(:precision, :mi, row=:moth, col=:setOn, color=:setOn) * 
-visual(Scatter)) +
-mapping([0], [1]) * visual(ABLines)
+AlgebraOfGraphics.data(_) *
+mapping(:window, :value, row=:variable, col=:muscle, color=:hiddendim=>log2, group=:hiddendim=>nonnumeric) * visual(ScatterLines)
+) |> 
+draw(_, facet=(; linkyaxes=:none))
+
+##
+@pipe ddf[sortperm(ddf.window),:] |> 
+@transform(_, :mi = :mi ./ :window) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:bs=>log2, group=:bs=>nonnumeric) * visual(ScatterLines)
 ) |> 
 draw(_)
-
-##
-
-dt = @subset(df, (:moth .== "2025-03-11") .&& (:setOn .== "neurons"))
-
-f = Figure()
-ax = Axis(f[1,1], xscale=log10)
-
-for row in eachrow(dt)
-    yvals = vec(mean(row.precision_curve[:,2:end], dims=1))
-
-    sg_window = 2 * floor(Int, length(row.precision_noise[2:end]) / 5) + 1
-    sg_window = sg_window < 2 ? 5 : sg_window
-    # yvals = savitzky_golay(yvals, sg_window, 2; deriv=2).y
-
-    bound_mask = yvals .<= -5e-5
-
-    lines!(ax, 
-        row.precision_noise[2:end], yvals, 
-        # row.precision_noise[2:end][bound_mask], yvals[bound_mask], 
-        color=row.precision, colorrange=extrema(dt.precision))
-    # if ~isempty(yvals[bound_mask])
-    #     idx = findmin(yvals[bound_mask])[2]
-    #     scatter!(ax, row.precision_noise[2:end][bound_mask][idx], yvals[bound_mask][idx])
-    # end
-end
-# xlims!(ax, 10^1, 10^2)
-f

@@ -88,8 +88,8 @@ def train_models_worker(chunk):
         # Optimizer parameters (for training)
         'epochs': 300,
         # 'window_size': 0.05,
-        # 'batch_size': 512, # Number of windows estimator processes at any time
-        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
+        'batch_size': 1024, # Number of windows estimator processes at any time
+        # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
         'patience': 50,
         'min_delta': 0.001,
@@ -102,18 +102,18 @@ def train_models_worker(chunk):
         'model_func': DSIB, # DSIB or DVSIB
         'activation': nn.LeakyReLU,
         'layers': 4,
-        'hidden_dim': 512,
+        'hidden_dim': 128,
         # 'embed_dim': 10,
         'use_bias': False,
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+        'max_n_batches': 1024, # If input has more than this many batches, encoder runs are split up for memory management
     }
     embed_repeats = 2
     embed_dims = np.array([4, 8, 12])
     embed_dim_mat = np.vstack([embed_dims for i in range(embed_repeats)])
-    window_size_range = np.linspace(0.02, 0.1, 10)
+    window_size_range = np.linspace(0.015, 0.2, 30)
 
     process_id, thischunk = chunk
 
@@ -137,7 +137,7 @@ def train_models_worker(chunk):
         has_muscles = check_label_present(os.path.join(data_dir, moth), muscles)
         if np.all(np.logical_not(has_muscles)):
             continue
-        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles)
+        ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[wi], select_x=neurons, select_y=muscles, use_ISI=False, use_phase=True)
 
         # -------- Step 1: Try 3 different embed_dims at intermediate window size, pick best one
         embed_mi = np.zeros(embed_dim_mat.shape, dtype=np.float32)
@@ -175,7 +175,7 @@ def train_models_worker(chunk):
         model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
         # Run over the rest of the window sizes
         for i in np.delete(np.arange(len(window_size_range)), wi):
-            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles)
+            ds = TimeWindowDataset(os.path.join(data_dir, moth), window_size_range[i], select_x=neurons, select_y=muscles, use_ISI=False, use_phase=True)
             this_params = {**params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2],
                 'moth': moth,
@@ -189,7 +189,7 @@ def train_models_worker(chunk):
             model_paths[i] = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
 
         # Save results
-        results.append({key : [model_paths, window_size_range, this_params]})
+        results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
         synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
@@ -228,7 +228,9 @@ if __name__ == '__main__':
         ['ldvm', 'ldlm'], # L power
         ['rdvm', 'rdlm'], # R power
         ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'], # All steering
-        ['ldvm', 'ldlm', 'rdlm', 'rdvm']] # All power
+        ['ldvm', 'ldlm', 'rdlm', 'rdvm'], # All power
+        ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax'] # All muscles
+        ] 
     ]
     
     # Split into chunks for n tasks, then chunks for n processes
@@ -251,12 +253,14 @@ if __name__ == '__main__':
     # Set up dicts to save
     precision_curves = {}
     precision_levels_dict = {}
+    precision_noise_curves = {}
+    embed_mi_dict = {}
     all_params = {}
     # Run inference serially on resulting models (as inference can take advantage of whole GPU)
     iteration_count = 0
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
-        model_paths, window_size_range, cond_params = single_result
+        model_paths, window_size_range, embed_mi, cond_params = single_result
 
         # Skip if this moth doesn't have data for all muscles in this moth/neuron/muscle combination
         has_muscles = check_label_present(os.path.join(data_dir, cond_params['moth']), cond_params['muscles'])
@@ -269,9 +273,11 @@ if __name__ == '__main__':
         zero_rounding_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         for i,window_size in enumerate(window_size_range):
             new_key = key + f'_window_{window_size}_embed_{embed_dim}'
+            print(new_key)
             
             ds = TimeWindowDataset(os.path.join(data_dir, cond_params['moth']), window_size, 
-                select_x=cond_params['neurons'], select_y=cond_params['muscles']
+                select_x=cond_params['neurons'], select_y=cond_params['muscles'],
+                use_ISI=False, use_phase=True
             )
             this_params = {**cond_params, 
                 'X_dim': ds.X.shape[1] * ds.X.shape[2], 'Y_dim': ds.Y.shape[1] * ds.Y.shape[2]}
@@ -281,10 +287,13 @@ if __name__ == '__main__':
                 model.load_state_dict(torch.load(model_paths[i], weights_only=True, map_location=device))
                 model.eval()
                 precision_mi = precision_rounding(precision_levels, ds, model, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
+                precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
                 del model
             zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi
+            precision_noise_curves[new_key] = precision_noise
             precision_levels_dict[new_key] = precision_levels
+            embed_mi_dict[new_key] = embed_mi.flatten()
             all_params[new_key] = [k + ' : ' + str(val) for k, val in this_params.items()]
         
         # Get max MI window size for this neuron/muscle combo, move model weights to long-term storage
@@ -296,14 +305,14 @@ if __name__ == '__main__':
         iteration_count += 1
         if (iteration_count % save_every_n_iterations == 0):
             try:
-                save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+                save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
                 print(f"Intermediate results saved")
             except Exception as e:
                 print(f"Warning: Failed to save intermediate results: {e}")
 
     # Save final output
     try:
-        save_dicts_to_h5([precision_levels_dict, precision_curves, all_params], filename)
+        save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
         print(f'Final results saved to {filename}')
     except Exception as e:
         print(f"Error saving final results: {e}")
