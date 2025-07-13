@@ -91,12 +91,13 @@ def train_models_worker(chunk):
         'batch_size': 1024, # Number of windows estimator processes at any time
         # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 5e-3,
-        'patience': 50,
+        'patience': 100,
         'min_delta': 0.001,
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 20, # Number of epochs until random shifting is at max
+        'start_shifting_epoch': 10,
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
