@@ -249,13 +249,11 @@ class TimeWindowDataset(Dataset):
         else:    
             for i in range(len(self.Xtimes)):
                 mask = self.valid_windows[window_inds_x[i]]
-                # column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
                 _, _, counts = np.unique(window_inds_x[i], return_counts=True, return_index=True)
                 column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 Xmain[window_inds_x[i][mask],i,column_inds] = self.Xtimes[i][mask] - self.window_times[window_inds_x[i][mask]]
             for i in range(len(self.Ytimes)):
                 mask = self.valid_windows[window_inds_y[i]]
-                # column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
                 _, _, counts = np.unique(window_inds_y[i], return_counts=True, return_index=True)
                 column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i][mask] - self.window_times[window_inds_y[i][mask]]
@@ -346,6 +344,7 @@ class TimeWindowDatasetKinematics(Dataset):
             no_spike_value=0, # Value to use as filler for no spikes (leave at zero)
             time_offset=0.0, # Time offset to apply to everything
             use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
+            use_phase=False,
             sample_rate=30000, # Don't change
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
@@ -380,6 +379,7 @@ class TimeWindowDatasetKinematics(Dataset):
             self.kine_names = self.kine_names[0:6]
         
         self.use_ISI = use_ISI
+        self.use_phase = use_phase
         self.window_size = window_size
         self.no_spike_value = no_spike_value
         self.only_flapping = only_flapping
@@ -400,14 +400,14 @@ class TimeWindowDatasetKinematics(Dataset):
             amplitude: added uniform noise amplitude, units of seconds
         """
         # Generate noise directly into pre-allocated buffer
-        getattr(self, 'noise_buffer_' + X.lower()).uniform_(0, amplitude)
+        getattr(self, 'noise_buffer_' + X.lower()).uniform_(-amplitude/2, amplitude/2)
         # Get references to the tensors
         target_tensor = getattr(self, X)
         source_tensor = getattr(self, X + 'main')
         noise_buffer = getattr(self, 'noise_buffer_' + X.lower())
         mask = getattr(self, 'spike_mask_' + X.lower())
         # Apply noise in-place
-        target_tensor[mask] = source_tensor[mask] + noise_buffer[mask]
+        target_tensor[mask] = source_tensor[mask] + noise_buffer
     
     def apply_precision(self, prec, X='X'):
         """ Set data to a specific precision level prec. Units are same as spike times (s)"""
@@ -550,12 +550,14 @@ class TimeWindowDatasetKinematics(Dataset):
         else:    
             for i in range(len(self.Xtimes)):
                 mask = self.valid_windows[window_inds_x[i]]
-                column_inds = monotonic_repeats_to_ranges(window_inds_x[i])[mask]
+                _, _, counts = np.unique(window_inds_x[i], return_counts=True, return_index=True)
+                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 Xmain[window_inds_x[i][mask],i,column_inds] = self.Xtimes[i][mask] - self.window_times[window_inds_x[i][mask]]
             for i in range(len(self.Ytimes)):
                 mask = self.valid_windows[window_inds_y[i]]
-                column_inds = monotonic_repeats_to_ranges(window_inds_y[i])[mask]
-                Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i] - self.window_times[window_inds_y[i][mask]]
+                _, _, counts = np.unique(window_inds_y[i], return_counts=True, return_index=True)
+                column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
+                Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i][mask] - self.window_times[window_inds_y[i][mask]]
         # Assign kinematics data
         # Have to interpolate if time offset applied
         mask = self.valid_windows[window_inds_z]
@@ -590,6 +592,12 @@ class TimeWindowDatasetKinematics(Dataset):
         # Pre-compute mask of where actual spikes are
         self.spike_mask_x = torch.nonzero(self.Xmain != self.no_spike_value, as_tuple=True)
         self.spike_mask_y = torch.nonzero(self.Ymain != self.no_spike_value, as_tuple=True)
+        # Change spike times to phase (% of window) if requested
+        if self.use_phase:
+            self.Xmain[self.spike_mask_x] /= self.window_size
+            self.Ymain[self.spike_mask_y] /= self.window_size
+            self.X[self.spike_mask_x] /= self.window_size
+            self.Y[self.spike_mask_y] /= self.window_size
         # Pre-allocate noise tensor, number of spikes to avoid repeated allocations/operations when applying noise
         self.noise_buffer_x = torch.empty(len(self.spike_mask_x[0]), device=device, dtype=self.X.dtype)
         self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)

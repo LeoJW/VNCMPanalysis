@@ -132,7 +132,8 @@ def train_models_worker(chunk_with_id):
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_flapping=True, angles_only=True)
+            only_flapping=True, angles_only=True,
+            use_ISI=False, use_phase=True)
         # Set params
         this_params = {**params, 
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
@@ -144,7 +145,7 @@ def train_models_worker(chunk_with_id):
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
         # Run subsamples (for all subsets except 1, because we just do that when estimating precision)
         if int(task_id) == 0:
-            subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,6), X='Y', Y='Z')
+            subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,8), X='Y', Y='Z')
         else:
             subsets, mi_subsets = [], []
         # Save results
@@ -157,12 +158,12 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 10
+    n_processes = 12
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(1.0), 300)
 
     # Package together main iterators
-    window_size_range = np.logspace(np.log10(0.02), np.log10(0.2), 10)
+    window_size_range = np.logspace(np.log10(0.015), np.log10(0.2), 30)
     moth_range = ['2025-02-25', '2025-02-25_1']
     repeats_range = np.arange(1)
     main_iterator = product(
@@ -213,14 +214,15 @@ if __name__ == '__main__':
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[0], # Just load one neuron so things run faster
             select_y=use_muscles,
-            only_flapping=True, angles_only=True)
+            only_flapping=True, angles_only=True,
+            use_ISI=False, use_phase=True)
         # Load model, run inference tasks
         with torch.no_grad():
             model = this_params['model_func'](this_params).to(device)
             model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
             model.eval()
             os.remove(model_path)
-            precision_mi = precision_rounding(precision_levels, ds, model, X='Y', Y='Z')
+            precision_mi = precision_rounding(precision_levels, ds, model, X='Y', Y='Z', early_stop=True)
             del model
         precision_curves[key] = precision_mi
         precision_levels_dict[key] = precision_levels
