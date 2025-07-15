@@ -82,15 +82,16 @@ def train_models_worker(chunk_with_id):
         # Optimizer parameters (for training)
         'epochs': 300,
         # 'window_size': 0.05,
-        # 'batch_size': 256, # Number of windows estimator processes at any time
-        's_per_batch': 10, # Alternatively specify seconds of data a batch should be
+        'batch_size': 1024, # Number of windows estimator processes at any time
+        # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
         'learning_rate': 2e-3,
-        'patience': 50,
+        'patience': 100,
         'min_delta': 0.001,
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
         'n_test_set_blocks': 5, # Number of contiguous blocks of data to dedicate to test set
-        'epochs_till_max_shift': 10, # Number of epochs until random shifting is at max
+        'epochs_till_max_shift': 20, # Number of epochs until random shifting is at max
+        'start_shifting_epoch': 10,
         'model_cache_dir': model_cache_dir,
         # Critic parameters for the estimator
         'model_func': DSIB, # DSIB or DVSIB
@@ -102,7 +103,7 @@ def train_models_worker(chunk_with_id):
         'beta': 512, # Just used in DVSIB
         'estimator': 'infonce', # Estimator: infonce or smile_5. See estimators.py for all options
         'mode': 'sep', # Almost always we'll use separable
-        'max_n_batches': 256, # If input has more than this many batches, encoder runs are split up for memory management
+        'max_n_batches': 1024, # If input has more than this many batches, encoder runs are split up for memory management
     }
 
     process_id, chunk = chunk_with_id
@@ -128,6 +129,10 @@ def train_models_worker(chunk_with_id):
                 use_muscles = None
             case _:
                 use_muscles = [run_on]
+        # Check if this moth even has these muscles
+        has_muscles = check_label_present(os.path.join(data_dir, moth), use_muscles)
+        if np.all(np.logical_not(has_muscles)):
+            continue
         # Load dataset
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
@@ -158,7 +163,7 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 12
+    n_processes = 2
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(1.0), 300)
 
