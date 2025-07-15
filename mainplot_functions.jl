@@ -129,6 +129,17 @@ function get_spikes(moth; refractory_thresh=1)
     return neurons, muscles
 end
 
+# Get muscle statistics
+# function read_muscle_spikes(; moths=moths)
+#     for moth in moths
+#         spikes = npzread(joinpath(data_dir, "..", moth * "_data.npz"))
+#         if occursin(r"[0-9]", unit)
+#             delete!(spikes, unit)
+#         end
+
+#     end   
+# end
+
 #-------- Varied utility functions
 
 function find_precision_threshold(noise_levels, mi; threshold=0.9)
