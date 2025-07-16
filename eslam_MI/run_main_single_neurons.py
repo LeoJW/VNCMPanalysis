@@ -203,9 +203,9 @@ if __name__ == '__main__':
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
     n_tasks = 6
-    n_processes = 12
+    n_processes = 10
     save_every_n_iterations = 20
-    precision_levels = np.logspace(np.log10(0.0001), np.log10(0.3), 500)
+    precision_levels = np.logspace(np.log10(0.0001), np.log10(0.2), 400)
 
     # Make iterator of moths, neurons for each moth
     moths = [
@@ -235,7 +235,8 @@ if __name__ == '__main__':
     ]
     
     # Split into chunks for n tasks, then chunks for n processes
-    task_chunk_inds = np.array_split(np.arange(len(main_iterator)), n_tasks)[task_id]
+    inds = np.concatenate(np.array_split(np.arange(len(main_iterator)), 6)[0:2]) # Re-running tasks 0-1 out of 6 on more tasks b/c they timed out
+    task_chunk_inds = np.array_split(inds, n_tasks)[task_id]
     chunk_inds = np.array_split(task_chunk_inds, n_processes)
     chunks = [(ii,[main_iterator[i] for i in inds]) for ii,inds in enumerate(chunk_inds)]
 
@@ -298,9 +299,9 @@ if __name__ == '__main__':
             all_params[new_key] = [k + ' : ' + str(val) for k, val in this_params.items()]
         
         # Get max MI window size for this neuron/muscle combo, move model weights to long-term storage
-        max_window = np.argmax(zero_rounding_mi)
-        new_key = key + f'_window_{window_size_range[max_window]}_embed_{embed_dim}'
-        copy2(model_paths[max_window], os.path.join(model_storage_dir, new_key + '.pt'))
+        # max_window = np.argmax(zero_rounding_mi)
+        # new_key = key + f'_window_{window_size_range[max_window]}_embed_{embed_dim}'
+        # copy2(model_paths[max_window], os.path.join(model_storage_dir, new_key + '.pt'))
         
         empty_cache()
         iteration_count += 1

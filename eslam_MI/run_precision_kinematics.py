@@ -110,33 +110,24 @@ def train_models_worker(chunk_with_id):
     results = []
     for condition in chunk:
         # Unpack chunk
-        run_on, moth, window_size, rep = condition
+        muscles, moth, window_size, rep = condition
         # Enforce types (fuck python)
         window_size = float(window_size)
         rep = int(rep)
         moth = str(moth)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
-        key = f'neuron_{run_on}_moth_{mothstring_no_underscore}_window_{window_size}_rep_{rep}_pid_{process_id}'
+        musclestring = '-'.join(muscles)
+        key = f'muscle_{musclestring}_moth_{mothstring_no_underscore}_window_{window_size}_rep_{rep}_pid_{process_id}'
         print(key)
-        # Set up which muscles to pull
-        match run_on:
-            case 'power':
-                use_muscles = ['ldvm', 'ldlm', 'rdlm', 'rdvm']
-            case 'steering':
-                use_muscles = ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax']
-            case 'all':
-                use_muscles = None
-            case _:
-                use_muscles = [run_on]
         # Check if this moth even has these muscles
-        has_muscles = check_label_present(os.path.join(data_dir, moth), use_muscles)
+        has_muscles = check_label_present(os.path.join(data_dir, moth), muscles) # Right now this skips running on all muscles
         if np.all(np.logical_not(has_muscles)):
             continue
         # Load dataset
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size, 
             select_x=[0], # Just load one neuron so things run faster
-            select_y=use_muscles,
+            select_y=muscles,
             only_flapping=True, angles_only=True,
             use_ISI=False, use_phase=True)
         # Set params
@@ -144,7 +135,7 @@ def train_models_worker(chunk_with_id):
             'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
             'moth': moth,
             'window_size': window_size,
-            'run_on': run_on}
+            'muscles': muscles}
         # Train model, keep only best one based on early stopping
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
@@ -163,17 +154,20 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
 
     # Main options: How many processes to run in training, how often to save, etc
-    n_processes = 2
+    n_processes = 12
     save_every_n_iterations = 20
-    precision_levels = np.logspace(np.log10(0.0001), np.log10(1.0), 300)
+    precision_levels = np.logspace(np.log10(0.00005), np.log10(0.2), 400)
 
     # Package together main iterators
     window_size_range = np.logspace(np.log10(0.015), np.log10(0.2), 30)
     moth_range = ['2025-02-25', '2025-02-25_1']
     repeats_range = np.arange(1)
     main_iterator = product(
-        ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax', 
-         'all', 'power', 'steering'], 
+        [['lax'], ['lba'], ['lsa'], ['ldvm'], ['ldlm'], ['rdlm'], ['rdvm'], ['rsa'], ['rba'], ['rax'], # Single muscles
+        ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'], # All steering
+        ['ldvm', 'ldlm', 'rdlm', 'rdvm'], # All power
+        ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax'] # All muscles, 
+        ],
         moth_range,
         window_size_range,
         repeats_range
@@ -206,19 +200,10 @@ if __name__ == '__main__':
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
         model_path, this_params, subsets, mi_subsets = single_result
-        match this_params['run_on']:
-            case 'power':
-                use_muscles = ['ldvm', 'ldlm', 'rdlm', 'rdvm']
-            case 'steering':
-                use_muscles = ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax']
-            case 'all':
-                use_muscles = None
-            case _:
-                use_muscles = [this_params['run_on']]
         # Load dataset
         ds = TimeWindowDatasetKinematics(os.path.join(data_dir, this_params['moth']), this_params['window_size'], 
             select_x=[0], # Just load one neuron so things run faster
-            select_y=use_muscles,
+            select_y=this_params['muscles'],
             only_flapping=True, angles_only=True,
             use_ISI=False, use_phase=True)
         # Load model, run inference tasks

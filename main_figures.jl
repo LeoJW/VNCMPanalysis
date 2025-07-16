@@ -50,24 +50,30 @@ for task in 1:5
     read_run_file!(df, joinpath(data_dir, "2025-07-13_main_single_neurons_PACE_task_$(task).h5"), task)
 end
 df_kine = DataFrame()
-for task in 0:5
-    read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task)_hour_09.h5"), task)
+for task in 1:2
+    read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-15_kinematics_precision_PACE_task_$(task).h5"), task)
 end
+# for task in 0:5
+#     read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task)_hour_09.h5"), task)
+# end
 
 # Clean up df kinematics
 df_kine = @pipe df_kine |> 
-    rename(_, :neuron => :muscle)
+    rename(_, :neuron => :muscle) |> 
+    @transform!(_, 
+        :mi = :mi ./ :window,
+        :single = in.(:muscle, (single_muscles,)))
 
 # Add neuron stats to main dataframe
 df_neuronstats = @pipe get_neuron_statistics() |> 
     transform!(_, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth) |> 
-    @transform(_, :label = ifelse.(:label .== 1, "good", "mua"))
+    @transform!(_, :label = ifelse.(:label .== 1, "good", "mua"))
 df = leftjoin(df, df_neuronstats, on=[:moth, :neuron])
 
 # Add neuron direction stats to main dataframe
 df_direction = @pipe CSV.read(joinpath(data_dir, "..", "direction_estimate_stats_all_units.csv"), DataFrame) |> 
     rename(_, :unit => :neuron, Symbol("%>comp") => :prob_descend, Symbol("%<comp") => :prob_ascend) |> 
-    transform(_, [:HDIlo, :HDIup] =>
+    transform!(_, [:HDIlo, :HDIup] =>
         ByRow((HDIlo, HDIup) -> 
             HDIlo < 0.5 && HDIup < 0.5 ? "ascending" :
             HDIlo > 0.5 && HDIup > 0.5 ? "descending" :
@@ -95,15 +101,34 @@ muscle_names_dict = Dict(
 for muscle in single_muscles
     muscle_names_dict[muscle] = muscle
 end
+# Rename muscles to more useful names
 df = @pipe df |> 
-    @transform(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
-    @transform(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
-##
-# For each neuron/muscle combo find how precision scales, window size at which starts scaling with window size
+    @transform!(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
+    @transform!(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
 
-@pipe df |> 
+# For each neuron/muscle combo, get:
+# Overall peak mi, peak mi within a valid region, and a valid region defined by limited precision scaling
+function get_optimal_mi_precision(window, mi, precision)
+    sorti = sortperm(window)
+    slope = breakpoint(window[sorti], precision[sorti]; start_window=3)
+    ind = find_scaling_point(slope[:,1]; threshold=0.5, allowed_above=2)
+    ind = ind == 1 ? ind : ind + 3
+    
+    max_valid_window = repeat([ind], length(window))
+    peak_valid_mi = zeros(Bool, length(window))
+    peak_mi = zeros(Bool, length(window))
+    if ind != 1
+        peak_valid_mi[sorti[argmax(mi[sorti][1:ind])]] = true
+    end
+    peak_mi[argmax(mi)] = true
+    return DataFrame(max_valid_window=max_valid_window, peak_mi=peak_mi, peak_valid_mi=peak_valid_mi)
+end
+
+df = @pipe df |> 
+# Convert mutual information to bits/s, windows to milliseconds
+@transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
-transform(_, [:window])
+transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
 
 
 ## How much do I believe we're picking the right embed_dim?
@@ -118,10 +143,7 @@ f
 
 ## Summary stats table
 bob = @pipe df |> 
-@transform(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# combine(_, sdf -> sdf[argmax(sdf.precision), :]) |> 
+@subset(_, :peak_valid_mi) |> 
 @subset(_, :mi .> 0) |> 
 groupby(_, [:muscle]) |> 
 combine(_, :precision => mean, :precision => std, :mi => mean, :mi => std)
@@ -129,17 +151,13 @@ combine(_, :precision => mean, :precision => std, :mi => mean, :mi => std)
 
 ## Kinematics has some dependency on window size
 @pipe df_kine |> 
+@subset(_, :single) |> 
 groupby(_, [:moth, :muscle, :window]) |> 
 combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
-@transform(_, 
-    :mi = :mi ./ :window,
-    :single = in.(:muscle, (single_muscles,))) |> 
-# @subset(_, (!).(:single)) |> 
-@subset(_, :single) |> 
 (AlgebraOfGraphics.data(_) *
-mapping(:mi, :precision, color=:window, col=:moth, row=:muscle) * visual(Scatter)
+mapping(:window, :mi, color=:window, col=:moth, row=:muscle) * visual(Scatter)
 ) |> 
-draw(_, axis=(; yscale=log10))
+draw(_)#, axis=(; yscale=log10))
 
 ## Kinematics subset analysis
 
@@ -167,43 +185,42 @@ visual(ScatterLines)
 ) |> 
 draw(_)
 
-
 ##
+muscle_colors = [
+    "lax" => "#94D63C", "rax" => "#6A992A",
+    "lba" => "#AE3FC3", "rba" => "#7D2D8C",
+    "lsa" => "#FFBE24", "rsa" => "#E7AC1E",
+    "ldvm"=> "#66AFE6", "rdvm"=> "#2A4A78",
+    "ldlm"=> "#E87D7A", "rdlm"=> "#C14434",
+    "power"=>:red, "steering"=>:blue, "all"=>:black
+]
 @pipe df_kine |> 
+# @subset(_, :single) |> 
+groupby(_, [:moth, :muscle, :window]) |> 
+combine(_, :mi => mean => :mi, :precision => mean => :precision, :single => first => :single) |> 
 groupby(_, [:muscle, :moth]) |> 
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# combine(_, sdf -> sdf[argmin(sdf.precision), :]) |> 
-@transform(_, 
-    :mi = :mi ./ :window,
-    :single = in.(:muscle, (single_muscles,))) |> 
-@transform(_, :isall = (:muscle .== "all") .+ 0) |> 
 (AlgebraOfGraphics.data(_) *
-mapping(:mi, :precision, color=:muscle, marker=:single, col=:moth) * visual(Scatter)
+mapping(:mi, :precision, color=:muscle=>sorter([m[1] for m in muscle_colors]), marker=:single, col=:moth) * 
+visual(Scatter, markersize=14)
 ) |> 
-draw(_)#, axis=(; yscale=log10))
+draw(_, scales(Color=(; palette=[m[2] for m in muscle_colors])))#, axis=(; yscale=log10))
 
 
 ## Main plot
 
 dfmain = @pipe df |> 
-@transform(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# combine(_, sdf -> sdf[argmin(sdf.precision), :]) |> 
+@subset(_, :peak_valid_mi) |> 
 # @transform(_, :mi = :mi ./ :meanrate) |>  # Convert to bits/spike
 # @transform(_, :mi = :mi .* :timeactive ./ :nspikes) |> # Alternative bits/spike
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-# @subset(_, :mi .> 0)
-@subset(_, :mi .> 10^-1.5)
+@subset(_, :mi .> 0)
+# @subset(_, :mi .> 10^-1.5)
 
 dfkine = @pipe df_kine |> 
 groupby(_, [:muscle, :moth]) |> 
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# combine(_, sdf -> sdf[argmin(sdf.precision), :]) |> 
-@transform(_, 
-    :direction = "kinematics",
-    :mi = :mi ./ :window,
-    :single = in.(:muscle, (single_muscles,))) |> 
+@transform(_, :direction = "kinematics") |> 
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
 @subset(_, :mi .> 10^-1.5)
 
@@ -222,7 +239,18 @@ mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision 
     row=:direction,
     color=:direction) * visual(Scatter, alpha=0.4)
 
-draw(plt1 + plt2, axis=(; yscale=log10, xscale=log10))#, xscale=log10))
+draw(plt1 + plt2, axis=(; yscale=log10))#, xscale=log10))
+
+## Curve of most precise neuron
+# ind = argmin(@subset(df, :peak_valid_mi, :mi .> 1).precision_noise)
+# row = @subset(df, :peak_valid_mi, :mi .> 1)[ind, :]
+f = Figure()
+ax = Axis(f[1,1], xscale=log10)
+for row in eachrow(@subset(df, :peak_valid_mi, :moth .== "2025-03-11", :neuron .== 3, (!).(:single)))
+    lines!(ax, row.precision_levels, row.precision_curve[2:end], label=row.muscle)
+end
+f[1,2] = Legend(f, ax)
+f
 
 
 ## Single muscles, on same plot
@@ -277,29 +305,32 @@ f
 
 
 ## Stacked bar plot for each neuron 
-categories = ["power", "steering"]
+# categories = ["power", "steering"]
 # categories = ["Lpower", "Rpower"]
 # categories = ["Lsteering", "Rsteering"]
 # categories = ["Lpower", "Lsteering"]
 # categories = ["Lsteering", "Lpower", "Rpower", "Rsteering"]
-# categories = ["ldvm", "rdvm"]
+categories = ["lax", "lba", "lsa", "ldvm", "ldlm"]
 # categories = single_muscles
 
 ddt = @pipe df |> 
 select(_, Not([:precision_curve, :precision_levels])) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-@transform(_, :mi = :mi ./ :window) |> 
-@transform(_, :window = :window .* 1000) |> 
+# @subset(_, :peak_valid_mi) |> 
+@subset(_, :peak_mi) |> 
 @transform(_, :stack = indexin(:muscle, categories)) |> 
 @subset(_, (!).(isnothing.(:stack)), :stack .!= 0) |> 
+# groupby(_, [:moth, :neuron]) |> 
+# @subset(_, reduce(&, [any(:muscle .== x) for x in categories])) |> 
 groupby(_, [:moth, :neuron]) |> 
 transform(_, [:mi, :muscle] => ((mi, muscle) -> first(mi[muscle .== categories[1]])) => :mi_sort) |> 
 # Arrange fractions, ratios
 # @transform(_, :mi = ifelse.(:muscle .== "steering", :mi ./ 6, :mi ./ 4)) |> 
 groupby(_, [:moth, :neuron]) |> 
-@transform(_, :mi_total = sum(:mi)) |> 
-@transform(_, :mi = :mi ./ :mi_total)
+@transform(_, :mi_total = sum(:mi)) #|> 
+# @transform(_, :mi = :mi ./ :mi_total)
+# @transform(_, :mi_total = sum(:precision_noise)) |> 
+# @transform(_, :mi = :precision_noise)
+# @transform(_, :mi = :precision_noise ./ :mi_total)
 ddt.stack = Vector{Int64}(ddt.stack)
 
 colors = Makie.wong_colors()
@@ -316,7 +347,7 @@ for (i,moth) in enumerate(unique(df.moth))
         nlevels = length(unique(dt.muscle))
 
         barplot!(ax[i,j], repeat(1:nrow(dt)÷nlevels, nlevels), dt.mi,
-            stack=dt.stack, 
+            dodge=dt.stack, 
             # color=colors[dt.stack]
             color=dt.stack, colorrange=extrema(dt.stack)
         )
@@ -456,60 +487,6 @@ draw(_, facet=(; linkyaxes=:rowwise))
 
 
 ## Try breakpoint segmentation
-function add_intercept_column(x::AbstractVector{T}) where {T}
-    mat = similar(x, float(T), (length(x), 2))
-    fill!(view(mat, :, 1), 1)
-    copyto!(view(mat, :, 2), x)
-    return mat
-end
-# Modified version which plots x and y flipped
-function plot_fit_line!(ax, x, y; plotargs...)
-    df = DataFrame(x=x, y=y)
-    model = lm(@formula(y ~ x), df)
-    pred = GLM.predict(model, add_intercept_column(df.x); interval=:confidence, level=0.95)
-    inds = sortperm(df.x)
-    band!(ax, Point2f.(x[inds], pred.lower[inds]), Point2f.(x[inds], pred.upper[inds]); alpha=0.5, plotargs...)
-    lines!(ax, x, pred.prediction; linewidth=3, plotargs...)
-    return model
-end
-function breakpoint(x, y)
-    n_breaks = length(x) - 3 - 4 + 1
-    slope = zeros(n_breaks, 2)
-    intercept = zeros(n_breaks, 2)
-    fit = zeros(n_breaks, 3)
-    for (i,ind) in enumerate(4:(length(x)-3))
-        mod1 = lm(@formula(y ~ x), DataFrame(x=x[1:ind], y=y[1:ind]))
-        mod2 = lm(@formula(y ~ x), DataFrame(x=x[ind:end], y=y[ind:end]))
-        intercept[i,1] = coef(mod1)[1]
-        intercept[i,2] = coef(mod2)[1]
-        slope[i,1] = coef(mod1)[2]
-        slope[i,2] = coef(mod2)[2]
-        fit[i,1] = sum(residuals(mod1).^2)
-        fit[i,2] = sum(residuals(mod2).^2)
-        fit[i,3] = (fit[i,1] + fit[i,2])#  * -1/(length(x) - 1)
-    end
-    return slope, intercept, fit
-end
-function find_scaling_point(x; threshold=0.5, allowed_above=2)
-    boolvec = x .< threshold
-    if !any(boolvec)
-        return 1
-    end
-    vals, lens = rle(boolvec)
-    # Find the first run where vals is false (meaning x >= threshold)
-    # and the run length is greater than allowed_above
-    cumulative_pos = 0
-    for i in eachindex(vals)
-        if !vals[i] && lens[i] >= allowed_above
-            # Found the change point - return the position where this run starts
-            return cumulative_pos + 1
-        end
-        cumulative_pos += lens[i]
-    end
-    # No change point found
-    return length(x)
-end
-
 bob = @pipe dt[sortperm(dt.window),:] |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
 @transform(_, :chosen_precision = :precision[argmax(:mi)])
