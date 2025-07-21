@@ -72,6 +72,7 @@ function get_neuron_statistics(; moths=moths, duration_thresh=10, fsamp=30000)
     for moth in moths
         spikes = npzread(joinpath(data_dir, "..", moth * "_data.npz"))
         labels = npzread(joinpath(data_dir, "..", moth * "_labels.npz"))
+        bouts = npzread(joinpath(data_dir, "..", moth * "_bouts.npz"))
         # Remove muscles
         for unit in keys(spikes)
             if (!).(occursin(r"[0-9]", unit))
@@ -79,6 +80,8 @@ function get_neuron_statistics(; moths=moths, duration_thresh=10, fsamp=30000)
                 delete!(labels, unit)
             end
         end
+        # Get total flapping time 
+        total_flapping_time = sum(bouts["ends"] .- bouts["starts"]) / fsamp
         # Pull out stats
         for neuron in keys(spikes)
             # Get firing rate in active periods, total span of time active
@@ -99,7 +102,8 @@ function get_neuron_statistics(; moths=moths, duration_thresh=10, fsamp=30000)
                 label=labels[neuron],
                 nspikes=length(spikes[neuron]),
                 meanrate=mean_spike_rate,
-                timeactive=total_time
+                timeactive=total_time,
+                flapping_time=total_flapping_time
             ))
         end
     end
@@ -126,7 +130,7 @@ function get_spikes(moth; refractory_thresh=1)
     for unit in keys(neurons)
         deleteat!(neurons[unit], findall(diff(neurons[unit]) .< (fsamp * refractory_thresh / 1000)) .+ 1)
     end
-    return neurons, muscles
+    return neurons, muscles, unit_details
 end
 
 # Get muscle statistics
