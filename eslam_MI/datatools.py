@@ -67,10 +67,11 @@ class TimeWindowDataset(Dataset):
             ISI_offset=True,
             use_phase=False,
             sample_rate=30000, # Don't change
-            neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
+            check_windows=True,
             select_x=None, select_y=None, # Variable selection
         ):
-        self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
+        self.check_windows = check_windows
+        self.read_data(base_name, sample_rate=sample_rate)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
         # Select from X by index, or by name
@@ -258,12 +259,13 @@ class TimeWindowDataset(Dataset):
                 column_inds = np.concatenate(list(map(np.arange,counts)), axis=0)[mask]
                 Ymain[window_inds_y[i][mask],i,column_inds] = self.Ytimes[i][mask] - self.window_times[window_inds_y[i][mask]]
         # Keep only windows that have spikes in X and Y
-        all_x = np.unique(np.concatenate(window_inds_x))
-        all_y = np.unique(np.concatenate(window_inds_y))
-        windows_with_spikes = np.intersect1d(all_x, all_y)
-        mask = np.ones(self.valid_windows.size, dtype=bool)
-        mask[windows_with_spikes] = False
-        self.valid_windows[mask] = False
+        if self.check_windows:
+            all_x = np.unique(np.concatenate(window_inds_x))
+            all_y = np.unique(np.concatenate(window_inds_y))
+            windows_with_spikes = np.intersect1d(all_x, all_y)
+            mask = np.ones(self.valid_windows.size, dtype=bool)
+            mask[windows_with_spikes] = False
+            self.valid_windows[mask] = False
         # Will keep window times long, to include invalid windows, as time shifting variables need to refer to windows again
         Xmain = Xmain[self.valid_windows,:,:]
         Ymain = Ymain[self.valid_windows,:,:]
@@ -287,7 +289,7 @@ class TimeWindowDataset(Dataset):
         self.noise_buffer_y = torch.empty(len(self.spike_mask_y[0]), device=device, dtype=self.Y.dtype)
     
 
-    def read_data(self, base_name, sample_rate=30000, neuron_label_filter=None):
+    def read_data(self, base_name, sample_rate=30000):
         """
         Processes spike data from 3 .npz files into neural (X) and muscle (Y) activity tensors.
         """
