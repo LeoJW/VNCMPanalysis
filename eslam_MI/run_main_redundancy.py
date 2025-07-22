@@ -235,10 +235,8 @@ if __name__ == '__main__':
     # Split into chunks for n tasks, then chunks for n processes
     rng = np.random.RandomState(42)
     indices = rng.permutation(np.arange(len(main_iterator)))
-    print(indices[0:10])
     task_chunk_inds = np.array_split(indices, n_tasks)[task_id]
-    chunk_inds = np.array_split(np.array([1,2]), n_processes)
-    # chunk_inds = np.array_split(task_chunk_inds, n_processes)
+    chunk_inds = np.array_split(task_chunk_inds, n_processes)
     chunks = [(ii,[main_iterator[i] for i in inds]) for ii,inds in enumerate(chunk_inds)]
 
     # ------------------------ TRAINING ------------------------
