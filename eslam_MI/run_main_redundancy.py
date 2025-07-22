@@ -165,8 +165,7 @@ def train_models_worker(chunk):
         # Choose smallest embed_dim within 10% of max mutual information value
         embed_mi[embed_mi < 0] = np.nan
         mean_embed_mi = np.nanmean(embed_mi, axis=0)
-        max_mi_threshold = np.nanmax(mean_embed_mi) * 0.9
-        chosen_embed_ind = np.argmax(mean_embed_mi > max_mi_threshold)
+        chosen_embed_ind = np.argmax(mean_embed_mi)
         chosen_rep_ind = np.argmax(embed_mi[:,chosen_embed_ind])
         chosen_embed = embed_dims[chosen_embed_ind]
         # Remove all but chosen model
@@ -205,7 +204,7 @@ if __name__ == '__main__':
     # ------------------------ SETUP ------------------------
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
-    n_tasks = 10
+    n_tasks = 12
     n_processes = 12
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.2), 400)
@@ -234,7 +233,10 @@ if __name__ == '__main__':
     ]
     
     # Split into chunks for n tasks, then chunks for n processes
-    task_chunk_inds = np.array_split(np.random.permutation(np.arange(len(main_iterator))), n_tasks)[task_id]
+    rng = np.random.RandomState(42)
+    indices = rng.permutation(np.arange(len(main_iterator)))
+    print(indices[0:10])
+    task_chunk_inds = np.array_split(indices, n_tasks)[task_id]
     chunk_inds = np.array_split(np.array([1,2]), n_processes)
     # chunk_inds = np.array_split(task_chunk_inds, n_processes)
     chunks = [(ii,[main_iterator[i] for i in inds]) for ii,inds in enumerate(chunk_inds)]

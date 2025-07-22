@@ -523,7 +523,7 @@ bin_edges = range(0, 40, 5)
 window_bins = sort(unique(df.window)) .- 5
 
 @pipe df |> 
-@subset(_, :nspikes .> 1000) |> 
+# @subset(_, :nspikes .> 1000) |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
 @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), true, false)) |> 
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
@@ -534,7 +534,7 @@ groupby(_, [:moth, :neuron, :muscle]) |>
 @subset(_, :peak_valid_mi) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:window, color=:mi_bin=>nonnumeric, row=:peak_off_valid, col=:direction) * histogram(normalization=:probability, bins=window_bins) * visual(alpha=0.6)
+mapping(:window, color=:muscle, row=:muscle) * histogram(normalization=:probability, bins=window_bins) * visual(alpha=0.6)
 ) |> 
 draw(_)
 
@@ -548,8 +548,7 @@ dt = @pipe df |>
 @subset(_, :mi .> 0) 
 
 @pipe dt[sortperm(dt.window),:] |> 
-# @subset(_, :moth .== "2025-03-12-1") |> 
-@subset(_, :moth .== "2025-03-11", :neuron .== "6.0") |> 
+@subset(_, :moth .== "2025-03-20") |> 
 # @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
 @subset(_, :muscle .== "all") |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
@@ -756,6 +755,7 @@ save("/Users/leo/Desktop/ResearchPhD/VNCMP/paper/fig_assets/sine_grating.png", f
 
 
 ## -------------------------------- Figure 2: Training networks, selecting embed dim and window size
+CairoMakie.activate!()
 
 function apply_letter_label(g, letter_label)
     Label(g[1, 1, TopLeft()], letter_label,
@@ -767,8 +767,19 @@ function apply_letter_label(g, letter_label)
     colgap!(g, Relative(0.01))
 end
 
-f = Figure()
+f = Figure(size=(1500, 900))
 
+# Add a shaded box around panels A-D
+box_ad = Box(
+    f[1, 1:4, Makie.GridLayoutBase.Outer()],
+    alignmode = Outside(-10, -15, -12, -10),
+    cornerradius = 8,
+    color = (:lightblue, 0.15),
+    strokecolor = (:steelblue, 0.8),
+    strokewidth = 2,
+)
+# Move the box to the background so it doesn't cover the plots
+Makie.translate!(box_ad.blockscene, 0, 0, -200)
 
 # Train/test curve
 ga = f[1,1] = GridLayout()
@@ -784,9 +795,15 @@ lines!(ax1, epochs, tt["train"] .* log2(exp(1)), color=Makie.wong_colors()[3], l
 lines!(ax1, epochs, trainfilt, color=Makie.wong_colors()[3], linewidth=3)
 peakind = findmax(testfilt)
 vlines!(ax1, peakind[2], ymin=0, ymax=1, linestyle=:dash, color=:black)
-# scatter!(ax1, peakind[2], trainfilt[peakind[2]], color=Makie.wong_colors()[3], markersize=15)
 scatter!(ax1, peakind[2], testfilt[peakind[2]], color=:black, markersize=16)
 scatter!(ax1, peakind[2], testfilt[peakind[2]], color=Makie.wong_colors()[6], markersize=10)
+
+text!(ax1, 0.6, 0.7, text="Training set", 
+    font=:bold, color=Makie.wong_colors()[3], space=:relative
+)
+text!(ax1, 0.6, 0.24, text="Test set", 
+    font=:bold, color=Makie.wong_colors()[6], space=:relative
+)
 xlims!(ax1, 0, 500)
 ax1.title = "Train model"
 apply_letter_label(ga, "A")
@@ -844,21 +861,32 @@ apply_letter_label(gc, "C")
 
 # Window size MI and precision scaling
 
-function plot_mi_precision_against_window!(f, ax_coord, dt)
-    ax1 = Axis(f[ax_coord...][1,1], ylabel="I(X,Y) (bits/s)")
-    ax2 = Axis(f[ax_coord...][2,1], xlabel="Window length (ms)", ylabel="Spike timing precision (ms)")
+function plot_mi_precision_against_window!(f, ax_coord, dt; xextent=nothing, yextent=nothing, doylabel=true)
+    ax1 = Axis(f[ax_coord...][1,1])
+    ax2 = Axis(f[ax_coord...][2,1], xlabel="Window length (ms)")
+    if doylabel
+        ax1.ylabel = "I(X,Y) (bits/s)"
+        ax2.ylabel = "Spike timing precision (ms)"
+    end
+    text!(ax2, 
+        Point2f(0.05, 0.8), 
+        text="No spike timing \n information", 
+        align=(:left, :center),
+        space=:relative, 
+        color=:grey
+    )
+    # Chosen precision point
+    mi_ind = findmax(dt.mi)[2]
+    vlines!(ax1, dt.window[mi_ind], ymin=0, ymax=1, linestyle=:dash, color=:black)
+    scatter!(ax1, dt.window[mi_ind], dt.mi[mi_ind], color=:black, markersize=14)
+    scatter!(ax2, dt.window[mi_ind], dt.precision[mi_ind], color=:black, markersize=14)
+    vlines!(ax2, dt.window[mi_ind], ymin=0, ymax=1, linestyle=:dash, color=:black)
     # MI axis
-    ind = findmax(dt.mi)[2]
-    vlines!(ax1, dt.window[ind], ymin=0, ymax=1, linestyle=:dash, color=:black)
-    scatter!(ax1, dt.window[ind], dt.mi[ind], 
-    color=:black,
-    # color=dt.window[ind], colorrange=extrema(dt.window), 
-    markersize=14)
     scatterlines!(ax1, dt.window, dt.mi, color=dt.window)
-    # Precision axies
+    # Precision axis
     ablines!(ax2, [0], [1], color=:black)
-    xextent, yextent = maximum(dt.window) + 10, maximum(dt.precision) + 10
-    poly!(ax2, Point2f[(0,0), (xextent, xextent), (xextent, yextent), (0, yextent)],
+    xextent, yextent = maximum(dt.window) + 10, maximum(dt.precision[(!).(isnan.(dt.precision))]) + 10
+    poly!(ax2, Point2f[(0,0), (1000, 1000), (0, 1000)],
     color=:grey, alpha=0.2
     )
     slope = breakpoint(dt.window, dt.precision; start_window=3)
@@ -866,17 +894,6 @@ function plot_mi_precision_against_window!(f, ax_coord, dt)
     ind = ind == 1 ? ind : ind + 3
     scatterlines!(ax2, dt.window[1:ind], dt.precision[1:ind], color=dt.window[1:ind])
     scatterlines!(ax2, dt.window[ind:end], dt.precision[ind:end], color=:grey)
-
-    windows = unique(dt.window)
-    midwindow = windows[round(Int, length(windows) / 2)]
-    text!(ax2, 
-        # 0.5, 0.5, 
-        midwindow, midwindow + 50,
-        text="No spike timing information", 
-        rotation=pi/4,
-        align=(:center, :baseline),
-        markerspace=:data
-    )
     
     linkxaxes!(ax1, ax2)
     xlims!(ax2, 0, xextent)
@@ -886,12 +903,60 @@ function plot_mi_precision_against_window!(f, ax_coord, dt)
 end
 
 gd = f[1,4] = GridLayout()
+apply_letter_label(gd, "D")
 ax41, ax42 = plot_mi_precision_against_window!(f, (1,4), dt)
 Label(gd[1,1,Top()], "Choose optimal window size", 
-    # fontsize = 20, 
     font=:bold, halign=:center)
-apply_letter_label(gd, "D")
 
 # Examples of window scaling for a few interesting neurons
+ge = f[2,1:2] = GridLayout()
+apply_letter_label(ge, "E")
+# 2025-02-25-1 18
+dt = @subset(df, :moth .== "2025-02-25-1", :neuron .== 18, :muscle .== "all")
+dt = dt[sortperm(dt.window),:]
+ax51, ax52 = plot_mi_precision_against_window!(ge, (1,1), dt)
+ax51.title = "Moth 2, Neuron 18"
+# 2025-03-20 4
+dt = @subset(df, :moth .== "2025-03-20", :neuron .== 4, :muscle .== "all")
+dt = dt[sortperm(dt.window),:]
+ax61, ax62 = plot_mi_precision_against_window!(ge, (1,2), dt; doylabel=false)
+ax61.title = "Moth 5, Neuron 4"
+# 2025-03-21 42
+dt = @subset(df, :moth .== "2025-03-21", :neuron .== 42, :muscle .== "all")
+dt = dt[sortperm(dt.window),:]
+ax71, ax72 = plot_mi_precision_against_window!(ge, (1,3), dt; doylabel=false)
+ax71.title = "Moth 6, Neuron 42"
+linkxaxes!(ax51, ax61, ax71, ax52, ax62, ax72)
+linkyaxes!(ax51, ax61, ax71)
+linkyaxes!(ax52, ax62, ax72)
+
+# Optimal window sizes chosen
+gf = f[2,3:end] = GridLayout()
+apply_letter_label(gf, "F")
+
+ax8 = Axis(gf[1,1], 
+    xlabel="Optimal window size (ms)", ylabel="Probability Density",
+    xticks=([0,1/25 * 1000,50,100,150], ["0", "", "50", "100", "150"]),
+    xlabelsize=18, ylabelsize=18, xticklabelsize=15, yticklabelsize=15
+)
+window_bins = sort(unique(df.window))[1:2:end] .- diff(sort(unique(df.window)))[1]
+dt = @pipe df |> 
+    @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+    @subset(_, :mi .> 0, :peak_valid_mi, :muscle .== "single")
+hist!(ax8, dt.window, bins = window_bins, normalization=:pdf)
+vlines!(ax8, 1/25 * 1000, ymin=0, ymax=1, color=:black)
+annotation!(ax8, 80, 0.02, 1/25*1000, 0.02, 
+    text="25 Hz \n (Typical wingbeat frequency)", 
+    labelspace=:data, 
+    align=(:left, :center),
+    justification=:center,
+    path = Ann.Paths.Arc(0.3),
+    style=Makie.Ann.Styles.LineArrow(),
+    font=:bold, fontsize=18
+)
+ylims!(ax8, 0, nothing)
+
+rowsize!(f.layout, 2, Relative(2/3))
 
 display(f)
+save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
