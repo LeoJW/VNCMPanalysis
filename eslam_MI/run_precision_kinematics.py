@@ -80,12 +80,12 @@ if os.path.isfile(filename):
 def train_models_worker(chunk_with_id):
     params = {
         # Optimizer parameters (for training)
-        'epochs': 300,
+        'epochs': 400,
         # 'window_size': 0.05,
         'batch_size': 1024, # Number of windows estimator processes at any time
         # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
-        'learning_rate': 2e-3,
-        'patience': 100,
+        'learning_rate': 4e-3,
+        'patience': 150,
         'min_delta': 0.001,
         'eps': 1e-8, # Use 1e-4 if dtypes are float16, 1e-8 for float32 works okay
         'train_fraction': 0.95,
@@ -140,10 +140,10 @@ def train_models_worker(chunk_with_id):
         mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
         model_path = retrieve_best_model_path(mi_test, this_params, train_id=train_id)
         # Run subsamples (for all subsets except 1, because we just do that when estimating precision)
-        if int(task_id) == 0:
-            subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,8), X='Y', Y='Z')
-        else:
-            subsets, mi_subsets = [], []
+        # if int(task_id) == 0:
+        #     subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,8), X='Y', Y='Z')
+        # else:
+        subsets, mi_subsets = [], []
         # Save results
         results.append({key : [model_path, this_params, subsets, mi_subsets]})
         print(f'-------------- Chunk {key} done')
