@@ -85,7 +85,7 @@ def train_models_worker(chunk):
     # Default parameters
     params = {
         # Optimizer parameters (for training)
-        'epochs': 300,
+        'epochs': 400,
         # 'window_size': 0.05,
         'batch_size': 1024, # Number of windows estimator processes at any time
         # 's_per_batch': 10, # Alternatively specify seconds of data a batch should be
@@ -206,7 +206,7 @@ if __name__ == '__main__':
     # Main options: How many processes to run in training, how often to save, etc
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
     n_tasks = 10
-    n_processes = 2#12
+    n_processes = 12
     save_every_n_iterations = 20
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.2), 400)
 
