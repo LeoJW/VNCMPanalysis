@@ -2,7 +2,7 @@
 #SBATCH -Jrun_main_redundancy                   # Job name
 #SBATCH --account=gts-ssponberg3-paid           # charge account
 #SBATCH -N1                                     # Number of nodes and cores per node required
-#SBATCH -G1 -C'L40S|A100-80GB|V100-32GB'        # Accept L40S, A100 80GB, or V100 32GB GPUs
+#SBATCH -G1 -C'L40S|A100-40GB|A100-80GB|V100-32GB'        # Accept L40S, A100 80GB, or V100 32GB GPUs
 #SBATCH --mem-per-gpu=12G                       # Memory per GPU
 #SBATCH -t4300                                  # Duration of the job in minutes
 #SBATCH -qinferno                               # QOS Name
