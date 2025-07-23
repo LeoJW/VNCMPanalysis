@@ -7,6 +7,7 @@ using StatsBase # Mainly for rle
 using GLM
 using CairoMakie
 using GLMakie
+using Colors
 using AlgebraOfGraphics
 using DataFrames
 using DataFramesMeta
@@ -283,10 +284,10 @@ groupby(_, [:muscle, :moth]) |>
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
 @transform(_, :direction = "kinematics") |> 
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-@subset(_, :mi .> 10^-1.5, :muscle .== "all")
+@subset(_, :mi .> 10^-1.5)
 
 plt1 = AlgebraOfGraphics.data(dfmain) * 
-mapping(:mi=>"Mutual Information (bits/s)", :precision_noise=>"Spike timing precision (ms)", 
+mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision (ms)", 
     # row=:moth, 
     col=:muscle, 
     color=:direction,
@@ -299,7 +300,8 @@ mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision 
     row=:direction,
     color=:direction) * visual(Scatter, alpha=0.4)
 
-draw(plt1 + plt2, axis=(; yscale=log10))#, xscale=log10))
+# draw(plt1 + plt2, axis=(; yscale=log10))#, xscale=log10))
+draw(plt1, axis=(; yscale=log10))
 
 ## Curve of most precise neuron
 # ind = argmin(@subset(df, :peak_valid_mi, :mi .> 1).precision_noise)
@@ -785,16 +787,6 @@ save("/Users/leo/Desktop/ResearchPhD/VNCMP/paper/fig_assets/sine_grating.png", f
 ## -------------------------------- Figure 2: Training networks, selecting embed dim and window size
 CairoMakie.activate!()
 
-function apply_letter_label(g, letter_label)
-    Label(g[1, 1, TopLeft()], letter_label,
-        fontsize = 26,
-        font = :bold,
-        padding = (0, 5, 5, 0),
-        halign = :right)
-    rowgap!(g, Relative(0.02))
-    colgap!(g, Relative(0.01))
-end
-
 f = Figure(size=(1500, 900))
 
 # Add a shaded box around panels A-D
@@ -991,46 +983,160 @@ save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
 
 
 ## -------------------------------- Figure 3: Main results, neurons are not precise
+CairoMakie.activate!()
 
-f = Figure()
+function figure3()
+    f = Figure(size=(680, 1200))
 
+    dfmain = @pipe df |> 
+    @subset(_, :peak_valid_mi) |> 
+    @subset(_, :nspikes .> 1000) |> 
+    # @subset(_, :label .== "good") |> 
+    @transform(_, :muscle = ifelse.(:single, "single", :muscle))
 
+    # Create single GridLayout for both plots
+    ga = f[1:2, 1] = GridLayout()
 
-##
+    # MI vs precision for all single muscles
+    # Top scatter plot with density margins
+    axtop = Axis(ga[1,1])
+    ax1 = Axis(ga[2,1], 
+        xlabel="Mutual Information (bits/s)", ylabel="Spike timing precision (ms)",
+        yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+        yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
+    )
+    axright = Axis(ga[2,2], 
+        yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+        yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
+    )
+    linkxaxes!(ax1, axtop)
+    linkyaxes!(ax1, axright)
 
-include("functions_kinematics.jl")
-neurons, muscles, unit_details = get_spikes("2025-02-25")
+    # Plot the scatter with density data
+    data = dfmain[dfmain.muscle .== "all", :]
+    color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
 
-# bob = npzread(joinpath(data_dir, "..", "2025-02-25_kinematics.npz"))
-data_dict = read_kinematics("2025-02-25"; data_dir=joinpath(data_dir, ".."))
+    mi_bins = range(minimum(dfmain.mi[dfmain.mi .> 0,:]), maximum(dfmain.mi[dfmain.mi .> 0,:]), 20)
+    prec_bins = logrange(minimum(data.precision), maximum(data.precision), 20)
 
-neurons, unit_details, sort_params = read_phy_spikes("/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25/kilosort4")
-##
-oedir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25/2025-02-25_12-04-07"
-# oedir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25_1/2025-02-25_15-41-17"
-times, states, samples = read_events_open_ephys(joinpath(data_dir, "..", "2025-02-25", oedir))
+    for gdf in groupby(data, :direction)
+        label = uppercase(gdf.direction[1][1]) * gdf.direction[1][2:end]
+        scatter!(ax1, gdf.mi, gdf.precision, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+    end
+    usecol = Makie.wong_colors()[1]
+    hist!(axtop, data.mi, bins=mi_bins, normalization=:pdf, color=usecol)
+    hist!(axright, data.precision, bins=prec_bins, direction=:x, normalization=:pdf, color=usecol)
 
-# mmuscles = ["lax", "lba", "lsa", "ldvm", "ldlm", "rdlm", "rsa", "rba", "rax"]
-mmuscles = ["lax", "lba", "ldvm", "ldlm", "rdlm", "rdvm", "rsa", "rba", "rax"]
+    # Add mean value lines
+    mean_mi = mean(data.mi)
+    mean_precision = mean(data.precision)
+    # Calculate histogram heights for MI (top histogram)
+    mi_hist = fit(Histogram, data.mi, mi_bins)
+    mi_heights = mi_hist.weights ./ (sum(mi_hist.weights) * step(mi_bins))  # Normalize to PDF
+    mi_bin_centers = (mi_bins[1:end-1] .+ mi_bins[2:end]) ./ 2
+    mean_mi_bin_idx = findmin(abs.(mi_bin_centers .- mean_mi))[2]
+    mean_mi_height = mi_heights[mean_mi_bin_idx]
+    # Calculate histogram heights for precision (right histogram)
+    prec_hist = fit(Histogram, data.precision, prec_bins)
+    prec_heights = prec_hist.weights ./ (sum(prec_hist.weights) * (prec_bins[2:end] .- prec_bins[1:end-1]))  # Normalize to PDF
+    prec_bin_centers = (prec_bins[1:end-1] .+ prec_bins[2:end]) ./ 2
+    mean_prec_bin_idx = findmin(abs.(prec_bin_centers .- mean_precision))[2]
+    mean_prec_height = prec_heights[mean_prec_bin_idx]
+    # Vertical line on top histogram (axtop) at mean MI value, stopping at histogram height
+    lines!(axtop, [mean_mi, mean_mi], [0, mean_mi_height], color=:black, linewidth=2)
+    # Horizontal line on right histogram (axright) at mean precision value, stopping at histogram height
+    lines!(axright, [0, mean_prec_height], [mean_precision, mean_precision], color=:black, linewidth=2)
 
-##
+    xlims!(ax1, 0, nothing)
+    xlims!(axtop, 0, nothing)
+    ylims!(axtop, low = 0)
+    ylims!(ax1, 0, nothing)
+    ylims!(axright, 0, nothing)
+    xlims!(axright, low = 0)
+    hidedecorations!(axtop, grid = false)
+    hidedecorations!(axright, grid = false, minorgrid=false)
 
-f = Figure()
-ax = Axis(f[1,1])
-seg = 1 / 10
-for (i,muscle) in enumerate(mmuscles)
-    vlines!(ax, muscles[muscle] ./ fsamp, ymin=i*seg, ymax=(i+1)*seg)
+    # Add previous manduca mutual information and precision to plots
+    comparative_data_dir = "/Users/leo/Desktop/ResearchPhD/comparativeMP/data/"
+    # df_wblen_per_moth = @pipe CSV.read(joinpath(comparative_data_dir, "preprocessedCache.csv"), DataFrame) |> 
+    #     @subset(_, :species .== "Manduca sexta") |> 
+    #     groupby(_, [:moth, :wb]) |> 
+    #     combine(_, x->first(x)) |> 
+    #     groupby(_, [:moth, :species]) |> 
+    #     combine(_, [:wblen, :wbfreq] .=> mean, [:wblen, :wbfreq] .=> std .=> [:wblen_sd, :wbfreq_sd]; renamecols=false)
+    dfm = DataFrame(CSV.File(joinpath(comparative_data_dir, "precision_normal_allFT_phaseAndTime2025-01-17_02-04.csv")))
+    dfm.est = vcat(repeat(["GOV"], 4122), repeat(["KSG2"], nrow(dfm) - 4122))
+    dfm = @pipe dfm |> 
+        @subset(_, :species .== "Manduca sexta", :precision .< 50, :phaseortime .== "time", :ft .== "tz") |> 
+        transform!(_, :muscle =>  ByRow(s -> uppercase.(s[2:end])) => :muscle_bilat) |> 
+        leftjoin(_, select(df_wblen_per_moth, Not(:species)), on=:moth) |> 
+        @transform!(_, :mi = :mi ./ :wblen) |> 
+        @subset(_, :est .== "KSG2") |> 
+        groupby(_, :muscle) |> 
+        combine(_, :mi => mean => :mi, :precision => mean => :precision)
+
+    scatter!(ax1, dfm.mi, dfm.precision, label="Muscles", color=:black, markersize=12, marker=:diamond)
+    hspan!(ax1, extrema(dfm.precision)...; color=:grey, alpha=0.3)
+
+    leg = Legend(ga[1, 2], ax1, labelsize=16)
+    leg.tellheight = true
+
+    # Bottom raincloud plot
+    axrain = Axis(ga[3,1],
+        xlabel="Mutual Information (bits/s)"
+    )
+
+    dt = @pipe df |> 
+        @subset(_, :mi .> 0, :muscle .== "all", :nspikes .> 1000) |> 
+        groupby(_, [:moth, :neuron, :muscle]) |> 
+        # transform(_, [:peak_valid_mi]) |> 
+        @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+        @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
+        @subset(_, :window_select)
+    dt = dt[sortperm(dt.peak_off_valid), :]
+
+    colors = [RGBA(0.5,0.5,0.5,1), Makie.wong_colors()[1]]
+    rainclouds!(axrain, dt.peak_off_valid, dt.mi,
+        orientation=:horizontal,
+        plot_boxplots=true, clouds=hist,
+        markersize=10,
+        color = getindex.(Ref(colors), indexin(dt.peak_off_valid, unique(dt.peak_off_valid)))
+    )
+    text!(axrain, 0.1, 0.3, text="Neurons with no timing information \n at peak MI", 
+        font=:bold, fontsize=18,
+        color=colors[1], space=:relative
+    )
+    text!(axrain, 0.1, 0.8, text="Neurons with timing information \n at peak MI", 
+        font=:bold, fontsize=18,
+        color=colors[2], space=:relative
+    )
+
+    linkxaxes!(axrain, ax1, axtop)
+    xlims!(axrain, 0, nothing)
+    hideydecorations!(axrain)
+
+    # Set global gaps and spacing
+    colgap!(ga, 5)
+    rowgap!(ga, 5)
+
+    Label(ga[1,1,TopLeft()], "A",
+        fontsize = 30,
+        font = :bold,
+        padding = (0, 5, 5, 0),
+        halign = :right
+    )
+    Label(ga[3,1,TopLeft()], "B",
+        fontsize = 30,
+        font = :bold,
+        padding = (0, 5, 5, 0),
+        halign = :right
+    )
+    f
 end
-vlines!(ax, neurons[rand(keys(neurons))] ./ fsamp, ymin=0, ymax=0.2)
 
-ax2 = Axis(f[2,1])
-
-# adj = diff(samples[states .== 3])[2]
-adj = 0
-
-# lines!(ax2, bob["index"], bob["Lphi"])
-lines!(ax2, (data_dict["index"] .- adj) ./ fsamp, data_dict["Lphi"])
-linkxaxes!(ax, ax2)
-vlines!(ax2, (samples[states .== 3][1:10000] .- adj)./ fsamp, ymin=0, ymax=0.2)
-
-f
+fontsize_theme = Theme(fontsize = 21)
+f = with_theme(fontsize_theme) do
+    figure3()
+end
+save(joinpath(fig_dir, "fig3_MI_and_precision.pdf"), f)
+display(f)

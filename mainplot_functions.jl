@@ -205,3 +205,16 @@ function find_scaling_point(x; threshold=0.5, allowed_above=2)
     # No change point found
     return length(x)
 end
+
+
+#-------- Plotting Utilities
+
+function apply_letter_label(g, letter_label)
+    Label(g[1, 1, TopLeft()], letter_label,
+        fontsize = 26,
+        font = :bold,
+        padding = (0, 5, 5, 0),
+        halign = :right)
+    rowgap!(g, Relative(0.02))
+    colgap!(g, Relative(0.01))
+end
