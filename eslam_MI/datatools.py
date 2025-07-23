@@ -63,7 +63,7 @@ class TimeWindowDataset(Dataset):
     def __init__(self, base_name, window_size, 
             no_spike_value=0, # Value to use as filler for no spikes (leave at zero)
             time_offset=0.0, # Time offset to apply to everything
-            use_ISI=True, # Whether to encode spikes by absolute time in window, or ISI
+            use_ISI=False, # Whether to encode spikes by absolute time in window, or ISI
             ISI_offset=True,
             use_phase=False,
             sample_rate=30000, # Don't change

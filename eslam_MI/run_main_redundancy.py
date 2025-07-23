@@ -1,5 +1,6 @@
 import sys
 import os
+import gc
 
 import torch
 import warnings
@@ -71,7 +72,7 @@ else:
 if len(sys.argv) > 1: 
     task_id = int(sys.argv[1])
     print(f'Task ID is {task_id}')
-    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_main_single_neurons_' + machine + '_' + f'task_{task_id}' + '.h5')
+    filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_main_redundancy_' + machine + '_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
     raise SystemExit("Error: Needs to be called as array job!")
@@ -116,6 +117,8 @@ def train_models_worker(chunk):
     window_size_range = np.linspace(0.015, 0.2, 30)[0:15]
 
     process_id, thischunk = chunk
+
+    print(f"Process {process_id} starting with {torch.cuda.memory_allocated()/1e9:.2f}GB allocated")
 
     results = []
     for condition in thischunk:
@@ -193,8 +196,11 @@ def train_models_worker(chunk):
 
         # Save results
         results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
-        synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
+        empty_cache()
+        synchronize()
+        print(f"Process {process_id} after training: {torch.cuda.memory_allocated()/1e9:.2f}GB allocated")
+    print(f"Process {process_id} ending with {torch.cuda.memory_allocated()/1e9:.2f}GB allocated")
     return results
 
 
@@ -243,6 +249,10 @@ if __name__ == '__main__':
     # Use multiprocessing pool to train up models
     with mp.Pool(n_processes) as pool:
         train_results = pool.map(train_models_worker, chunks)
+        pool.close()  # Explicitly close
+        pool.join()   # Wait for all processes to finish
+    empty_cache()
+    synchronize()
     # Merge into single dict
     results = {}
     for process_output in train_results:
@@ -290,6 +300,8 @@ if __name__ == '__main__':
                 precision_mi = precision_rounding(precision_levels, ds, model, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
                 # precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
                 del model
+                empty_cache()
+                gc.collect()  # Force Python garbage collection
             zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi
             # precision_noise_curves[new_key] = precision_noise

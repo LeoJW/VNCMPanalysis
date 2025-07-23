@@ -69,7 +69,7 @@ muscle_colors = [
 ]
 muscle_colors_dict = Dict(muscle_colors)
 fsamp = 30000
-
+##
 
 df = DataFrame()
 # First run on most moths went fine
@@ -257,10 +257,10 @@ muscle_colors = [
 ]
 @pipe df_kine |> 
 # @subset(_, :single) |> 
-groupby(_, [:moth, :muscle, :window]) |> 
-combine(_, :mi => mean => :mi, :precision => mean => :precision, :single => first => :single) |> 
-groupby(_, [:muscle, :moth]) |> 
-combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
+# groupby(_, [:moth, :muscle, :window]) |> 
+# combine(_, :mi => mean => :mi, :precision => mean => :precision, :single => first => :single) |> 
+groupby(_, [:muscle, :moth, :rep]) |> 
+combine(_, sdf -> sdf[argmin(sdf.precision), :]) |> 
 (AlgebraOfGraphics.data(_) *
 mapping(:mi, :precision, color=:muscle=>sorter([m[1] for m in muscle_colors]), marker=:single, col=:moth) * 
 visual(Scatter, markersize=14)
@@ -275,21 +275,22 @@ dfmain = @pipe df |>
 # @transform(_, :mi = :mi ./ :meanrate) |>  # Convert to bits/spike
 # @transform(_, :mi = :mi .* :timeactive ./ :nspikes) |> # Alternative bits/spike
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-@subset(_, :mi .> 0)
+@subset(_, :mi .> 0, :muscle .== "all" .|| :muscle .== "single", :nspikes .> 1000) |> 
+@subset(_, :muscle .== "single")
 
 dfkine = @pipe df_kine |> 
 groupby(_, [:muscle, :moth]) |> 
 combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
 @transform(_, :direction = "kinematics") |> 
 @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-@subset(_, :mi .> 10^-1.5)
+@subset(_, :mi .> 10^-1.5, :muscle .== "all")
 
 plt1 = AlgebraOfGraphics.data(dfmain) * 
 mapping(:mi=>"Mutual Information (bits/s)", :precision_noise=>"Spike timing precision (ms)", 
     # row=:moth, 
     col=:muscle, 
-    row=:direction,
-    color=:label
+    color=:direction,
+    # color=:label
     # color=:embed=>nonnumeric
 ) * visual(Scatter, alpha=0.4)
 plt2 = AlgebraOfGraphics.data(dfkine) * 
@@ -710,7 +711,7 @@ for (i,unit) in enumerate(good_muscles)
 end
 
 mask = (embedding["time"] .> plot_range[1]) .&& (embedding["time"] .< plot_range[2])
-for i in 1:size(embedding["X"],1)
+for i in 1:3
     xvals = embedding["X"][i,mask]
     yvals = embedding["Y"][i,mask]
     xvals = (xvals .- mean(xvals)) ./ std(xvals)
@@ -733,6 +734,33 @@ rowsize!(f.layout, 3, Auto(1.2))
 display(f)
 
 # save(joinpath(fig_dir, "fig1_spike_data_with_embedding.svg"), f)
+
+## Small subplots of latents against each other
+
+function embedding_fig()
+    ind = findmin(abs.(embedding["time"] .- 1101.32555))[2]
+    use_shift = embedding["shift_indices"][ind]
+    mask = embedding["shift_indices"] .== use_shift
+
+    xcol, ycol = Makie.wong_colors()[1], Makie.wong_colors()[2]
+    f = Figure()
+    ax = []
+    
+    ax = [
+        Axis(f[1,1], xlabel=L"Z_{Y_1}", ylabel=L"Z_{X_1}", xlabelcolor=xcol, ylabelcolor=ycol,xlabelsize=30, ylabelsize=30),
+        Axis(f[1,2], xlabel=L"Z_{Y_2}", ylabel=L"Z_{X_2}", xlabelcolor=xcol, ylabelcolor=ycol,xlabelsize=30, ylabelsize=30),
+        Axis(f[1,3], xlabel=L"Z_{Y_3}", ylabel=L"Z_{X_3}", xlabelcolor=xcol, ylabelcolor=ycol,xlabelsize=30, ylabelsize=30)
+    ]
+    for i in 1:3
+        scatter!(ax[i], embedding["X"][i,mask], embedding["Y"][i,mask], alpha=0.3)
+        hidedecorations!(ax[i], ticks=false, label=false)
+    end
+    ylims!(ax[1], nothing, 10)
+    f
+end
+
+with_theme(embedding_fig, theme_minimal())
+# embedding_fig()
 
 ## Embedding values for window example
 ind = findmin(abs.(embedding["time"] .- 1101.32555))[2]
@@ -960,3 +988,49 @@ rowsize!(f.layout, 2, Relative(2/3))
 
 display(f)
 save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
+
+
+## -------------------------------- Figure 3: Main results, neurons are not precise
+
+f = Figure()
+
+
+
+##
+
+include("functions_kinematics.jl")
+neurons, muscles, unit_details = get_spikes("2025-02-25")
+
+# bob = npzread(joinpath(data_dir, "..", "2025-02-25_kinematics.npz"))
+data_dict = read_kinematics("2025-02-25"; data_dir=joinpath(data_dir, ".."))
+
+neurons, unit_details, sort_params = read_phy_spikes("/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25/kilosort4")
+##
+oedir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25/2025-02-25_12-04-07"
+# oedir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-02-25_1/2025-02-25_15-41-17"
+times, states, samples = read_events_open_ephys(joinpath(data_dir, "..", "2025-02-25", oedir))
+
+# mmuscles = ["lax", "lba", "lsa", "ldvm", "ldlm", "rdlm", "rsa", "rba", "rax"]
+mmuscles = ["lax", "lba", "ldvm", "ldlm", "rdlm", "rdvm", "rsa", "rba", "rax"]
+
+##
+
+f = Figure()
+ax = Axis(f[1,1])
+seg = 1 / 10
+for (i,muscle) in enumerate(mmuscles)
+    vlines!(ax, muscles[muscle] ./ fsamp, ymin=i*seg, ymax=(i+1)*seg)
+end
+vlines!(ax, neurons[rand(keys(neurons))] ./ fsamp, ymin=0, ymax=0.2)
+
+ax2 = Axis(f[2,1])
+
+# adj = diff(samples[states .== 3])[2]
+adj = 0
+
+# lines!(ax2, bob["index"], bob["Lphi"])
+lines!(ax2, (data_dict["index"] .- adj) ./ fsamp, data_dict["Lphi"])
+linkxaxes!(ax, ax2)
+vlines!(ax2, (samples[states .== 3][1:10000] .- adj)./ fsamp, ymin=0, ymax=0.2)
+
+f
