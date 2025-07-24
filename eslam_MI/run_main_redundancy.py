@@ -212,7 +212,7 @@ if __name__ == '__main__':
     # NOTE: MUST BE CALLED ON SLURM WITH N_TASKS OR NOT ALL CONDITIONS WILL BE RUN
     n_tasks = 12
     n_processes = 12
-    save_every_n_iterations = 20
+    save_every_n_iterations = 10
     precision_levels = np.logspace(np.log10(0.0001), np.log10(0.2), 400)
 
     # Make iterator of moths, neurons for each moth

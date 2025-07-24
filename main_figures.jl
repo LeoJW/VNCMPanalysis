@@ -1140,3 +1140,153 @@ f = with_theme(fontsize_theme) do
 end
 save(joinpath(fig_dir, "fig3_MI_and_precision.pdf"), f)
 display(f)
+
+
+##
+
+f = Figure(size=(680, 1200))
+
+dfmain = @pipe df |> 
+@subset(_, :peak_valid_mi) |> 
+@subset(_, :nspikes .> 1000) |> 
+# @subset(_, :label .== "good") |> 
+@transform(_, :muscle = ifelse.(:single, "single", :muscle))
+
+# Create single GridLayout for both plots
+ga = f[1:2, 1] = GridLayout()
+
+# MI vs precision for all single muscles
+# Top scatter plot with density margins
+axtop = Axis(ga[1,1])
+ax1 = Axis(ga[2,1], 
+    xlabel="Mutual Information (bits/s)", ylabel="Spike timing precision (ms)",
+    # yscale=Makie.log10, yticks=[1, 10],
+    yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
+)
+axright = Axis(ga[2,2], 
+    # yscale=Makie.log10, yticks=[1, 10],
+    yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
+)
+linkxaxes!(ax1, axtop)
+linkyaxes!(ax1, axright)
+
+# Plot the scatter with density data
+data = dfmain[dfmain.muscle .== "all", :]
+color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
+
+mi_bins = range(minimum(dfmain.mi[dfmain.mi .> 0,:]), maximum(dfmain.mi[dfmain.mi .> 0,:]), 20)
+prec_bins = range(minimum(data.precision), maximum(data.precision), 20)
+
+for gdf in groupby(data, :direction)
+    label = uppercase(gdf.direction[1][1]) * gdf.direction[1][2:end]
+    scatter!(ax1, gdf.mi, gdf.precision, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+usecol = Makie.wong_colors()[1]
+hist!(axtop, data.mi, bins=mi_bins, normalization=:pdf, color=usecol)
+hist!(axright, data.precision, bins=prec_bins, direction=:x, normalization=:pdf, color=usecol)
+
+# Add mean value lines
+mean_mi = mean(data.mi)
+mean_precision = mean(data.precision)
+# Calculate histogram heights for MI (top histogram)
+mi_hist = fit(Histogram, data.mi, mi_bins)
+mi_heights = mi_hist.weights ./ (sum(mi_hist.weights) * step(mi_bins))  # Normalize to PDF
+mi_bin_centers = (mi_bins[1:end-1] .+ mi_bins[2:end]) ./ 2
+mean_mi_bin_idx = findmin(abs.(mi_bin_centers .- mean_mi))[2]
+mean_mi_height = mi_heights[mean_mi_bin_idx]
+# Calculate histogram heights for precision (right histogram)
+prec_hist = fit(Histogram, data.precision, prec_bins)
+prec_heights = prec_hist.weights ./ (sum(prec_hist.weights) * (prec_bins[2:end] .- prec_bins[1:end-1]))  # Normalize to PDF
+prec_bin_centers = (prec_bins[1:end-1] .+ prec_bins[2:end]) ./ 2
+mean_prec_bin_idx = findmin(abs.(prec_bin_centers .- mean_precision))[2]
+mean_prec_height = prec_heights[mean_prec_bin_idx]
+# Vertical line on top histogram (axtop) at mean MI value, stopping at histogram height
+lines!(axtop, [mean_mi, mean_mi], [0, mean_mi_height], color=:black, linewidth=2)
+# Horizontal line on right histogram (axright) at mean precision value, stopping at histogram height
+lines!(axright, [0, mean_prec_height], [mean_precision, mean_precision], color=:black, linewidth=2)
+
+xlims!(ax1, 0, nothing)
+xlims!(axtop, 0, nothing)
+ylims!(axtop, low = 0)
+ylims!(ax1, 0, nothing)
+ylims!(axright, 0, nothing)
+xlims!(axright, low = 0)
+hidedecorations!(axtop, grid = false)
+hidedecorations!(axright, grid = false, minorgrid=false)
+
+# Add previous manduca mutual information and precision to plots
+comparative_data_dir = "/Users/leo/Desktop/ResearchPhD/comparativeMP/data/"
+# df_wblen_per_moth = @pipe CSV.read(joinpath(comparative_data_dir, "preprocessedCache.csv"), DataFrame) |> 
+#     @subset(_, :species .== "Manduca sexta") |> 
+#     groupby(_, [:moth, :wb]) |> 
+#     combine(_, x->first(x)) |> 
+#     groupby(_, [:moth, :species]) |> 
+#     combine(_, [:wblen, :wbfreq] .=> mean, [:wblen, :wbfreq] .=> std .=> [:wblen_sd, :wbfreq_sd]; renamecols=false)
+dfm = DataFrame(CSV.File(joinpath(comparative_data_dir, "precision_normal_allFT_phaseAndTime2025-01-17_02-04.csv")))
+dfm.est = vcat(repeat(["GOV"], 4122), repeat(["KSG2"], nrow(dfm) - 4122))
+dfm = @pipe dfm |> 
+    @subset(_, :species .== "Manduca sexta", :precision .< 50, :phaseortime .== "time", :ft .== "tz") |> 
+    transform!(_, :muscle =>  ByRow(s -> uppercase.(s[2:end])) => :muscle_bilat) |> 
+    leftjoin(_, select(df_wblen_per_moth, Not(:species)), on=:moth) |> 
+    @transform!(_, :mi = :mi ./ :wblen) |> 
+    @subset(_, :est .== "KSG2") |> 
+    groupby(_, :muscle) |> 
+    combine(_, :mi => mean => :mi, :precision => mean => :precision)
+
+scatter!(ax1, dfm.mi, dfm.precision, label="Muscles", color=:black, markersize=12, marker=:diamond)
+hspan!(ax1, extrema(dfm.precision)...; color=:grey, alpha=0.3)
+
+leg = Legend(ga[1, 2], ax1, labelsize=16)
+leg.tellheight = true
+
+# Bottom raincloud plot
+axrain = Axis(ga[3,1],
+    xlabel="Mutual Information (bits/s)"
+)
+
+dt = @pipe df |> 
+    @subset(_, :mi .> 0, :muscle .== "all", :nspikes .> 1000) |> 
+    groupby(_, [:moth, :neuron, :muscle]) |> 
+    # transform(_, [:peak_valid_mi]) |> 
+    @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+    @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
+    @subset(_, :window_select)
+dt = dt[sortperm(dt.peak_off_valid), :]
+
+colors = [RGBA(0.5,0.5,0.5,1), Makie.wong_colors()[1]]
+rainclouds!(axrain, dt.peak_off_valid, dt.mi,
+    orientation=:horizontal,
+    plot_boxplots=true, clouds=hist,
+    markersize=10,
+    color = getindex.(Ref(colors), indexin(dt.peak_off_valid, unique(dt.peak_off_valid)))
+)
+text!(axrain, 0.1, 0.3, text="Neurons with no timing information \n at peak MI", 
+    font=:bold, fontsize=18,
+    color=colors[1], space=:relative
+)
+text!(axrain, 0.1, 0.8, text="Neurons with timing information \n at peak MI", 
+    font=:bold, fontsize=18,
+    color=colors[2], space=:relative
+)
+
+linkxaxes!(axrain, ax1, axtop)
+xlims!(axrain, 0, nothing)
+hideydecorations!(axrain)
+
+# Set global gaps and spacing
+colgap!(ga, 5)
+rowgap!(ga, 5)
+
+Label(ga[1,1,TopLeft()], "A",
+    fontsize = 30,
+    font = :bold,
+    padding = (0, 5, 5, 0),
+    halign = :right
+)
+Label(ga[3,1,TopLeft()], "B",
+    fontsize = 30,
+    font = :bold,
+    padding = (0, 5, 5, 0),
+    halign = :right
+)
+f
