@@ -301,6 +301,7 @@ if __name__ == '__main__':
                 # precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='X', Y='Y', early_stop=True, early_stop_threshold=0.5)
                 del model
                 empty_cache()
+                synchronize()
                 gc.collect()  # Force Python garbage collection
             zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi

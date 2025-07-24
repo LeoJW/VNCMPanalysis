@@ -436,9 +436,24 @@ class decoder_INFO(nn.Module):
         self.baseline_fn = baseline_fn
         self.mode = mode  # "sep" and "bi" use the same critic function
 
-    def critic_fn(self, dataZX, dataZY, batch_size=None):
-        if self.mode in ["sep", "bi"]:  
-            return torch.matmul(dataZY, dataZX.t())
+    def critic_fn(self, dataZX, dataZY, batch_size=None, gpu_threshold=50000):
+        if self.mode in ["sep", "bi"]:
+            current_batch_size = dataZX.shape[0]
+            
+            # If batch is small enough, do it on GPU normally
+            if current_batch_size <= gpu_threshold:
+                return torch.matmul(dataZY, dataZX.t())
+            # For large batches, move to CPU for the matrix multiplication
+            device = dataZX.device  # Remember original device
+            dataZX_cpu = dataZX.detach().cpu()
+            dataZY_cpu = dataZY.detach().cpu()
+            # Perform matrix multiplication on CPU
+            result_cpu = torch.matmul(dataZY_cpu, dataZX_cpu.t())
+            # Move result back to original device
+            result = result_cpu.to(device)
+            # Clean up CPU tensors
+            del dataZX_cpu, dataZY_cpu, result_cpu
+            return result
         elif self.mode == "concat":
             return torch.reshape(dataZX, [batch_size, batch_size]).t() # Here dataZX is really the final scores matrix
         else:

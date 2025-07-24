@@ -830,14 +830,14 @@ apply_letter_label(ga, "A")
 
 # Embed dim selection
 gb = f[1,2] = GridLayout()
-ax2 = Axis(f[1,2], xticks=[4, 8, 12], xlabel="Embedding Dimension", ylabel="I(X,Y) (bits/window)")
+ax2 = Axis(f[1,2], xticks=[0, 4, 8, 12], xlabel="Embedding Dimension", ylabel="I(X,Y) (bits/window)")
 row = first(@subset(df, :moth .== "2025-03-11", :neuron .== 6, :peak_valid_mi, :muscle .== "all"))
 embed = [4, 4, 8, 8, 12, 12]
 mean_embed = [mean(row.embed_mi[embed .== val]) for val in unique(embed)] .* log2(exp(1))
 vlines!(ax2, 8, ymin=0, ymax=1, linestyle=:dash, color=:black)
 scatter!(ax2, embed, row.embed_mi .* log2(exp(1)))
 scatterlines!(ax2, [4,8,12], mean_embed, markersize=20, color=:black)
-xlims!(ax2, 2, 14)
+xlims!(ax2, 0, 14)
 linkyaxes!(ax1, ax2)
 ylims!(ax2, 0, nothing)
 ax2.title = "Find embedding dimensionality"
@@ -1002,11 +1002,11 @@ function figure3()
     axtop = Axis(ga[1,1])
     ax1 = Axis(ga[2,1], 
         xlabel="Mutual Information (bits/s)", ylabel="Spike timing precision (ms)",
-        yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+        # yscale=Makie.log10, yticks=[1, 10],
         yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
     )
     axright = Axis(ga[2,2], 
-        yscale=Makie.pseudolog10, yticks=[0, 10, 100],
+        # yscale=Makie.log10, yticks=[1, 10],
         yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(10)
     )
     linkxaxes!(ax1, axtop)
@@ -1017,7 +1017,7 @@ function figure3()
     color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
 
     mi_bins = range(minimum(dfmain.mi[dfmain.mi .> 0,:]), maximum(dfmain.mi[dfmain.mi .> 0,:]), 20)
-    prec_bins = logrange(minimum(data.precision), maximum(data.precision), 20)
+    prec_bins = range(minimum(data.precision), maximum(data.precision), 20)
 
     for gdf in groupby(data, :direction)
         label = uppercase(gdf.direction[1][1]) * gdf.direction[1][2:end]
