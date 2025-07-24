@@ -6,7 +6,7 @@
 #SBATCH --mem-per-gpu=12G                       # Memory per GPU
 #SBATCH -t4300                                  # Duration of the job in minutes
 #SBATCH -qinferno                               # QOS Name
-#SBATCH --array=0-7,9-11                        # Array range for 12 tasks
+#SBATCH --array=0-11                        # Array range for 12 tasks
 #SBATCH --output=main_redundancy_report.%A\_%a.log
 #SBATCH --mail-type=BEGIN,END,FAIL              # Mail preferences
 #SBATCH --mail-user=leo.w@gatech.edu            # E-mail address for notifications
