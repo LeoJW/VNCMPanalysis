@@ -436,7 +436,7 @@ class decoder_INFO(nn.Module):
         self.baseline_fn = baseline_fn
         self.mode = mode  # "sep" and "bi" use the same critic function
 
-    def critic_fn(self, dataZX, dataZY, batch_size=None, gpu_threshold=20000):
+    def critic_fn(self, dataZX, dataZY, batch_size=None, gpu_threshold=50000):
         if self.mode in ["sep", "bi"]:
             current_batch_size = dataZX.shape[0]
             

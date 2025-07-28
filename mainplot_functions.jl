@@ -64,6 +64,36 @@ function read_run_file!(df, file, task)
     append!(df, thisdf)
 end
 
+function read_redundancy_file!(df, file, task)
+    precision_levels = h5read(joinpath(data_dir, file), "dict_0")
+    precision_curves = h5read(joinpath(data_dir, file), "dict_1")
+    params = h5read(joinpath(data_dir, file), "dict_2")
+    embed_mi = h5read(joinpath(data_dir, file), "dict_3")
+    # Construct dataframe
+    first_row = split(first(keys(precision_levels)), "_")
+    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_curve", "precision_levels", "embed_mi"])
+    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+    types = vcat(
+        [x ? Float64 : String for x in is_numeric], 
+        Float64, Float64, Vector{Float64}, Vector{Float64}, Vector{Float64}
+    )
+    thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
+    thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
+    for key in keys(precision_levels)
+        keysplit = split(key, "_")[2:2:end]
+        vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        push!(thisdf, vcat(
+            vals,
+            precision_curves[key][1] .* log2(exp(1)), 
+            find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]),
+            [precision_curves[key] .* log2(exp(1))],
+            [precision_levels[key] .* 1000],
+            [embed_mi[key]]
+        ))
+    end
+    append!(df, thisdf)
+end
+
 
 #-------- Functions for reading in ancillary things
 
