@@ -37,6 +37,7 @@ function read_events_open_ephys(oedir)
         error("Did not find any experiment directories")
     end
     structure_file = recording_files[findfirst(recording_files .== "structure.oebin")]
+    sync_messages_file = recording_files[findfirst(recording_files .== "sync_messages.txt")]
     oebin = JSON.parsefile(joinpath(recording_dir, structure_file))
     events_dir = joinpath(recording_dir, "events", oebin["events"][1]["folder_name"])
 
@@ -44,6 +45,14 @@ function read_events_open_ephys(oedir)
     states = npzread(joinpath(events_dir, "states.npy"))
     # full_words = npzread(joinpath(events_dir, "full_words.npy"))
     sample_numbers = npzread(joinpath(events_dir, "sample_numbers.npy"))
+
+    # Get time offset from sync_messages
+    index_offset = readdlm(joinpath(recording_dir, sync_messages_file))[end,end]
+    fsamp = oebin["continuous"][1]["sample_rate"]
+    time_offset = index_offset ./ fsamp
+    times .-= time_offset
+    sample_numbers .-= index_offset
+
     return times, states, sample_numbers
 end
 
