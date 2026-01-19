@@ -70,7 +70,7 @@ if len(sys.argv) > 1:
     filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_precision_' + machine + '_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
 else:
-    task_id = '0'
+    task_id = 0
     filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_precision_' + machine + '_' + '.h5')
 # If file exists add hour to filename
 if os.path.isfile(filename):
@@ -267,7 +267,7 @@ if __name__ == '__main__':
             new_key = key + f'_window_{window_size}_embed_{embed_dim}'
             print(new_key)
             
-            ds = TimeWindowDatasetKinematics(os.path.join(data_dir, cond_params['moth']), cond_params['window_size'], 
+            ds = TimeWindowDatasetKinematics(os.path.join(data_dir, cond_params['moth']), window_size, 
                 select_x=[0], # Just load one neuron so things run faster
                 select_y=cond_params['muscles'],
                 only_flapping=True, angles_only=True,
