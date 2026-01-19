@@ -65,7 +65,7 @@ else:
 
 # Case where script got an input argument, means multiple separate runs
 if len(sys.argv) > 1: 
-    task_id = sys.argv[1]
+    task_id = int(sys.argv[1])
     print(f'Task ID is {task_id}')
     filename = os.path.join(result_dir, datetime.today().strftime('%Y-%m-%d') + '_kinematics_precision_' + machine + '_' + f'task_{task_id}' + '.h5')
 # Otherwise just a single run
