@@ -1186,12 +1186,54 @@ dt = dt[sortperm(dt.peak_off_valid), :]
 f = Figure()
 
 
+##------------- KS test for whether ascending vs descending from same distribution
+
+using HypothesisTests
+
+dt = @pipe df |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+@subset(_, :peak_mi, :muscle .== "all", :nspikes .> 1000)
+
+ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :mi], dt[dt.direction .== "descending", :mi])
+
+ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :precision], dt[dt.direction .== "descending", :precision])
+
+##
+
+dt = @pipe df |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+@subset(_, :peak_mi, :muscle .== "all", :nspikes .> 1000)
+
+dt.fr = dt.nspikes ./ dt.flapping_time
+
+f = Figure()
+ax = Axis(f[1,1])
+scatter!(ax, dt.mi, dt.fr)
+ablines!(ax, [0], [1], color=:black)
+f
+
+f, ax, hs = hist(dt.mi ./ dt.fr)
+
+eta = dt.mi ./ (dt.fr .* log2.(exp(1) ./ (dt.fr .* (dt.precision ./ 1000))))
+eta = eta[eta .> 0]
+
+##
+
+dt = @pipe df |> 
+    @subset(_, :muscle .== "all", :nspikes .> 1000) |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+    groupby(_, [:moth, :neuron, :muscle]) |> 
+    @transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), false, true)) |> 
+    @transform(_, :window_select = ifelse.(:has_timing_info, :peak_valid_mi, :peak_mi)) |> 
+    @subset(_, :window_select)
+
+ApproximateTwoSampleKSTest(dt[dt.has_timing_info, :mi], dt[(!).(dt.has_timing_info), :mi])
 
 ## -------------------------------- Figure 4: Redundancy
 using Clustering
 
 dfr = DataFrame()
-for task in vcat(0:4, 6:11)
+for task in vcat(0:11)
     read_redundancy_file!(dfr, joinpath(data_dir, "2025-07-25_main_redundancy_PACE_task_$(task).h5"), task)
 end
 
@@ -1264,7 +1306,7 @@ ax = [Axis(ga[i,j], aspect=DataAspect()) for i in 1:2, j in 1:3]
 newmoths = [replace(m, r"_1$" => "-1") for m in moths]
 matlist = []
 good_neuron_dict = Dict{String, Any}()
-for (axi,axj,moth) in Iterators.zip(repeat(1:2, inner=3), repeat(1:3,2), newmoths)
+for (ii, (axi,axj,moth)) in enumerate(Iterators.zip(repeat(1:2, inner=3), repeat(1:3,2), newmoths))
     sdf = @pipe df |> 
         @subset(_, :peak_mi, :muscle .== "all", :moth .== moth) |> 
         @transform(_, :mi = ifelse.(:mi .> 0, :mi, 0))
@@ -1322,7 +1364,7 @@ for (axi,axj,moth) in Iterators.zip(repeat(1:2, inner=3), repeat(1:3,2), newmoth
     push!(matlist, mat)
 
     # Update axis
-    ax[axi,axj].title = moth
+    ax[axi,axj].title = "Moth $(ii)" #moth
     good_neuron_dict[moth] = [sum(sdf.label .== "good"), nrow(sdf)]
 end
 
@@ -1351,37 +1393,89 @@ Colorbar(ga[:, end+1], colormap=:seismic, colorrange=colrange, label="II (bits/s
 
 apply_letter_label(ga, "A")
 
-# Precision changes section
-
-sdf = @subset(df, :peak_valid_mi, :muscle .== "all", :moth .== unique(df.moth)[3])
-dfrm = @subset(dfr, :moth .== sdf.moth[1], :peak_valid_mi)
-# Arrange neurons by firing rate
-sort!(sdf, [order(:label), order(:meanrate)])
-neurons = unique(sdf.neuron)
-# Populate matrix
-prec_change = Float64[]
-for row in eachrow(dfrm)
-    npair = parse.(Float64, split(row.neuron, "-"))
-    i_prec = @subset(sdf, :neuron .== npair[1]).precision
-    j_prec = @subset(sdf, :neuron .== npair[2]).precision
-    if length(i_prec) > 0 && length(j_prec) > 0
-        append!(prec_change, row.precision - mean([i_prec[1], j_prec[1]]))
-        # append!(prec_change, row.precision - j_prec[1])
+# Get all precision and II values as vectors
+prec_change, ii = Float64[], Float64[]
+for moth in newmoths
+    # II uses all neurons
+    sdf = @subset(df, :peak_mi, :muscle .== "all", :moth .== moth)
+    dfrm = @subset(dfr, :moth .== moth, :peak_mi)
+    # Arrange neurons by firing rate
+    sort!(sdf, [order(:label), order(:meanrate)])
+    neurons = unique(sdf.neuron)
+    # Populate matrix
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
+        if length(i_mi) > 0 && length(j_mi) > 0
+            push!(ii, row.mi - (i_mi[1] + j_mi[1]))
+        end
+    end
+    # Precision has to use only neurons with timing info
+    sdf = @subset(df, :peak_valid_mi, :muscle .== "all", :moth .== moth)
+    dfrm = @subset(dfr, :moth .== moth, :peak_valid_mi)
+    # Arrange neurons by firing rate
+    sort!(sdf, [order(:label), order(:meanrate)])
+    neurons = unique(sdf.neuron)
+    # Populate matrix
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i_prec = @subset(sdf, :neuron .== npair[1]).precision
+        j_prec = @subset(sdf, :neuron .== npair[2]).precision
+        if length(i_prec) > 0 && length(j_prec) > 0
+            append!(prec_change, row.precision - mean([i_prec[1], j_prec[1]]))
+        end
     end
 end
 
-gb = f[1,2] = GridLayout()
-
-axh = Axis(gb[1,1], xlabel="Paired - mean single precision (ms)", ylabel="Prob. density")
-
-bins = range(minimum(prec_change), maximum(prec_change), 30)
+# bins = range(minimum(prec_change), maximum(prec_change), 30)
 
 # resample_cmap(:lisbon, length(bins))
-hist!(axh, prec_change, normalization=:pdf, bins=bins)
-vlines!(axh, 0, color=:black)
-ylims!(axh, 0, nothing)
+# hist!(axh, prec_change, normalization=:pdf, bins=bins)
 
+g2 = f[1,2] = GridLayout()
+gb = g2[1,1] = GridLayout()
+axh = Axis(gb[1,1], xlabel="II (bits/s)", ylabel="Count")
+poly!(axh, Point2f[(0,0), (1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[end-2], alpha=0.2
+)
+poly!(axh, Point2f[(0,0), (-1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[3], alpha=0.2
+)
+bins = range(minimum(ii), maximum(ii), 101)
+hist!(axh, ii[ii .< 0], bins=bins, color=resample_cmap(:seismic, 10)[2])
+hist!(axh, ii[ii .> 0], bins=bins, color=resample_cmap(:seismic, 10)[end-1])
+vlines!(axh, 0, color=:black)
+text!(axh, 0.15, 0.5, text="Redundant", 
+    fontsize=18,
+    color=resample_cmap(:seismic, 10)[2],
+    align=(:center, :bottom),
+    space=:relative
+)
+text!(axh, 0.85, 0.5, text="Synergistic", 
+    fontsize=18,
+    color=resample_cmap(:seismic, 10)[end-1], 
+    space=:relative, 
+    align=(:center, :bottom)
+)
+xlims!(axh, -100, 70)
+ylims!(axh, 0, 400)
 apply_letter_label(gb, "B")
+
+gc = g2[2,1] = GridLayout()
+axp = Axis(gc[1,1], 
+    xlabel="(Paired precision) - (Mean single precision), (ms)",
+    # xlabel=L"$\tau(X_i,X_j;Y) - \frac{\tau(X_i;Y) + \tau(X_j;Y)}{2}$ (ms)",
+    ylabel="Prob. density")
+hist!(axp, prec_change, bins=100, normalization=:pdf)
+text!(axp, 0.15, 0.5, text="Single more \n precise", fontsize=16, space=:relative, align=(:center, :bottom))
+text!(axp, 0.85, 0.5, text="Paired more \n precise", fontsize=16, space=:relative, align=(:center, :bottom))
+vlines!(axp, 0, color=:black)
+ylims!(axp, 0, nothing)
+apply_letter_label(gc, "C")
+
+rowgap!(g2, 0)
+
 
 colsize!(f.layout, 1, Relative(0.6))
 
@@ -1390,9 +1484,134 @@ f
 # Could do this as hist with scatter of II and precision: One day!
 
 ##
+ii, mean_mi, mi1, mi2, mlist = Float64[], Float64[], Float64[], Float64[], []
+
+for moth in newmoths
+    sdf = @subset(df, :peak_mi, :muscle .== "all", :moth .== moth)
+    dfrm = @pipe dfr |> 
+        @subset(_, :moth .== moth, :peak_mi) |> 
+        @transform(_, :mi = ifelse.(:mi .> 0, :mi, 0))
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
+        if length(i_mi) > 0 && length(j_mi) > 0
+            push!(ii, row.mi - (i_mi[1] + j_mi[1]))
+            push!(mean_mi, mean([i_mi[1], j_mi[1]]))
+            push!(mi1, i_mi[1])
+            push!(mi2, j_mi[1])
+            push!(mlist, moth)
+        end
+    end
+end
+
+mask = mlist .== "2025-03-12-1"
+sum(ii[mask] .> 0)
+
+
+##
 
 # dt = @subset(dfr, :neuron .== rand(dfr.neuron))
 # dt = dt[sortperm(dt.window),:]
 # f = Figure()
 # ax51, ax52 = plot_mi_precision_against_window!(f, (1,1), dt)
 # f
+
+##
+i = 0
+for mat in matlist
+    i += length([mat[m,n] for m in 2:size(mat,1) for n in 1:m-1])
+end
+
+function lower_triangle_count_simple(m, n)
+    k = min(m, n)
+    return max(0, k * (k - 1) ÷ 2 + max(0, m - n) * n)
+end
+
+sum(lower_triangle_count_simple(size(mat)...) for mat in matlist)
+
+##
+
+for moth in newmoths
+    sdf = @subset(df, :peak_mi, :muscle .== "all", :moth .== moth)
+    dfrm = @pipe dfr |> 
+        @subset(_, :moth .== moth, :peak_mi) |> 
+        @transform(_, :mi = ifelse.(:mi .> 0, :mi, 0))
+    # Get II for 
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
+        if length(i_mi) > 0 && length(j_mi) > 0
+            push!(ii, row.mi - (i_mi[1] + j_mi[1]))
+            push!(mean_mi, mean([i_mi[1], j_mi[1]]))
+            push!(mi1, i_mi[1])
+            push!(mi2, j_mi[1])
+            push!(mlist, moth)
+        end
+    end
+end
+
+##
+mimaxlist, matlist = [], []
+for moth in newmoths
+    sdf = @pipe df |> 
+        @subset(_, :peak_mi, :muscle .== "all", :moth .== moth) |> 
+        @transform(_, :mi = ifelse.(:mi .> 0, :mi, 0))
+    dfrm = @pipe dfr |> 
+        @subset(_, :moth .== sdf.moth[1], :peak_mi) |> 
+        @transform(_, :mi = ifelse.(:mi .> 0, :mi, 0))
+    # Arrange neurons by firing rate
+    sort!(sdf, [order(:label), order(:mi)])
+    neurons = unique(sdf.neuron)
+    # Populate matrix
+    mat = zeros(length(neurons), length(neurons))
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i = findfirst(neurons .== npair[1])
+        j = findfirst(neurons .== npair[2])
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
+        if length(i_mi) > 0 && length(j_mi) > 0
+            mat[i,j] = row.mi - (i_mi[1] + j_mi[1])
+            mat[j,i] = row.mi - (i_mi[1] + j_mi[1])
+        end
+    end
+    # Get values as vecs
+    ii, mi1, mi2, mean_mi = Float64[], Float64[], Float64[], Float64[]
+    for row in eachrow(dfrm)
+        npair = parse.(Float64, split(row.neuron, "-"))
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
+        if length(i_mi) > 0 && length(j_mi) > 0
+            push!(ii, row.mi - (i_mi[1] + j_mi[1]))
+            push!(mean_mi, mean([i_mi[1], j_mi[1]]))
+            push!(mi1, i_mi[1])
+            push!(mi2, j_mi[1])
+        end
+    end
+    push!(matlist, mat)
+    mimax = 0
+    mimin = 0
+    # For each neuron, calculate MI_max
+    for (i,neur) in enumerate(neurons)
+        mi = @subset(sdf, :neuron .== neur).mi[1]
+        mimax += mi + maximum(mat[:,i])
+        mimin += mi + sum(mat[:,i])
+    end
+    push!(mimaxlist, mimax)
+    println("----------- moth $(moth) ------------")
+    println("MI_max : $(mimax)")
+    println("MI_min : $(mimin)")
+    v = ii ./ (mi1 .+ mi2)
+    println("MI_MP : $(sum(sdf.mi) * (1 + mean(v[(!).(isinf.(v))])))")
+    println("MI_sum : $(sum(sdf.mi))")
+    println("double sum : $(sum(sdf.mi) .+ sum(ii))")
+end
+
+##
+
+@pipe dt |>  
+@subset(_, :direction .== "ascending") |> 
+groupby(_, :moth) |> 
+combine(_, nrow)
