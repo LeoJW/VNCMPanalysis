@@ -108,7 +108,7 @@ def train_models_worker(chunk_with_id):
     embed_repeats = 2
     embed_dims = np.array([4, 8, 12])
     embed_dim_mat = np.vstack([embed_dims for i in range(embed_repeats)])
-    window_size_range = np.linspace(0.02, 0.2, 30)
+    window_size_range = np.linspace(0.01, 0.1, 30)
 
     process_id, chunk = chunk_with_id
     results = []
@@ -171,6 +171,7 @@ def train_models_worker(chunk_with_id):
         model_paths = np.empty(window_size_range.shape, dtype=object)
         # One window size was already done, so throw that in
         model_paths[wi] = embed_model_paths[chosen_rep_ind, chosen_embed_ind]
+        window_mi = np.zeros(window_size_range.shape, dtype=np.float32)
         # Run over the rest of the window sizes
         for i in np.delete(np.arange(len(window_size_range)), wi):
             ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size_range[i], 
@@ -189,9 +190,27 @@ def train_models_worker(chunk_with_id):
             # Train models
             mi_test, train_id = train_model_no_eval(ds, this_params, X='Y', Y='Z', verbose=False)
             model_paths[i] = retrieve_best_model_path(mi_test, this_params, train_id=train_id, remove_others=True)
+            window_mi[i] = mi_test[np.argmax(gaussian_filter1d(np.nan_to_num(mi_test), sigma=1))]
+        
+        # -------- Step 3: Run subsetting at best window size
+        best_ind = np.argmax(window_mi)
+        ds = TimeWindowDatasetKinematics(os.path.join(data_dir, moth), window_size_range[best_ind], 
+            select_x=[0], # Just load one neuron so things run faster
+            select_y=muscles,
+            only_flapping=True, angles_only=True,
+            use_ISI=False, use_phase=True
+        )
+        this_params = {**params, 
+            'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
+            'moth': moth,
+            'window_size': window_size_range[best_ind],
+            'embed_dim': chosen_embed,
+            'muscles': muscles
+        }
+        subsets, mi_subsets = subsample_MI(ds, this_params, split_sizes=np.arange(2,8), X='Y', Y='Z')
 
         # Save results
-        results.append({key : [model_paths, window_size_range, embed_mi, this_params]})
+        results.append({key : [model_paths, window_size_range, embed_mi, this_params, subsets, mi_subsets]})
         synchronize()
         print(f'Neuron/muscle condition {key} took {time.time() - tic}')
     return results
@@ -247,11 +266,13 @@ if __name__ == '__main__':
     precision_noise_curves = {}
     embed_mi_dict = {}
     all_params = {}
+    all_subsets = {}
+    all_mi_subsets = {}
     # Run inference serially on resulting models (as inference can take advantage of whole GPU)
     iteration_count = 0
     for key, single_result in results.items():
         # Unpack this result. For some reason types don't change coming out of processes like they do going in
-        model_paths, window_size_range, embed_mi, cond_params = single_result
+        model_paths, window_size_range, embed_mi, cond_params, subsets, mi_subsets = single_result
         # model_path, this_params, subsets, mi_subsets = single_result
 
         # Skip if this moth doesn't have data for all muscles in this moth/neuron/muscle combination
@@ -274,34 +295,38 @@ if __name__ == '__main__':
                 use_ISI=False, use_phase=True
             )
             this_params = {**cond_params, 
-                'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2]}
+                'X_dim': ds.Y.shape[1] * ds.Y.shape[2], 'Y_dim': ds.Z.shape[1] * ds.Z.shape[2],
+                'window_size' : window_size
+            }
             # Load model, run inference tasks
             with torch.no_grad():
                 model = this_params['model_func'](this_params).to(device)
                 model.load_state_dict(torch.load(model_paths[i], weights_only=True, map_location=device))
                 model.eval()
                 precision_mi = precision_rounding(precision_levels, ds, model, X='Y', Y='Z', early_stop=True, early_stop_threshold=0.5)
-                precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='Y', Y='Z', early_stop=True, early_stop_threshold=0.5)
+                # precision_noise = precision(precision_levels, ds, model, n_repeats=10, X='Y', Y='Z', early_stop=True, early_stop_threshold=0.5)
                 del model
             zero_rounding_mi[i] = precision_mi[0]
             precision_curves[new_key] = precision_mi
-            precision_noise_curves[new_key] = precision_noise
+            precision_noise_curves[new_key] = np.zeros_like(precision_mi)
             precision_levels_dict[new_key] = precision_levels
             embed_mi_dict[new_key] = embed_mi.flatten()
             all_params[new_key] = [k + ' : ' + str(val) for k, val in this_params.items()]
+            all_subsets[new_key] = subsets
+            all_mi_subsets[new_key] = mi_subsets
 
             empty_cache()
             iteration_count += 1
             if (iteration_count % save_every_n_iterations == 0):
                 try:
-                    save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
+                    save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict, all_subsets, all_mi_subsets], filename)
                     print(f"Intermediate results saved")
                 except Exception as e:
                     print(f"Warning: Failed to save intermediate results: {e}")
 
     # Save final output
     try:
-        save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict], filename)
+        save_dicts_to_h5([precision_levels_dict, precision_curves, precision_noise_curves, all_params, embed_mi_dict, all_subsets, all_mi_subsets], filename)
         print(f'Final results saved to {filename}')
     except Exception as e:
         print(f"Error saving final results: {e}")

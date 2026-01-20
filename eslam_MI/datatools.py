@@ -351,8 +351,10 @@ class TimeWindowDatasetKinematics(Dataset):
             neuron_label_filter=None, # Whether to take good (1), MUA (0), or all (None) neurons
             select_x=None, select_y=None, # Variable selection
             angles_only=True, # Only use wing angles (no xyz point data)
-            only_flapping=False
+            only_flapping=False,
+            check_windows=False # Whether to check for windows where spikes in chosen neurons exist
         ):
+        self.check_windows = check_windows
         self.read_data(base_name, sample_rate=sample_rate, neuron_label_filter=neuron_label_filter)
         
         # Could write this so this is adjustable after dataset is made. I'm lazy for now though
@@ -569,6 +571,12 @@ class TimeWindowDatasetKinematics(Dataset):
         time_shifts = self.Ztimes[first_inds] - self.window_times[window_inds_z][first_inds]
         for i in range(self.Zorig.shape[0]):
             Zmain[window_inds_z[mask],i,column_inds] = np.interp(self.Ztimes[mask] + time_shifts[mask], self.Ztimes[mask], self.Zorig[i,mask])
+        # Keep only windows that have spikes in X
+        if self.check_windows:
+            windows_with_spikes = np.unique(np.concatenate(window_inds_x))
+            mask = np.ones(self.valid_windows.size, dtype=bool)
+            mask[windows_with_spikes] = False
+            self.valid_windows[mask] = False
         # Trim windows that aren't valid (in between bouts)
         # Will keep window times long, to include invalid windows, as time shifting variables needs to refer to windows again
         Xmain = Xmain[self.valid_windows,:,:]

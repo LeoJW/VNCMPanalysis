@@ -82,19 +82,9 @@ for task in 0:5
     read_run_file!(df, joinpath(data_dir, "2025-07-16_main_single_neurons_PACE_task_$(task).h5"), task)
 end
 df_kine = DataFrame()
-for task in 1:2
-    read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-15_kinematics_precision_PACE_task_$(task).h5"), task)
+for task in 0:5
+    read_run_file!(df_kine, joinpath(data_dir, "2026-01-19_kinematics_precision_PACE_task_$(task).h5"), task)
 end
-# for task in 0:5
-#     read_precision_kinematics_file!(df_kine, joinpath(data_dir, "2025-07-02_kinematics_precision_PACE_task_$(task)_hour_09.h5"), task)
-# end
-
-# Clean up df kinematics
-df_kine = @pipe df_kine |> 
-    rename(_, :neuron => :muscle) |> 
-    @transform!(_, 
-        :mi = :mi ./ :window,
-        :single = in.(:muscle, (single_muscles,)))
 
 # Add neuron stats to main dataframe
 df_neuronstats = @pipe get_neuron_statistics() |> 
@@ -121,6 +111,9 @@ df = leftjoin(df, df_direction, on=[:moth, :neuron])
 df = @pipe df |> 
     @transform!(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
     @transform!(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
+df_kine = @pipe df_kine |> 
+    @transform!(_, :single = ifelse.(occursin.("-", :muscle), false, true)) |> 
+    @transform!(_, :muscle = getindex.(Ref(muscle_names_dict), :muscle))
 
 # For each neuron/muscle combo, get:
 # Overall peak mi, peak mi within a valid region, and a valid region defined by limited precision scaling
@@ -144,6 +137,10 @@ end
 df = @pipe df |> 
 @transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
 groupby(_, [:moth, :neuron, :muscle]) |> 
+transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
+df_kine = @pipe df_kine |> 
+@transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
+groupby(_, [:moth, :muscle]) |> 
 transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
 
 # Function assumes grouped by moth
@@ -195,13 +192,39 @@ transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows => :
 
 ## How much do I believe we're picking the right embed_dim?
 
-row = rand(eachrow(df))
+row = rand(eachrow(df_kine))
 f = Figure()
 ax = Axis(f[1,1])
-embed = [4, 4, 8, 8, 12, 12]
+embed = repeat([4,8,12], 2)
+vlines!(ax, row.embed)
 scatter!(ax, embed, row.embed_mi)
 scatter!(ax, [4,8,12], [mean(row.embed_mi[embed .== val]) for val in unique(embed)])
 f
+
+## Look at some window size curves for kinematics
+dt = @pipe df_kine |> 
+# @subset(_, :neuron .== 97) |> 
+@subset(_, :mi .> 0) 
+
+@pipe dt[sortperm(dt.window),:] |> 
+@subset(_, :moth .== "2025-02-25") |> 
+# @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+# @subset(_, :muscle .== "all") |> 
+groupby(_, [:moth, :muscle]) |> 
+@transform(_, :chosen_precision = :precision[argmax(:mi)]) |> 
+@subset(_, :chosen_precision .< 10^1.5) |> 
+# @transform(_, :precision = :precision ./ :window, :precision_noise = :precision_noise ./ :window) |> 
+stack(_, [:mi, :precision, :precision_noise]) |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:window, :value, 
+    row=:variable, 
+    col=:muscle=>nonnumeric,
+    color=:window
+) * visual(ScatterLines) + 
+(mapping([0], [1]) * visual(ABLines))
+) |> 
+draw(_, facet=(; linkyaxes=:rowwise))
 
 ## Summary stats table
 bob = @pipe df |> 
