@@ -500,7 +500,7 @@ def subsample_MI(dataset, params, split_sizes=np.arange(1,6), X='X', Y='Y'):
     # Loop over subsets
     for i in range(split_times.shape[0]):
         # Train model
-        mis_test, train_id, indices = train_model_no_eval(dataset, params, X=X, Y=Y, subset_times=split_times[i,:], return_indices=True)
+        mis_test, train_id, indices = train_model_no_eval(dataset, params, X=X, Y=Y, subset_times=split_times[i,:], return_indices=True, verbose=False)
         mod = retrieve_best_model(mis_test, params, train_id=train_id, remove_all=True)
         dataset.move_data_to_windows(time_offset=0)
         # Run model inference to get MI value

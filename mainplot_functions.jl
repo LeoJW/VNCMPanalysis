@@ -50,15 +50,21 @@ function read_run_file!(df, file, task)
     for key in keys(precision_levels)
         keysplit = split(key, "_")[2:2:end]
         vals = map(x->(return is_numeric[x[1]] ? parse(Float64, x[2]) : x[2]), enumerate(keysplit))
+        # Find precision level for added noise precision _if that was run_
+        if all(iszero.(precision_noise_curves[key]))
+            prec_added_noise = -1
+        else
+            prec_added_noise = find_precision_noise_threshold(precision_levels[key] .* 1000, precision_noise_curves[key])
+        end
         push!(thisdf, vcat(
             vals,
-            precision_curves[key][1] .* log2(exp(1)), 
-            find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]),
-            find_precision_noise_threshold(precision_levels[key] .* 1000, precision_noise_curves[key]),
-            [precision_curves[key] .* log2(exp(1))],
-            [vec(mean(precision_noise_curves[key], dims=1)) .* log2(exp(1))],
-            [precision_levels[key] .* 1000],
-            [embed_mi[key]]
+            precision_curves[key][1] .* log2(exp(1)), # mi
+            find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]), # precision
+            prec_added_noise, # precision_noise
+            [precision_curves[key] .* log2(exp(1))], # precision_curve
+            [vec(mean(precision_noise_curves[key], dims=1)) .* log2(exp(1))], # precision_noise_curve
+            [precision_levels[key] .* 1000], # precision_levels
+            [embed_mi[key]] # embedding dimensionality
         ))
     end
     append!(df, thisdf)
