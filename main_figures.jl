@@ -1631,10 +1631,3 @@ for moth in newmoths
     println("MI_sum : $(sum(sdf.mi))")
     println("double sum : $(sum(sdf.mi) .+ sum(ii))")
 end
-
-##
-
-@pipe dt |>  
-@subset(_, :direction .== "ascending") |> 
-groupby(_, :moth) |> 
-combine(_, nrow)

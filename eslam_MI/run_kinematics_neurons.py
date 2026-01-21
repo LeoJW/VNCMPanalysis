@@ -116,12 +116,13 @@ def train_models_worker(chunk_with_id):
         synchronize()
         tic = time.time()
         # Unpack chunk
-        neurons, moth = condition
+        moth, neurons = condition
         # Enforce types (fuck python)
         moth = str(moth)
         # Make condition key (hideous but it works)
         mothstring_no_underscore = moth.replace('_','-')
-        key = f'neuron_{neurons}_moth_{mothstring_no_underscore}_pid_{process_id}'
+        neuronstring = '-'.join(neurons)
+        key = f'neuron_{neuronstring}_moth_{mothstring_no_underscore}_pid_{process_id}'
         print(f'Process {process_id} key {key}')
 
         # -------- Step 0: Check that there's data for this muscle/neuron, load dataset
