@@ -109,6 +109,7 @@ def train_models_worker(chunk_with_id):
     embed_dims = np.array([4, 8, 12])
     embed_dim_mat = np.vstack([embed_dims for i in range(embed_repeats)])
     window_size_range = np.linspace(0.01, 0.1, 30)
+    amount_of_time_threshold = 2 # seconds, minimum amount of time with data to actually run training/inference
 
     process_id, chunk = chunk_with_id
     results = []
