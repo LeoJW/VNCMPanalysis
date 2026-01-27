@@ -106,9 +106,10 @@ def train_models_worker(chunk_with_id):
         'max_n_batches': 1024, # If input has more than this many batches, encoder runs are split up for memory management
     }
     embed_repeats = 2
-    embed_dims = np.array([4, 8, 12])
+    # embed_dims = np.array([4, 8, 12])
+    embed_dims = np.arange(4, 36, 4)
     embed_dim_mat = np.vstack([embed_dims for i in range(embed_repeats)])
-    window_size_range = np.linspace(0.01, 0.1, 30)
+    window_size_range = np.linspace(0.01, 0.1, 40)
 
     process_id, chunk = chunk_with_id
     results = []
@@ -229,13 +230,14 @@ if __name__ == '__main__':
     # Package together main iterators
     moth_range = ['2025-02-25', '2025-02-25_1']
     main_iterator = list(product(
-        [['lax'], ['lba'], ['lsa'], ['ldvm'], ['ldlm'], ['rdlm'], ['rdvm'], ['rsa'], ['rba'], ['rax'], # Single muscles
-        ['lax', 'lba', 'lsa'], # L steering
-        ['rax', 'rba', 'rsa'], # R steering
-        ['ldvm', 'ldlm'], # L power
-        ['rdvm', 'rdlm'], # R power
-        ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'], # All steering
-        ['ldvm', 'ldlm', 'rdlm', 'rdvm'], # All power
+        [
+        # ['lax'], ['lba'], ['lsa'], ['ldvm'], ['ldlm'], ['rdlm'], ['rdvm'], ['rsa'], ['rba'], ['rax'], # Single muscles
+        # ['lax', 'lba', 'lsa'], # L steering
+        # ['rax', 'rba', 'rsa'], # R steering
+        # ['ldvm', 'ldlm'], # L power
+        # ['rdvm', 'rdlm'], # R power
+        # ['lax', 'lba', 'lsa', 'rsa', 'rba', 'rax'], # All steering
+        # ['ldvm', 'ldlm', 'rdlm', 'rdvm'], # All power
         ['lax', 'lba', 'lsa', 'ldvm', 'ldlm', 'rdlm', 'rdvm', 'rsa', 'rba', 'rax'] # All muscles, 
         ],
         moth_range
