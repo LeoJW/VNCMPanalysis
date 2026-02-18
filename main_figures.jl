@@ -70,20 +70,31 @@ muscle_colors = [
 ]
 muscle_colors_dict = Dict(muscle_colors)
 fsamp = 30000
-##
 
 df = DataFrame()
 # First run on most moths went fine
 for task in 2:5
-    read_run_file!(df, joinpath(data_dir, "2025-07-13_main_single_neurons_PACE_task_$(task).h5"), task)
+    read_run_file!(df, joinpath(data_dir, "2025-07-13_main_single_neurons_PACE_task_$(task).h5"))
 end
 # Had to re-run first two moths with more tasks as they were SLOW
 for task in 0:5
-    read_run_file!(df, joinpath(data_dir, "2025-07-16_main_single_neurons_PACE_task_$(task).h5"), task)
+    read_run_file!(df, joinpath(data_dir, "2025-07-16_main_single_neurons_PACE_task_$(task).h5"))
 end
 df_kine = DataFrame()
 for task in 0:5
-    read_run_file!(df_kine, joinpath(data_dir, "2026-01-19_kinematics_precision_PACE_task_$(task).h5"), task)
+    read_run_file!(
+        df_kine, 
+        joinpath(data_dir, "2026-01-20_kinematics_muscles_runs", "2026-01-20_kinematics_precision_PACE_task_$(task).h5"), 
+        look_for_subset=true
+    )
+end
+
+df_kine_neur = DataFrame()
+for task in 0:5
+    read_run_file!(
+        df_kine_neur, 
+        joinpath(data_dir, "2026-01-21_kinematics_neurons_runs", "2026-01-21_kinematics_neurons_PACE_task_$(task).h5")
+    )
 end
 
 # Add neuron stats to main dataframe
@@ -135,15 +146,18 @@ end
 
 # Convert mutual information to bits/s, windows to milliseconds
 df = @pipe df |> 
-@transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
+    @transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
+    groupby(_, [:moth, :neuron, :muscle]) |> 
+    transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
 df_kine = @pipe df_kine |> 
-@transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-groupby(_, [:moth, :muscle]) |> 
-transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
+    @transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
+    groupby(_, [:moth, :muscle]) |> 
+    transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
+df_kine_neur = @pipe df_kine_neur |> 
+    @transform!(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
+    groupby(_, [:moth, :neuron]) |> 
+    transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
 
-# Function assumes grouped by moth
 function get_proportion_of_active_windows(moth, neuron, window)
     thismoth = replace(moth[1], r"-1$" => "_1")
     spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
@@ -154,30 +168,25 @@ function get_proportion_of_active_windows(moth, neuron, window)
     frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in unique_neurons)
     for neur in unique_neurons
         neuron_string = string(round(Int, neur))
-        diffvec = diff(spikes[neuron_string])
-        bout_inds = searchsortedlast.(Ref(spikes[neuron_string]), round.(Int, bouts["ends"]))
         for wind in unique_windows
-            wind_samples = (wind ./ 1000 .* 30000)
-            inds_above = findall(diffvec .> wind_samples)
-            empty_windows = floor.(Int, diffvec[inds_above] ./ wind_samples)
-            # Count jumps that have bout changes in them differently
-            cross_bout = findall(in(bout_inds), inds_above)
-            if !isempty(cross_bout)
-                # Get duration of each bout crossing, remove that time from the empty windows count
-                for ind in cross_bout
-                    # Get which bout ended here
-                    bout_ind = findfirst(bout_inds .== inds_above[ind])
-                    bout_gap = floor(Int, (bouts["starts"][bout_ind + 1] - bouts["ends"][bout_ind]) / wind_samples)
-                    empty_windows[ind] -= bout_gap
+            wind_samples = (wind / 1000 * 30000)
+            # Loop over bouts
+            frac_active_bouts = zeros(length(bouts["starts"]))
+            for i in eachindex(bouts["starts"])
+                mask = (spikes[neuron_string] .>= bouts["starts"][i]) .&& (spikes[neuron_string] .< bouts["ends"][i])
+                spikes_in_bout = spikes[neuron_string][mask]
+                if length(spikes_in_bout) == 0
+                    frac_active_bouts[i] = 0.0
+                    continue
                 end
+                windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
+                window_assignments = searchsortedlast.(Ref(windows), spikes_in_bout)
+                full_windows = length(unique(window_assignments))
+                total_windows = length(windows)
+                frac_active_bouts[i] = full_windows / total_windows
             end
-            # Add any missing time on start/end to first and last empty_windows
-            empty_windows[1] += floor(Int, (spikes[neuron_string][1] - bouts["starts"][1]) ./ wind_samples)
-            empty_windows[end] += floor(Int, (spikes[neuron_string][end] - bouts["ends"][end]) ./ wind_samples)
-            n_empty_windows = sum(empty_windows)
-            n_total_windows = round(Int, sum(bouts["ends"] .- bouts["starts"]) ./ wind_samples)
-            # println("empty windows: $(n_empty_windows) total windows: $(n_total_windows)")
-            frac_active_dict[neur][wind] = 1 - (n_empty_windows / n_total_windows)
+            # Mean of all bout fractions gives total fraction
+            frac_active_dict[neur][wind] = mean(frac_active_bouts)
         end
     end
     frac_active_vec = [frac_active_dict[n][w] for (n,w) in zip(neuron, window)]
@@ -188,11 +197,15 @@ df = @pipe df |>
 groupby(_, [:moth]) |> 
 transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows => :frac_active) |> 
 @transform!(_, :mi = :mi .* :frac_active)
+df_kine_neur = @pipe df_kine_neur |> 
+groupby(_, [:moth]) |> 
+transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows => :frac_active) |> 
+@transform!(_, :mi = :mi .* :frac_active)
 
 
 ## How much do I believe we're picking the right embed_dim?
 
-row = rand(eachrow(df_kine))
+row = rand(eachrow(df_kine_neur))
 f = Figure()
 ax = Axis(f[1,1])
 embed = repeat([4,8,12], 2)
@@ -234,35 +247,124 @@ groupby(_, [:muscle]) |>
 combine(_, :precision => mean, :precision => std, :mi => mean, :mi => std)
 
 
-## Kinematics has some dependency on window size
-@pipe df_kine |> 
-@subset(_, :single) |> 
-groupby(_, [:moth, :muscle, :window]) |> 
-combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
-(AlgebraOfGraphics.data(_) *
-mapping(:window, :mi, color=:window, col=:moth, row=:muscle) * visual(Scatter)
+## ---------------- Are there neurons more informative of specific muscles than the whole MP?
+@pipe df |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, (:neuron .!= 53) .&& (:moth .== "2025-03-12-1")) |> 
+groupby(_, [:moth, :neuron]) |> 
+transform!(_, [:mi, :muscle] => ((x,y) -> repeat([x[findfirst(y .== "all")]], length(x))) => :allMI) |> 
+@transform(_, :mi_ratio = :mi ./ :allMI) |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:allMI, :mi_ratio, color=:direction, layout=:muscle) * 
+visual(Scatter) #+ mapping([0],[1]) * visual(ABLines, color=:black)
 ) |> 
-draw(_)#, axis=(; yscale=log10))
+draw(_)
+
+## ---------------- Information and precision of neurons to kinematics vs motor program
+df_neuron_to_MP = @pipe df |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0)
+
+# Mutual information
+@pipe df_kine_neur |> 
+groupby(_, [:moth, :neuron]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0) |> 
+leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP") |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:mi_toMP=>"Information to MP", :mi=>"Information to kinematics", color=:direction_toMP, layout=:muscle_toMP) * 
+visual(Scatter) + mapping([0],[1]) * visual(ABLines, color=:black)
+) |> 
+draw(_)
+# @pipe df_kine_neur |> 
+# @subset(_, :peak_mi, :mi .> 0) |> 
+# leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP") |> 
+# @transform(_, :diff = :mi_toMP .- :mi) |> 
+# (
+# AlgebraOfGraphics.data(_) * 
+# mapping(:mi_toMP, :diff, layout=:muscle_toMP) * 
+# visual(Scatter)
+# ) |> 
+# draw(_)
+
+## Precision
+df_neuron_to_MP = @pipe df |> 
+@subset(_, :peak_valid_mi, :mi .> 0)
+
+dt = @pipe df_kine_neur |> 
+@subset(_, :peak_valid_mi, :mi .> 0) |> 
+leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP") |> 
+@subset(_, (!).(ismissing.(:mi_toMP))) |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:precision_toMP=>"Precision to MP", :precision=>"Precision to kinematics", color=:direction_toMP, layout=:muscle_toMP) * 
+visual(Scatter) + mapping([0],[1]) * visual(ABLines, color=:black)
+) |> 
+draw(_)
+
+## Optimal window size
+df_neuron_to_MP = @pipe df |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0)
+
+@pipe df_kine_neur |> 
+groupby(_, [:moth, :neuron]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0) |> 
+leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP") |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:window_toMP=>"Optimal window size to MP", :window=>"Optimal window size to kinematics", color=:direction_toMP, layout=:muscle_toMP) * 
+visual(Scatter) + mapping([0],[1]) * visual(ABLines, color=:black)
+) |> 
+draw(_)
+
+##
+df_neuron_to_MP = @pipe df |> 
+groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0, :muscle .== "all")
+
+dt = @pipe df_kine_neur |> 
+groupby(_, [:moth, :neuron]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi, :mi .> 0) |> 
+leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP")
+
+f = Figure()
+axtoph = Axis(f[1,1])
+ax = Axis(f[2,1], xlabel="Optimal window size to MP (ms)", ylabel="Optimal window size to kinematics (ms)")
+axrighth = Axis(f[2,2])
+
+linkyaxes!(ax, axrighth)
+linkxaxes!(ax, axtoph)
+
+n2m_window_bins = sort(unique(df.window))[1:2:end] .- diff(sort(unique(df.window)))[1]
+n2k_window_bins = sort(unique(df_kine_neur.window))[1:2:end] .- diff(sort(unique(df_kine_neur.window)))[1]
+
+scatter!(ax, dt.window_toMP .+ (rand(nrow(dt)) .- 0.5) .* 3, dt.window .+ (rand(nrow(dt)) .- 0.5) .* 3)
+hist!(axtoph, dt.window_toMP, bins=n2m_window_bins)
+hist!(axrighth, dt.window, bins=n2k_window_bins, direction=:x)
+
+display(f)
+
 
 ## Kinematics subset analysis
 
 dt = @pipe df_kine |> 
-@subset(_, :rep .== 0) |> 
-@transform(_, :single = in.(:muscle, (single_muscles,))) |> 
+# @subset(_, :peak_valid_mi) |> 
 # @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
 # @subset(_, (!).(:single)) |> 
 @subset(_, :single) |> 
 flatten(_, [:subset, :mi_subset]) |> 
-@transform(_, :mi_subset = :mi_subset ./ :window, :mi = :mi ./ :window) |> 
+# @transform(_, :mi_subset = :mi_subset ./ :window) |> 
 @groupby(_, [:subset, :window, :moth, :muscle]) |> 
 combine(_, :mi_subset => mean => :mi_subset, :mi_subset => std => :mi_subset_std, :mi => first => :mi) |> 
-@groupby(_, [:window, :moth, :muscle]) |> 
-combine(_) do d
-    row = copy(DataFrame(d[1,:]))
-    row.mi_subset .= row.mi
-    row.subset .= 1
-    return vcat(row, d)
-end |> 
 (
 AlgebraOfGraphics.data(_) * 
 mapping(:subset, :mi_subset, color=:window=>log, col=:moth, row=:muscle, group=:window=>nonnumeric) * 
@@ -292,7 +394,7 @@ visual(Scatter, markersize=14)
 draw(_, scales(Color=(; palette=[m[2] for m in muscle_colors])))#, axis=(; yscale=log10))
 
 
-## Main plot
+## ---------------- Main plot
 
 dfmain = @pipe df |> 
 @subset(_, :peak_valid_mi) |> 
@@ -325,6 +427,34 @@ mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision 
 
 # draw(plt1 + plt2, axis=(; yscale=log10))#, xscale=log10))
 draw(plt1, axis=(; yscale=log10))
+
+
+## ------------------ Main plot, but kinematics
+
+dfmain = @pipe df |> 
+@subset(_, :peak_valid_mi) |> 
+# @transform(_, :mi = :mi ./ :meanrate) |>  # Convert to bits/spike
+# @transform(_, :mi = :mi .* :timeactive ./ :nspikes) |> # Alternative bits/spike
+@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+@subset(_, :mi .> 0, :nspikes .> 1000, :muscle .== "all")
+
+dfkine = @pipe df_kine |> 
+@subset(_, :peak_valid_mi) |> 
+@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+@transform(_, :direction = "kinematics_" .* :muscle) |> 
+@subset(_, :mi .> 0)
+
+plt1 = AlgebraOfGraphics.data(dfmain) * 
+mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision (ms)", 
+    color=:direction,
+) * visual(Scatter)
+plt2 = AlgebraOfGraphics.data(dfkine) * 
+mapping(:mi=>"Mutual Information (bits/s)", :precision=>"Spike timing precision (ms)", 
+    color=:direction) * visual(Scatter)
+
+draw(plt1 + plt2,)# axis=(; xscale=log10))
+# draw(plt1, axis=(; yscale=log10))
+
 
 ## Curve of most precise neuron
 # ind = argmin(@subset(df, :peak_valid_mi, :mi .> 1).precision_noise)
@@ -389,28 +519,43 @@ f
 # categories = ["Lsteering", "Rsteering"]
 # categories = ["Lpower", "Lsteering"]
 # categories = ["Lsteering", "Lpower", "Rpower", "Rsteering"]
-categories = ["lax", "lba", "lsa", "ldvm", "ldlm"]
-# categories = single_muscles
+# categories = ["lax", "lba", "lsa", "ldvm", "ldlm"]
+# categories = ["lax", "lba", "lsa", "ldvm", "ldlm", "rdlm", "rdvm", "rsa", "rba"]
+categories = single_muscles
 
 ddt = @pipe df |> 
 select(_, Not([:precision_curve, :precision_levels])) |> 
 # @subset(_, :peak_valid_mi) |> 
 @subset(_, :peak_mi) |> 
+# groupby(_, [:moth, :neuron]) |> 
+# transform!(_, [:mi, :muscle] => ((mi,muscle) -> begin
+#     ind = findfirst(muscle .== "Lsteering")
+#     sendval = isnothing(ind) ? 0.0 : mi[ind]
+#     return repeat([sendval], length(mi))
+#     end) => :allMI) |> 
 @transform(_, :stack = indexin(:muscle, categories)) |> 
 @subset(_, (!).(isnothing.(:stack)), :stack .!= 0) |> 
 # groupby(_, [:moth, :neuron]) |> 
 # @subset(_, reduce(&, [any(:muscle .== x) for x in categories])) |> 
-groupby(_, [:moth, :neuron]) |> 
-transform(_, [:mi, :muscle] => ((mi, muscle) -> first(mi[muscle .== categories[1]])) => :mi_sort) |> 
+# groupby(_, [:moth, :neuron]) |> 
+# transform(_, [:mi, :muscle] => ((mi, muscle) -> first(mi[muscle .== categories[1]])) => :mi_sort) |> 
 # Arrange fractions, ratios
 # @transform(_, :mi = ifelse.(:muscle .== "steering", :mi ./ 6, :mi ./ 4)) |> 
 groupby(_, [:moth, :neuron]) |> 
 @transform(_, :mi_total = sum(:mi)) #|> 
-# @transform(_, :mi = :mi ./ :mi_total)
+# @transform(_, :mi = :allMI .- :mi)
 # @transform(_, :mi_total = sum(:precision_noise)) |> 
 # @transform(_, :mi = :precision_noise)
 # @transform(_, :mi = :precision_noise ./ :mi_total)
 ddt.stack = Vector{Int64}(ddt.stack)
+
+if "rax" in categories
+    bob = @pipe ddt |> 
+        @subset(_, :moth .== "2025-03-12-1", :peak_mi, :direction .== "descending", :muscle .== "rax")
+    row = rand(eachrow(bob))
+    row.mi = 0
+    push!(ddt, row)
+end
 
 colors = Makie.wong_colors()
 
@@ -592,41 +737,6 @@ mapping(:window, :value,
 (mapping([0], [1]) * visual(ABLines))
 ) |> 
 draw(_, facet=(; linkyaxes=:rowwise))
-
-
-## Try breakpoint segmentation
-bob = @pipe dt[sortperm(dt.window),:] |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-@transform(_, :chosen_precision = :precision[argmax(:mi)])
-# @subset(_, :chosen_precision .< 10^1.)
-# bob = bob[bob.neuron .== rand(unique(bob.neuron)), :]
-# bob = bob[bob.muscle .== rand(unique(bob.muscle)), :]
-bob = bob[bob.neuron .== "41.02025-02-25", :]
-bob = bob[bob.muscle .== "all", :]
-
-# Problem cases: 2025-03-21 neuron 15 muscle rax
-# Textbook looks great: 2025-02-25 neuron 24 muscle lax
-
-slope = breakpoint(bob.window, bob.precision)
-
-ind = find_scaling_point(slope[:,1]; threshold=0.4, allowed_above=2)
-ind += 3
-
-f = Figure()
-ax = [Axis(f[i,1]) for i in 1:3]
-ax[1].title = bob.neuron[1] * " " * bob.muscle[1]
-scatterlines!(ax[1], bob.window, bob.mi)
-scatterlines!(ax[1], bob.window[ind:end], bob.mi[ind:end], color=:red)
-scatterlines!(ax[2], bob.window, bob.precision_noise)
-scatterlines!(ax[2], bob.window[ind:end], bob.precision_noise[ind:end], color=:red)
-scatterlines!(ax[3], bob.window[4:end-3], slope[:,1])
-scatterlines!(ax[3], bob.window[4:end-3], slope[:,2])
-# plot_fit_line!(ax[2], bob.window, bob.precision_noise)
-# scatterlines!(ax[4], bob.window[3:end-2], fit[:,1])
-# scatterlines!(ax[4], bob.window[3:end-2], fit[:,2])
-# scatterlines!(ax[4], bob.window[3:end-2], fit[:,3])
-linkxaxes!(ax)
-f
 
 
 
@@ -1002,7 +1112,7 @@ ylims!(ax8, 0, nothing)
 rowsize!(f.layout, 2, Relative(2/3))
 
 display(f)
-save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
+# save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
 
 
 ## -------------------------------- Figure 3: Main results, neurons are not precise
@@ -1079,12 +1189,12 @@ function figure3()
 
     # Add previous manduca mutual information and precision to plots
     comparative_data_dir = "/Users/leo/Desktop/ResearchPhD/comparativeMP/data/"
-    # df_wblen_per_moth = @pipe CSV.read(joinpath(comparative_data_dir, "preprocessedCache.csv"), DataFrame) |> 
-    #     @subset(_, :species .== "Manduca sexta") |> 
-    #     groupby(_, [:moth, :wb]) |> 
-    #     combine(_, x->first(x)) |> 
-    #     groupby(_, [:moth, :species]) |> 
-    #     combine(_, [:wblen, :wbfreq] .=> mean, [:wblen, :wbfreq] .=> std .=> [:wblen_sd, :wbfreq_sd]; renamecols=false)
+    df_wblen_per_moth = @pipe CSV.read(joinpath(comparative_data_dir, "preprocessedCache.csv"), DataFrame) |> 
+        @subset(_, :species .== "Manduca sexta") |> 
+        groupby(_, [:moth, :wb]) |> 
+        combine(_, x->first(x)) |> 
+        groupby(_, [:moth, :species]) |> 
+        combine(_, [:wblen, :wbfreq] .=> mean, [:wblen, :wbfreq] .=> std .=> [:wblen_sd, :wbfreq_sd]; renamecols=false)
     dfm = DataFrame(CSV.File(joinpath(comparative_data_dir, "precision_normal_allFT_phaseAndTime2025-01-17_02-04.csv")))
     dfm.est = vcat(repeat(["GOV"], 4122), repeat(["KSG2"], nrow(dfm) - 4122))
     dfm = @pipe dfm |> 
@@ -1190,7 +1300,7 @@ fontsize_theme = Theme(fontsize = 21)
 f = with_theme(fontsize_theme) do
     figure3()
 end
-save(joinpath(fig_dir, "fig3_MI_and_precision.pdf"), f)
+# save(joinpath(fig_dir, "fig3_MI_and_precision.pdf"), f)
 display(f)
 
 
@@ -1274,44 +1384,59 @@ function get_proportion_of_active_windows_redundancy(moth, neuron, window)
     spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
     bouts = npzread(joinpath(data_dir, "..", thismoth * "_bouts.npz"))
     neuron_split = split.(neuron, "-")
-    unique_neurons = unique(vcat(neuron_split...)) # Unique SINGLE neurons
+    # Get all unique single neurons and window sizes
+    unique_neurons = unique(vcat(neuron_split...))
     unique_windows = unique(window)
-    # Construct dictionary of number of valid windows for each window size, neuron
-    frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in unique_neurons)
-    for neur in unique_neurons
-        neuron_string = neur
-        diffvec = diff(spikes[neuron_string])
-        bout_inds = searchsortedlast.(Ref(spikes[neuron_string]), round.(Int, bouts["ends"]))
+    # Pre-compute window assignments for each unique neuron and window size
+    # Structure: window_cache[neuron_name][window_size][bout_idx] = Set of unique window indices
+    window_cache = Dict(
+        n => Dict{Float64, Vector{Set{Int}}}() 
+        for n in unique_neurons
+    )
+    for neur_name in unique_neurons
         for wind in unique_windows
-            wind_samples = (wind ./ 1000 .* 30000)
-            inds_above = findall(diffvec .> wind_samples)
-            empty_windows = floor.(Int, diffvec[inds_above] ./ wind_samples)
-            # Count jumps that have bout changes in them differently
-            cross_bout = findall(in(bout_inds), inds_above)
-            if !isempty(cross_bout)
-                # Get duration of each bout crossing, remove that time from the empty windows count
-                for ind in cross_bout
-                    # Get which bout ended here
-                    bout_ind = findfirst(bout_inds .== inds_above[ind])
-                    bout_gap = floor(Int, (bouts["starts"][bout_ind + 1] - bouts["ends"][bout_ind]) / wind_samples)
-                    empty_windows[ind] -= bout_gap
+            wind_samples = (wind / 1000 * 30000)
+            unique_assignments = Vector{Set{Int}}(undef, length(bouts["starts"]))
+            for i in eachindex(bouts["starts"])
+                mask = (spikes[neur_name] .>= bouts["starts"][i]) .& 
+                       (spikes[neur_name] .< bouts["ends"][i])
+                spikes_in_bout = spikes[neur_name][mask]
+                if length(spikes_in_bout) == 0
+                    unique_assignments[i] = Set{Int}()
+                else
+                    windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
+                    window_assignments = searchsortedlast.(Ref(windows), spikes_in_bout)
+                    unique_assignments[i] = Set(window_assignments)
                 end
             end
-            # Add any missing time on start/end to first and last empty_windows
-            empty_windows[1] += floor(Int, (spikes[neuron_string][1] - bouts["starts"][1]) ./ wind_samples)
-            empty_windows[end] += floor(Int, (spikes[neuron_string][end] - bouts["ends"][end]) ./ wind_samples)
-            n_empty_windows = sum(empty_windows)
-            n_total_windows = round(Int, sum(bouts["ends"] .- bouts["starts"]) ./ wind_samples)
-            # println("empty windows: $(n_empty_windows) total windows: $(n_total_windows)")
-            frac_active_dict[neur][wind] = 1 - (n_empty_windows / n_total_windows)
+            window_cache[neur_name][wind] = unique_assignments
         end
     end
-    # Now that we have dict, use the bigger fraction for each neuron pair
-    frac_active_vec = zeros(Float64, length(neuron))
-    for i in eachindex(frac_active_vec)
-        w = window[i]
-        frac_active_vec = max(frac_active_dict[neuron_split[i][1]][w], frac_active_dict[neuron_split[i][2]][w])
+    
+    # Now compute fraction active for each neuron pair using cached data
+    frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in neuron_split)
+    for neur_strings in neuron_split
+        for wind in unique_windows
+            wind_samples = (wind / 1000 * 30000)
+            frac_active_bouts = zeros(length(bouts["starts"]))
+            for i in eachindex(bouts["starts"])
+                # Access pre-computed unique window assignments
+                unique_windows_1 = window_cache[neur_strings[1]][wind][i]
+                unique_windows_2 = window_cache[neur_strings[2]][wind][i]
+                if isempty(unique_windows_1) && isempty(unique_windows_2)
+                    frac_active_bouts[i] = 0.0
+                else
+                    # Union of the two sets gives all unique windows with spikes
+                    full_windows = length(union(unique_windows_1, unique_windows_2))
+                    windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
+                    total_windows = length(windows)
+                    frac_active_bouts[i] = full_windows / total_windows
+                end
+            end
+            frac_active_dict[neur_strings][wind] = mean(frac_active_bouts)
+        end
     end
+    frac_active_vec = [frac_active_dict[n][w] for (n,w) in zip(neuron_split, window)]
     return frac_active_vec
 end
 # Save MI values converted to bits/s of flapping time, rather than bits/s of any activity
@@ -1321,6 +1446,49 @@ transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows_redu
 @transform!(_, :mi = :mi .* :frac_active)
 
 ##
+using LinearAlgebra
+using MultivariateStats
+using Arpack
+function ii_to_distance_magnitude(II_matrix)
+    return 1.0 ./ (1.0 .+ abs.(II_matrix))
+end
+# Signed distance (separates redundant from synergistic)
+function ii_to_distance_signed(II_matrix)
+    max_abs_ii = maximum(abs.(II_matrix))
+    return 1.0 .- (II_matrix ./ max_abs_ii)
+end
+function embed_with_mds(II_matrix, n_dims=2)
+    D = ii_to_distance_signed(II_matrix)
+    D[diagind(D)] .= 0.0
+    D = (D + D') / 2
+    
+    # Classical MDS via MultivariateStats
+    M = fit(MDS, D.^2, maxoutdim=n_dims, distances=true)
+    coords = predict(M)  # returns d×n matrix
+    
+    return coords
+end
+function spectral_embedding(II_matrix, n_dims=3)
+    # Use absolute value as similarity (or signed if you prefer)
+    S = abs.(II_matrix)
+    
+    # Normalize to make it a proper affinity matrix
+    S = S ./ maximum(S)
+    S[diagind(S)] .= 1.0
+    
+    # Create normalized Laplacian
+    D_vec = vec(sum(S, dims=2))
+    D_sqrt_inv = Diagonal(1.0 ./ sqrt.(D_vec))
+    L_norm = I - D_sqrt_inv * S * D_sqrt_inv
+    
+    # Get smallest eigenvectors (after the trivial one)
+    eigenvalues, eigenvectors = eigs(L_norm, nev=n_dims+1, which=:SM)
+    
+    # Take eigenvectors 2 through n_dims+1 (skip the first trivial one)
+    coords = eigenvectors[:, 2:end]'  # transpose to d×n
+    
+    return coords
+end
 
 f = Figure(size=(800*1.56, 500))
 ga = f[1,1] = GridLayout()
@@ -1354,16 +1522,18 @@ for (ii, (axi,axj,moth)) in enumerate(Iterators.zip(repeat(1:2, inner=3), repeat
     end
     # unique(Set, Iterators.filter(allunique, Iterators.product(a1, a2)))
 
-    clust = dbscan(mat, 30)
-    # clust = cutree(hclust(mat, :average), h=10)
+    # coords = embed_with_mds(mat, 5)
+    # coords = real.(spectral_embedding(mat, 5))
+    # clust = dbscan(coords, 0.5)
+    clust = cutree(hclust(ii_to_distance_magnitude(mat), linkage=:complete, branchorder=:optimal), k=4)
 
     ordered_indices = Int64[]
-    for cl in clust.clusters
-        append!(ordered_indices, cl.core_indices)
-    end
-    # for cl in unique(clust)
-    #     append!(ordered_indices, findall(clust .== cl))
+    # for cl in clust.clusters
+    #     append!(ordered_indices, cl.core_indices)
     # end
+    for cl in unique(clust)
+        append!(ordered_indices, findall(clust .== cl))
+    end
     # Create mapping from old index to new index
     index_mapping = Dict{Int, Int}()
     for (new_idx, old_idx) in enumerate(ordered_indices)
@@ -1384,6 +1554,7 @@ for (ii, (axi,axj,moth)) in enumerate(Iterators.zip(repeat(1:2, inner=3), repeat
     # reordered_mat[reordered_mat .== 0] .= NaN
     # mat[mat .== 0] .= NaN
     # mat[diagind(mat)] .= NaN
+    # push!(matlist, reordered_mat)
     push!(matlist, mat)
 
     # Update axis
@@ -1481,7 +1652,7 @@ text!(axh, 0.85, 0.5, text="Synergistic",
     space=:relative, 
     align=(:center, :bottom)
 )
-xlims!(axh, -100, 70)
+xlims!(axh, -25, 25)
 ylims!(axh, 0, 400)
 apply_letter_label(gb, "B")
 
@@ -1502,9 +1673,340 @@ rowgap!(g2, 0)
 
 colsize!(f.layout, 1, Relative(0.6))
 
-save(joinpath(fig_dir, "fig4_redundancy.pdf"), f)
+# save(joinpath(fig_dir, "fig4_redundancy.pdf"), f)
 f
 # Could do this as hist with scatter of II and precision: One day!
+## -------------------------------- Redundancy: Save weight/adjacency matrices for Cfinder to use
+for (i, thismat) in enumerate(matlist)
+    g = SimpleGraph(thismat)
+    inds1 = [src(edge) for edge in edges(g)]
+    inds2 = [dst(edge) for edge in edges(g)]
+    writedlm(
+        joinpath(data_dir, "..", "II_matrix_$(i).tsv"), 
+        Iterators.zip(inds1, inds2, [thismat[i1,i2] for (i1,i2) in Iterators.zip(inds1, inds2)]), 
+        '\t'
+    )
+end
+
+## -------------------------------- Redundancy: Clique percolation to find subpopulations
+using GraphMakie
+using GraphMakie.NetworkLayout
+using ColorSchemes
+
+colrange = [-maximum(maximum(x) for x in matlist), maximum(maximum(x) for x in matlist)]
+
+
+f = Figure()
+for (mi, moth) in enumerate(newmoths)
+    thismat = matlist[mi]
+    clique = clique_percolation(SimpleGraph(thismat .> (0.5 * maximum(thismat))), k=2)
+
+    axr = Axis(f[1,mi], title="Redundant unit pairs")
+    axs = Axis(f[2,mi], title="Synergistic unit pairs")
+
+    # Redundant pairs graph
+    thresh = 0
+    g = SimpleGraph(thismat .< (thresh * maximum(thismat)))
+    cliques = maximal_cliques(g)
+    inds = [(src(edge), dst(edge)) for edge in edges(g)]
+    values = [(thismat[i[2], i[1]] - colrange[1]) / (colrange[2] - colrange[1])  for i in inds]
+    colors = get.(Ref(colorschemes[:seismic]), values)
+    graphplot!(axr, g, layout=Spring(), edge_color=colors)
+    # Synergistic pairs graph
+    thresh = 0
+    g = SimpleGraph(thismat .> (thresh * maximum(thismat)))
+    cliques = maximal_cliques(g)
+    inds = [(src(edge), dst(edge)) for edge in edges(g)]
+    values = [(thismat[i[2], i[1]] - colrange[1]) / (colrange[2] - colrange[1])  for i in inds]
+    colors = get.(Ref(colorschemes[:seismic]), values)
+    graphplot!(axs, g, layout=Spring(), edge_color=colors)
+
+    hidedecorations!(axr)
+    hidedecorations!(axs)
+end
+f
+
+## -------------------------------- Redundancy: Look at window size plots for both neurons in a pair, and the final pair
+function plot_mi_precision_against_window!(f, ax_coord, dt; xextent=nothing, yextent=nothing, doylabel=true)
+    ax1 = Axis(f[ax_coord...][1,1])
+    ax2 = Axis(f[ax_coord...][2,1], xlabel="Window length (ms)")
+    if doylabel
+        ax1.ylabel = "I(X,Y) (bits/s)"
+        ax2.ylabel = "Spike timing precision (ms)"
+    end
+    text!(ax2, 
+        Point2f(0.05, 0.8), 
+        text="No spike timing \n information", 
+        align=(:left, :center),
+        space=:relative, 
+        color=:grey
+    )
+    # Chosen precision point
+    mi_ind = findmax(dt.mi)[2]
+    vlines!(ax1, dt.window[mi_ind], ymin=0, ymax=1, linestyle=:dash, color=:black)
+    scatter!(ax1, dt.window[mi_ind], dt.mi[mi_ind], color=:black, markersize=14)
+    scatter!(ax2, dt.window[mi_ind], dt.precision[mi_ind], color=:black, markersize=14)
+    vlines!(ax2, dt.window[mi_ind], ymin=0, ymax=1, linestyle=:dash, color=:black)
+    # MI axis
+    scatterlines!(ax1, dt.window, dt.mi, color=dt.window)
+    # Precision axis
+    ablines!(ax2, [0], [1], color=:black)
+    xextent, yextent = maximum(dt.window) + 10, maximum(dt.precision[(!).(isnan.(dt.precision))]) + 10
+    poly!(ax2, Point2f[(0,0), (1000, 1000), (0, 1000)],
+    color=:grey, alpha=0.2
+    )
+    slope = breakpoint(dt.window, dt.precision; start_window=3)
+    ind = find_scaling_point(slope[:,1]; threshold=0.4, allowed_above=2)
+    ind = ind == 1 ? ind : ind + 3
+    scatterlines!(ax2, dt.window[1:ind], dt.precision[1:ind], color=dt.window[1:ind])
+    scatterlines!(ax2, dt.window[ind:end], dt.precision[ind:end], color=:grey)
+    
+    linkxaxes!(ax1, ax2)
+    xlims!(ax2, 0, xextent)
+    ylims!(ax2, 0, yextent)
+
+    return ax1, ax2
+end
+
+
+dfr_row = rand(eachrow(dfr))
+moth = dfr_row.moth
+neuron_1, neuron_2 = parse.(Float64, split(dfr_row.neuron, "-"))
+
+f = Figure(size=(1000,500))
+
+dt = @subset(dfr, :neuron .== dfr_row.neuron, :moth .== dfr_row.moth)
+ax11, ax12 = plot_mi_precision_against_window!(f, (1,1), dt[sortperm(dt.window),:])
+dt = @subset(df, :neuron .== neuron_1, :moth .== dfr_row.moth, :muscle .== "all")
+ax21, ax22 = plot_mi_precision_against_window!(f, (1,2), dt[sortperm(dt.window),:])
+dt = @subset(df, :neuron .== neuron_2, :moth .== dfr_row.moth, :muscle .== "all")
+ax31, ax32 = plot_mi_precision_against_window!(f, (1,3), dt[sortperm(dt.window),:])
+
+f
+
+## -------------------- Redundancy: Clustering to identify populations based on synergy
+using Distances
+
+"""
+    spectral_clustering_signed(W::Matrix{Float64}, k::Int; method=:unsigned)
+
+Perform spectral clustering on a signed weight matrix.
+
+# Arguments
+- `W`: NxN signed weight matrix with zero diagonal
+- `k`: Number of clusters to identify
+- `method`: Method for handling signed graphs
+  - `:unsigned` - Use absolute values (ignores sign)
+  - `:signed_sym` - Signed symmetric Laplacian
+  - `:signed_balance` - Balance-based Laplacian
+
+# Returns
+- `assignments`: Vector of cluster assignments for each node
+- `eigvecs`: The embedding vectors used for clustering
+"""
+function spectral_clustering_signed(W::Matrix{Float64}, k::Int; method=:signed_sym)
+    N = size(W, 1)
+    
+    # Construct the appropriate Laplacian based on method
+    if method == :unsigned
+        # Standard spectral clustering (ignores sign)
+        W_abs = abs.(W)
+        D = Diagonal(vec(sum(W_abs, dims=2)))
+        L = D - W_abs
+    elseif method == :signed_sym
+        # Signed symmetric Laplacian
+        # Positive edges: attraction, Negative edges: repulsion
+        W_pos = max.(W, 0)  # Positive part
+        W_neg = -min.(W, 0)  # Negative part (made positive)
+        D_pos = Diagonal(vec(sum(W_pos, dims=2)))
+        D_neg = Diagonal(vec(sum(W_neg, dims=2)))
+        # Signed Laplacian: L = D_pos - W_pos + W_neg
+        L = D_pos - W_pos + W_neg
+    elseif method == :signed_balance
+        # Balance normalized Laplacian
+        W_pos = max.(W, 0)
+        W_neg = -min.(W, 0)
+        D_pos = Diagonal(vec(sum(W_pos, dims=2)))
+        D_neg = Diagonal(vec(sum(W_neg, dims=2)))
+        D = D_pos + D_neg
+        # Avoid division by zero
+        D_inv_sqrt = Diagonal([d > 1e-10 ? 1/sqrt(d) : 0.0 for d in diag(D)])
+        # L = I - D^(-1/2) * (W_pos - W_neg) * D^(-1/2)
+        L = I - D_inv_sqrt * (W_pos - W_neg) * D_inv_sqrt
+    else
+        error("Unknown method: $method")
+    end
+    # Compute eigendecomposition
+    # For standard Laplacian, we want smallest eigenvalues
+    # Use eigen for full decomposition
+    eig = eigen(Symmetric(L))
+    # Take the k smallest eigenvectors
+    # (corresponding to k smallest eigenvalues)
+    eigvecs = eig.vectors[:, 1:k]
+    # Normalize rows to unit length (optional but often helpful)
+    for i in 1:N
+        norm_val = norm(eigvecs[i, :])
+        if norm_val > 1e-10
+            eigvecs[i, :] ./= norm_val
+        end
+    end
+    # Cluster in the embedded space using k-means
+    result = kmeans(eigvecs', k)
+    
+    return assignments(result), eigvecs, L
+end
+function reorder_mat_by_cluster(clusters, mat)
+    ordered_indices = Int64[]
+    for cl in sort(unique(clusters))
+        append!(ordered_indices, findall(clusters .== cl))
+    end
+    # Create mapping from old index to new index
+    index_mapping = Dict{Int, Int}()
+    for (new_idx, old_idx) in enumerate(ordered_indices)
+        index_mapping[old_idx] = new_idx
+    end
+    # Create the reordered matrix
+    n = size(mat, 1)
+    reordered_mat = zeros(eltype(mat), n, n)
+    for i in 1:n
+        for j in 1:n
+            old_i = ordered_indices[i]
+            old_j = ordered_indices[j]
+            reordered_mat[i, j] = mat[old_i, old_j]
+        end
+    end
+    return reordered_mat
+end
+function find_k_silhouette(W::Matrix{Float64}; max_k=10, method=:signed_sym)
+    silhouette_scores = Float64[]
+    for k in 2:max_k
+        clusters, embedding = spectral_clustering_signed(W, k, method=method)
+        # Compute silhouette score
+        # Use the embedding space for distance calculations
+        dists = pairwise(Euclidean(), embedding', dims=2)
+        sil = silhouettes(clusters, dists)
+        avg_sil = mean(sil)
+        push!(silhouette_scores, avg_sil)
+        println("k=$k: silhouette = $avg_sil")
+    end
+    k_optimal = argmax(silhouette_scores) + 1  # +1 because we start at k=2
+    return k_optimal, silhouette_scores
+end
+
+mothi = 2
+n_good = good_neuron_dict[newmoths[mothi]][1]
+thismat = matlist[mothi][1:n_good, 1:n_good] # just use good neurons, not MUA
+find_k_silhouette(thismat)
+
+clusters, embedding, L = spectral_clustering_signed(thismat, 2, method=:signed_sym)
+
+colrange = [-maximum(maximum(x) for x in matlist), maximum(maximum(x) for x in matlist)]
+# for (axi,axj,moth,mat) in Iterators.zip(repeat(1:2, inner=3), repeat(1:3, 2), newmoths, matlist)
+f = Figure()
+ax = Axis(f[1,1])
+heatmap!(ax, reorder_mat_by_cluster(clusters, thismat), colormap=:seismic, colorrange=colrange)
+inc = 0
+for cli in sort(unique(clusters))
+    n_neurons = sum(clusters .== cli)
+    bracket!(ax, inc + 1, 0, inc + n_neurons, 0,
+        text = string(cli),
+        orientation = :up,
+        textoffset = 10, # Distance of text from bracket
+        fontsize = 12
+    )
+    inc += n_neurons
+end
+
+f
+
+##
+for mothi in 1:length(moths)
+    n_good = good_neuron_dict[newmoths[mothi]][1]
+    thismat = matlist[mothi][1:n_good, 1:n_good] # just use good neurons, not MUA
+    println("Moth $(mothi) -----------------")
+    find_k_silhouette(thismat)
+end
+
+## Look for triplet cliques
+# thismat = matlist[5]
+for (mothi,thismat) in enumerate(matlist)
+    println("Moth $(mothi) --------------------------------------------------------")
+
+    indices = sortperm(vec(thismat), rev=true)
+    cart_indices = CartesianIndices(thismat)[indices][1:2:end]
+
+    in_thresh = 0.8
+    indrange = collect(1:size(thismat,1))
+    for j in indrange
+        maxind = cart_indices[j]
+        maxval = thismat[maxind]
+        cluster_inds = []
+        v1gap, v2gap = [], []
+        for i in setdiff(indrange, [maxind[1], maxind[2]])
+            if (thismat[i,maxind[1]] >= maxval * in_thresh) && (thismat[i,maxind[2]] >= maxval * in_thresh)
+                append!(cluster_inds, i)
+                println("Triplet found: ($(i), $(maxind[1]), $(maxind[2])), max info = $(maxval)")
+            end
+            append!(v1gap, thismat[i,maxind[1]] / maxval)
+            append!(v2gap, thismat[i,maxind[2]] / maxval)
+        end
+    end
+end
+
+##
+
+function reorder_mat(mat, order)
+    # Create mapping from old index to new index
+    index_mapping = Dict{Int, Int}()
+    for (new_idx, old_idx) in enumerate(order)
+        index_mapping[old_idx] = new_idx
+    end
+    # Create the reordered matrix
+    n = size(mat, 1)
+    reordered_mat = zeros(eltype(mat), n, n)
+    for i in 1:n
+        for j in 1:n
+            old_i = order[i]
+            old_j = order[j]
+            reordered_mat[i, j] = mat[old_i, old_j]
+        end
+    end
+    return reordered_mat
+end
+
+mothi = 4
+
+n_good = good_neuron_dict[newmoths[mothi]][1]
+original_mat = matlist[mothi][1:n_good, 1:n_good]
+thismat = copy(original_mat)
+colrange = [-maximum(maximum(x) for x in matlist), maximum(maximum(x) for x in matlist)]
+# Transform from weight to distance matrices in a few different ways
+Smax, Rmax = maximum(thismat), minimum(thismat)
+# thismat = 1 ./ (thismat .+ abs(minimum(thismat)) .+ eps())
+D_syn = (Smax .- thismat) ./ (Smax + Rmax)
+D_red = (Smax .+ thismat) ./ (Smax - Rmax)
+D_U = 1 .- abs.(thismat) ./ maximum(abs.(thismat))
+D_syn[diagind(D_syn)] .= 0.0
+D_red[diagind(D_red)] .= 0.0
+D_U[diagind(D_U)] .= 0.0
+
+f = Figure()
+
+for (D, clustname, i) in Iterators.zip([D_red, D_syn, D_U], ["Redundancy", "Synergy", "U curve"], [1,2,3])
+    clust = hclust(D, linkage=:complete)
+    nodes = Makie.hcl_nodes(clust) # this is an undocumented internal function
+
+    axd = Axis(f[1,i], title=clustname)
+    axh = Axis(f[2,i])
+    dendrogram!(axd, nodes)
+    heatmap!(axh, reorder_mat(original_mat, clust.order), colormap=:seismic, colorrange=colrange)
+
+    hidedecorations!(axd)
+    hidedecorations!(axd)
+end
+rowsize!(f.layout, 1, Relative(1/4))
+f
+
 
 ##
 ii, mean_mi, mi1, mi2, mlist = Float64[], Float64[], Float64[], Float64[], []
