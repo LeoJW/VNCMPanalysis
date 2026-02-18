@@ -31,20 +31,33 @@ function read_precision_kinematics_file!(df, file, task)
     append!(df, thisdf)
 end
 
-function read_run_file!(df, file, task)
+function read_run_file!(df, file; look_for_subset=false)
     precision_levels = h5read(joinpath(data_dir, file), "dict_0")
     precision_curves = h5read(joinpath(data_dir, file), "dict_1")
     precision_noise_curves = h5read(joinpath(data_dir, file), "dict_2")
     params = h5read(joinpath(data_dir, file), "dict_3")
     embed_mi = h5read(joinpath(data_dir, file), "dict_4")
+    if look_for_subset
+        subsets = h5read(joinpath(data_dir, file), "dict_5")
+        mi_subsets = h5read(joinpath(data_dir, file), "dict_6")
+    end
     # Construct dataframe
     first_row = split(first(keys(precision_levels)), "_")
-    names = vcat(first_row[1:2:end], ["mi", "precision", "precision_noise", "precision_curve", "precision_noise_curve", "precision_levels", "embed_mi"])
-    is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
-    types = vcat(
-        [x ? Float64 : String for x in is_numeric], 
-        Float64, Float64, Float64, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}
-    )
+    if look_for_subset
+        names = vcat(first_row[1:2:end], ["mi", "precision", "precision_noise", "precision_curve", "precision_noise_curve", "precision_levels", "embed_mi", "subset", "mi_subset"])
+        is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+        types = vcat(
+            [x ? Float64 : String for x in is_numeric], 
+            Float64, Float64, Float64, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}
+        )
+    else
+        names = vcat(first_row[1:2:end], ["mi", "precision", "precision_noise", "precision_curve", "precision_noise_curve", "precision_levels", "embed_mi"])
+        is_numeric = vcat([tryparse(Float64, x) !== nothing for x in first_row[2:2:end]])
+        types = vcat(
+            [x ? Float64 : String for x in is_numeric], 
+            Float64, Float64, Float64, Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}
+        )
+    end
     thisdf = DataFrame(Dict(names[i] => types[i][] for i in eachindex(names)))
     thisdf = thisdf[!, Symbol.(names)] # Undo name sorting
     for key in keys(precision_levels)
@@ -56,16 +69,31 @@ function read_run_file!(df, file, task)
         else
             prec_added_noise = find_precision_noise_threshold(precision_levels[key] .* 1000, precision_noise_curves[key])
         end
-        push!(thisdf, vcat(
-            vals,
-            precision_curves[key][1] .* log2(exp(1)), # mi
-            find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]), # precision
-            prec_added_noise, # precision_noise
-            [precision_curves[key] .* log2(exp(1))], # precision_curve
-            [vec(mean(precision_noise_curves[key], dims=1)) .* log2(exp(1))], # precision_noise_curve
-            [precision_levels[key] .* 1000], # precision_levels
-            [embed_mi[key]] # embedding dimensionality
-        ))
+        if (!).(look_for_subset)
+            push!(thisdf, vcat(
+                vals,
+                precision_curves[key][1] .* log2(exp(1)), # mi
+                find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]), # precision
+                prec_added_noise, # precision_noise
+                [precision_curves[key] .* log2(exp(1))], # precision_curve
+                [vec(mean(precision_noise_curves[key], dims=1)) .* log2(exp(1))], # precision_noise_curve
+                [precision_levels[key] .* 1000], # precision_levels
+                [embed_mi[key]] # embedding dimensionality
+            ))
+        else
+            push!(thisdf, vcat(
+                vals,
+                precision_curves[key][1] .* log2(exp(1)), # mi
+                find_precision_threshold(precision_levels[key] .* 1000, precision_curves[key][2:end]), # precision
+                prec_added_noise, # precision_noise
+                [precision_curves[key] .* log2(exp(1))], # precision_curve
+                [vec(mean(precision_noise_curves[key], dims=1)) .* log2(exp(1))], # precision_noise_curve
+                [precision_levels[key] .* 1000], # precision_levels
+                [embed_mi[key]], # embedding dimensionality
+                [subsets[key]],
+                [mi_subsets[key] .* log2(exp(1))]
+            ))
+        end
     end
     append!(df, thisdf)
 end
