@@ -89,22 +89,13 @@ function phase_entropy(phases::Vector{<:Real}; nbins=20, normalized=true)
     return (; H = H_norm, H_raw = H, H_max, nbins)
 end
 
-
-# Get data
-mothi = 2
-ref_muscle = "ldlm"
-histfigs = []
-dfp = DataFrame()
-# for mothi in eachindex(moths)
-    thismoth = replace(moths[mothi], r"-1$" => "_1")
+function get_phase_dict(moth)
+    thismoth = replace(moth, r"-1$" => "_1")
     spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
     labels = npzread(joinpath(data_dir, "..", thismoth * "_labels.npz"))
-    bouts = npzread(joinpath(data_dir, "..", thismoth * "_bouts.npz"))
 
     # Get neuron keys
     neurons = [k for k in keys(spikes) if labels[k] != 2]
-    neurons_good = [k for k in keys(spikes) if labels[k] == 1]
-    neurons_mua = [k for k in keys(spikes) if labels[k] == 0]
     muscles = [k for k in keys(spikes) if labels[k] == 2]
 
     # Extract DLM phase, put all neuron spikes on that phase
@@ -139,6 +130,17 @@ dfp = DataFrame()
         phase = phase[length_mask]
         muscle_phase_dict[muscle] = phase
     end
+    return phase_dict, wblen_dict, muscle_phase_dict
+end
+
+
+# Get data
+mothi = 2
+ref_muscle = "ldlm"
+histfigs = []
+dfp = DataFrame()
+for mothi in eachindex(moths)
+    phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[mothi])
 
 
     # Get MI of neurons (This df is from main_figures.jl script)
@@ -209,16 +211,53 @@ dfp = DataFrame()
     rowgap!(f.layout, 0)
     colgap!(f.layout, 0)
     push!(histfigs, f)
-# end
+end
 display(f)
 
 ## ------------ Read circular stats from python
 
 dfc = DataFrame(Arrow.Table(joinpath(data_dir, "..", "circular_stats.arrow")))
 disallowmissing!(dfc)
+vector_cols = ["movm_mu", "kappa", "movm_rvec", "movm_BIC", "mokj_mu", "gamma", "rho", "lam", "mokj_BIC"]
 # Clean up types
-dfc.mu = [convert(Vector{Float64}, v) for v in dfc.mu]
-dfc.kappa = [convert(Vector{Float64}, v) for v in dfc.kappa]
+for col in vector_cols
+    dfc[!,col] = [convert(Vector{Float64}, v) for v in dfc[!,col]]
+end
+transform!(dfc, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth)
+
+## False Discovery rate correction
+α = 0.05
+moth_pval_threshold = Dict()
+# Example plot for omnibus test
+f = Figure()
+for (i,dt) in enumerate(groupby(@subset(dfc, :omnibus_p .!= 0), :moth))
+    ax = Axis(f[i,1], title=dt.moth[1])
+    p = sort(dt.omnibus_p)
+    mask = p .<= (collect(1:nrow(dt)) / nrow(dt) * α)
+    lastind = findlast(mask)
+    moth_pval_threshold[dt.moth[1]] = p[lastind] + (p[lastind+1] - p[lastind])/2
+    scatterlines!(ax, collect(1:nrow(dt))[mask], p[mask], color=Makie.wong_colors()[1])
+    scatterlines!(ax, collect(1:nrow(dt))[(!).(mask)], p[(!).(mask)], color=:red)
+end
+f
+# Run correction for all tests
+test_vars = [:kuiper_p, :watson_p, :rao_p, :omnibus_p]
+for test_var in test_vars
+    for (i,dt) in enumerate(groupby(dfc, :moth))
+        p = sort(dt[!,test_var])
+        nonzero = findall(p .!= 0)
+        lastind = findlast(p[nonzero] .<= (collect(1:length(p[nonzero])) / length(p[nonzero]) * α))
+        lastind = min(length(p[nonzero])-1, lastind)
+        moth_pval_threshold = p[nonzero][lastind] + (p[nonzero][lastind+1] - p[nonzero][lastind]) / 2
+        dt[!,string(test_var) * "_signif"] = dt[!,test_var] .< moth_pval_threshold
+    end
+end
+
+##
+testdf = DataFrame(A=[1,1,1,2,2,2,3,3,3], B=[1,2,3,4,5,6,7,8,9])
+for gdf in groupby(testdf, :A)
+    gdf.B = gdf.A[1] .* gdf.B
+end
 
 ##
 dfcv = @subset(dfc, :mean .!= 0.0)
@@ -233,8 +272,71 @@ for (i,moth) in enumerate(moths)
     end
 end
 
-## Look at all histograms where n_clusters greater than 
-f
+## ---------------- Circular histograms with Von Mises phases plotted on top
+
+mothi = 2
+phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[mothi])
+dfmain = @pipe df |> 
+        @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
+        @subset(_, :moth .== replace(moths[mothi], r"_1$" => "-1")) |> 
+        @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi))
+sort!(dfmain, [order(:label), order(:mi)])
+
+# Max kappa value
+max_kappa = maximum(map(maximum, @subset(dfc, :moth .== replace(moths[mothi], r"_1$" => "-1")).gamma))
+L, a = 0.1, 0.4
+
+n_neur = length(neurons)
+f = Figure()
+# Fill good row
+for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "good")))
+    neur = string(round(Int, row.neuron))
+    thisax = PolarAxis(
+        f[1, i],
+        title = neur * " " * string(round(row.mi, digits=3))
+    )
+    hiderdecorations!(thisax, grid=false, minorgrid=false)
+    hidethetadecorations!(thisax, grid=false, minorgrid=false)
+    density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+    hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
+    
+    # # Compute histogram again just to get height 
+    h = fit(Histogram, phase_dict[neur] .* 2 * pi)
+    max_r = maximum(normalize(h, mode=:pdf).weights)
+    dfc_row = @subset(dfc, :neuron .== round(Int, row.neuron), :moth .== row.moth)[1,:]
+    for j in 1:dfc_row.movm_n_clusters
+        # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, dfc_row.kappa[j] / max_kappa * 2 * max_r], color=Makie.wong_colors()[j])
+        # remap_kappa = L + (1-L) * tanh(a * dfc_row.kappa[j]) 
+        # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, remap_kappa * max_r], color=Makie.wong_colors()[j])
+        lines!(thisax, repeat([dfc_row.movm_mu[j]], 2), [0, dfc_row.movm_rvec[j]], color=Makie.wong_colors()[j])
+    end
+end
+# Fill MUA row
+for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "mua")))
+    neur = string(round(Int, row.neuron))
+    thisax = PolarAxis(
+        f[2, i],
+        title = neur * " " * string(round(row.mi, digits=3))
+    )
+    hiderdecorations!(thisax, grid=false, minorgrid=false)
+    hidethetadecorations!(thisax, grid=false, minorgrid=false)
+    density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+    hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
+
+    # # Compute histogram again just to get height 
+    # h = fit(Histogram, phase_dict[neur] .* 2 * pi)
+    # max_r = maximum(normalize(h, mode=:pdf).weights)
+    # dfc_row = @subset(dfc, :neuron .== round(Int, row.neuron), :moth .== row.moth)[1,:]
+    # for j in eachindex(dfc_row.mokj_n_clusters)
+    #     # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, dfc_row.kappa[j] / max_kappa * 2 * max_r], color=Makie.wong_colors()[j])
+    #     # remap_kappa = L + (1-L) * tanh(a * dfc_row.kappa[j]) 
+    #     # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, remap_kappa * max_r], color=Makie.wong_colors()[j])
+    #     lines!(thisax, repeat([dfc_row.mokj_mu[j]], 2), [0, dfc_row.gamma], color=Makie.wong_colors()[j])
+    # end
+end
+rowgap!(f.layout, 0)
+colgap!(f.layout, 0)
+display(f)
 
 ##
 f = Figure()
@@ -262,13 +364,13 @@ f
 
 ## --------- Condition distribution on wblen
 # row = @subset(dfp, :moth .== "2025-02-25", :neuron .== "31") # 31
-# row = @subset(dfp, :moth .== "2025-02-25-1", :neuron .== "18")
+row = @subset(dfp, :moth .== "2025-02-25-1", :neuron .== "4")
 # row = @subset(dfp, :moth .== "2025-03-11", :neuron .== "16") # 11, 16, 
-row = @subset(dfp, :moth .== "2025-03-12-1", :neuron .== "33")
+# row = @subset(dfp, :moth .== "2025-03-12-1", :neuron .== "33")
 
-nwb_bin = 5
-wblen_range = [minimum(row.wblen), maximum(row.wblen)]
-# wblen_range = [minimum(row.wblen), 62]
+nwb_bin = 4
+# wblen_range = [minimum(row.wblen), maximum(row.wblen)]
+wblen_range = [58, 70]
 bins = LinRange(wblen_range[1], wblen_range[2], nwb_bin)
 
 f = Figure()
