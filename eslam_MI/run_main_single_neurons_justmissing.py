@@ -226,7 +226,7 @@ if __name__ == '__main__':
     ]
     
     # Split into chunks for n tasks, then chunks for n processes
-    inds = np.concatenate(np.array_split(np.arange(len(main_iterator)), 6)[0:2]) # Re-running tasks 0-1 out of 6 on more tasks b/c they timed out
+    inds = np.arange(len(main_iterator))
     task_chunk_inds = np.array_split(inds, n_tasks)[task_id]
     chunk_inds = np.array_split(task_chunk_inds, n_processes)
     chunks = [(ii,[main_iterator[i] for i in inds]) for ii,inds in enumerate(chunk_inds)]
