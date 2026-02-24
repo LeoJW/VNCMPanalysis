@@ -4,6 +4,7 @@ using NPZ
 using DelimitedFiles
 using Statistics
 using StatsBase # Mainly for rle
+using Arrow
 using GLM
 using CairoMakie
 using GLMakie
@@ -71,7 +72,8 @@ muscle_colors = [
 muscle_colors_dict = Dict(muscle_colors)
 fsamp = 30000
 # wb_duration_thresholds = (35, 80) # ms ldlm
-wb_duration_thresholds = (50, 70) # ms ldlm
+# wb_duration_thresholds = (50, 70) # ms ldlm
+wb_duration_thresholds = (32.5, 100) # ms ldlm
 
 function phase_entropy(phases::Vector{<:Real}; nbins=20, normalized=true)
     # Histogram: count spikes per bin
@@ -134,14 +136,20 @@ function get_phase_dict(moth)
 end
 
 
+function gKJ(θ; μ=pi, γ=0.5, ρ=0, λ=0)
+    γbar = (1-ρ^2)/(2*(1-ρ*cos(λ)))
+    πprime = γ/γbar
+    return πprime / (2*π) * (1 + 2*γbar*(cos(θ-μ)-ρ*cos(λ))/(1 + ρ^2 - 2*ρ*cos(θ-μ-γ))) + (1-πprime)/(2*π)
+end
+
+
 # Get data
-mothi = 2
+mothi = 4
 ref_muscle = "ldlm"
 histfigs = []
 dfp = DataFrame()
 for mothi in eachindex(moths)
     phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[mothi])
-
 
     # Get MI of neurons (This df is from main_figures.jl script)
     dfmain = @pipe df |> 
@@ -150,36 +158,19 @@ for mothi in eachindex(moths)
         @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi))
     sort!(dfmain, [order(:label), order(:mi)])
 
-    n_neur = length(neurons)
+    n_neur = length(keys(phase_dict))
     f = Figure()
     # Fill good row
     for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "good")))
         neur = string(round(Int, row.neuron))
-        U = 0.5 * sum(abs.(diff(sort(phase_dict[neur]) .* 2 .* pi) .- (360 / (length(phase_dict[neur])-1))))
         thisax = PolarAxis(
             f[1, i],
-            # title = neur * " " * string(round(row.mi, digits=3))
-            title = neur * " " * string(round(U, digits=3))
+            title = neur * " " * string(round(row.mi, digits=3))
         )
         hiderdecorations!(thisax, grid=false, minorgrid=false)
         hidethetadecorations!(thisax, grid=false, minorgrid=false)
-        density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
-        hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
-        
-        C = mean(cos.(phase_dict[neur] .* 2 * pi))
-        S = mean(sin.(phase_dict[neur] .* 2 * pi))
-        append!(dfp, Dict(
-            :moth => row.moth, 
-            :neuron => neur,
-            :mi => row.mi,
-            :label => row.label,
-            :direction => row.direction,
-            :R => sqrt.(C^2 + S^2),
-            :μ => atan(S, C),
-            :H => phase_entropy(phase_dict[neur], nbins=100).H,
-            :phase => phase_dict[neur],
-            :wblen => wblen_dict[neur]
-        ))
+        # density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+        hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=ceil(Int, sqrt(length(phase_dict[neur]))))
     end
     # Fill MUA row
     for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "mua")))
@@ -190,23 +181,8 @@ for mothi in eachindex(moths)
         )
         hiderdecorations!(thisax, grid=false, minorgrid=false)
         hidethetadecorations!(thisax, grid=false, minorgrid=false)
-        density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
-        hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
-
-        C = mean(cos.(phase_dict[neur] .* 2 * pi))
-        S = mean(sin.(phase_dict[neur] .* 2 * pi))
-        append!(dfp, Dict(
-            :moth => row.moth, 
-            :neuron => neur,
-            :mi => row.mi,
-            :label => row.label,
-            :direction => row.direction,
-            :R => sqrt.(C^2 + S^2),
-            :μ => atan(S, C),
-            :H => phase_entropy(phase_dict[neur], nbins=100).H,
-            :phase => phase_dict[neur],
-            :wblen => wblen_dict[neur]
-        ))
+        # density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+        hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=ceil(Int, sqrt(length(phase_dict[neur]))))
     end
     rowgap!(f.layout, 0)
     colgap!(f.layout, 0)
@@ -254,6 +230,12 @@ for test_var in test_vars
 end
 
 ##
+
+@pipe dfc |> 
+groupby(_, [:moth]) |> 
+combine(_, :omnibus_p_signif => mean, :rao_p_signif => mean, :kuiper_p_signif => mean)
+
+##
 testdf = DataFrame(A=[1,1,1,2,2,2,3,3,3], B=[1,2,3,4,5,6,7,8,9])
 for gdf in groupby(testdf, :A)
     gdf.B = gdf.A[1] .* gdf.B
@@ -274,7 +256,7 @@ end
 
 ## ---------------- Circular histograms with Von Mises phases plotted on top
 
-mothi = 2
+mothi = 3
 phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[mothi])
 dfmain = @pipe df |> 
         @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
@@ -297,19 +279,19 @@ for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "good")))
     )
     hiderdecorations!(thisax, grid=false, minorgrid=false)
     hidethetadecorations!(thisax, grid=false, minorgrid=false)
-    density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+    # density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
     hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
     
     # # Compute histogram again just to get height 
     h = fit(Histogram, phase_dict[neur] .* 2 * pi)
-    max_r = maximum(normalize(h, mode=:pdf).weights)
+    max_r = maximum(LinearAlgebra.normalize(h, mode=:pdf).weights)
     dfc_row = @subset(dfc, :neuron .== round(Int, row.neuron), :moth .== row.moth)[1,:]
-    for j in 1:dfc_row.movm_n_clusters
-        # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, dfc_row.kappa[j] / max_kappa * 2 * max_r], color=Makie.wong_colors()[j])
-        # remap_kappa = L + (1-L) * tanh(a * dfc_row.kappa[j]) 
-        # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, remap_kappa * max_r], color=Makie.wong_colors()[j])
-        lines!(thisax, repeat([dfc_row.movm_mu[j]], 2), [0, dfc_row.movm_rvec[j]], color=Makie.wong_colors()[j])
+    for j in 1:dfc_row.mokj_n_clusters
+        lines!(thisax, repeat([dfc_row.mokj_mu[j]], 2), [0, dfc_row.gamma[j]], color=Makie.wong_colors()[j])
     end
+    # for j in 1:dfc_row.movm_n_clusters
+    #     lines!(thisax, repeat([dfc_row.movm_mu[j]], 2), [0, dfc_row.movm_rvec[j] * max_r], color=Makie.wong_colors()[j])
+    # end
 end
 # Fill MUA row
 for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "mua")))
@@ -320,18 +302,18 @@ for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "mua")))
     )
     hiderdecorations!(thisax, grid=false, minorgrid=false)
     hidethetadecorations!(thisax, grid=false, minorgrid=false)
-    density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
+    # density!(thisax, phase_dict[neur] .* 2 * pi)#, normalization=:pdf, bins=100)
     hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=100, color=:grey)
 
-    # # Compute histogram again just to get height 
-    # h = fit(Histogram, phase_dict[neur] .* 2 * pi)
-    # max_r = maximum(normalize(h, mode=:pdf).weights)
-    # dfc_row = @subset(dfc, :neuron .== round(Int, row.neuron), :moth .== row.moth)[1,:]
-    # for j in eachindex(dfc_row.mokj_n_clusters)
-    #     # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, dfc_row.kappa[j] / max_kappa * 2 * max_r], color=Makie.wong_colors()[j])
-    #     # remap_kappa = L + (1-L) * tanh(a * dfc_row.kappa[j]) 
-    #     # lines!(thisax, repeat([dfc_row.mu[j]], 2), [0, remap_kappa * max_r], color=Makie.wong_colors()[j])
-    #     lines!(thisax, repeat([dfc_row.mokj_mu[j]], 2), [0, dfc_row.gamma], color=Makie.wong_colors()[j])
+    # Compute histogram again just to get height 
+    h = fit(Histogram, phase_dict[neur] .* 2 * pi)
+    max_r = maximum(LinearAlgebra.normalize(h, mode=:pdf).weights)
+    dfc_row = @subset(dfc, :neuron .== round(Int, row.neuron), :moth .== row.moth)[1,:]
+    for j in 1:dfc_row.mokj_n_clusters
+        lines!(thisax, repeat([dfc_row.mokj_mu[j]], 2), [0, dfc_row.gamma[j]], color=Makie.wong_colors()[j])
+    end
+    # for j in 1:dfc_row.movm_n_clusters
+    #     lines!(thisax, repeat([dfc_row.movm_mu[j]], 2), [0, dfc_row.movm_rvec[j] * max_r], color=Makie.wong_colors()[j])
     # end
 end
 rowgap!(f.layout, 0)
@@ -340,26 +322,17 @@ display(f)
 
 ##
 f = Figure()
-ax = Axis(f[1,1], xlabel="H (lower is more phasic)", ylabel="Mutual info to Motor Program (bits/s)")
-scatter!(ax, dfp.H, dfp.mi)
-f
-
-f = Figure()
-ax = Axis(f[1,1], xlabel="R (Rayleigh test for circular uniformity, higher is more phasic)", ylabel="Mutual info to Motor Program (bits/s)")
-scatter!(ax, dfp.R, dfp.mi)
-f
-
-##
-f = Figure()
-ax = PolarAxis(f[1,1])
-# coldict = Dict("good" => Makie.wong_colors()[1], "mua" => Makie.wong_colors()[2])
-# coldict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[1], "uncertain" => Makie.wong_colors()[3])
-coldict = Dict(m => Makie.wong_colors()[i] for (i,m) in enumerate(unique(mothvec)))
-for i in eachindex(R)
-    # lines!(ax, [μ[i], μ[i]], [0, R[i]], color=log(mi[i]), colorrange=(0, maximum(log.(mi))))
-    lines!(ax, [μ[i], μ[i]], [0, R[i]], color=coldict[mothvec[i]])
+for (i,m) in enumerate(moths)
+    ax = PolarAxis(f[1,i], title=m)
+    for row in eachrow(@subset(dfc, :moth .== replace(m, r"_1$" => "-1")))
+        # for j in 1:row.mokj_n_clusters
+        #     lines!(ax, [row.mokj_mu[j], row.mokj_mu[j]], [0, row.gamma[j]], color=Makie.wong_colors()[j])
+        # end
+        for j in 1:row.movm_n_clusters
+            lines!(ax, [row.movm_mu[j], row.movm_mu[j]], [0, row.movm_rvec[j]], color=Makie.wong_colors()[j])
+        end
+    end
 end
-# Colorbar(f[2,1], vertical=false, limits=(0, maximum(log.(mi))))
 f
 
 ## --------- Condition distribution on wblen
@@ -407,3 +380,130 @@ f
 # 2025-03-11 neuron 11
 
 
+
+
+##
+
+f = Figure()
+ax = [Axis(f[i,1]) for i in eachindex(moths)]
+
+for i in eachindex(moths)
+    thismoth = replace(moths[i], r"-1$" => "_1")
+    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+    labels = npzread(joinpath(data_dir, "..", thismoth * "_labels.npz"))
+
+    # Get neuron keys
+    neurons = [k for k in keys(spikes) if labels[k] != 2]
+    muscles = [k for k in keys(spikes) if labels[k] == 2]
+
+    # Extract DLM phase, put all neuron spikes on that phase
+    diffvec = diff(spikes[ref_muscle]) ./ fsamp .* 1000 # units of ms
+    # mask = (diffvec .> wb_duration_thresholds[1]) .&& (diffvec .< wb_duration_thresholds[2])
+    # start_inds = spikes[ref_muscle][findall(vcat(false, mask))]
+    # wblen = vcat(diff(start_inds), 10000)
+    scatter!(ax[i], spikes[ref_muscle][1:end-1], diffvec)
+    hlines!(ax[i], 32.5)
+    ylims!(ax[i], 0, 300)
+end
+f
+
+##
+
+thismoth = replace(moths[2], r"-1$" => "_1")
+spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+labels = npzread(joinpath(data_dir, "..", thismoth * "_labels.npz"))
+# Get neuron keys
+neurons = [k for k in keys(spikes) if labels[k] != 2]
+muscles = [k for k in keys(spikes) if labels[k] == 2]
+
+f = Figure()
+ax = Axis(f[1,1])
+vlines!(ax, spikes["ldlm"] ./ fsamp, ymin=0, ymax=0.5)
+vlines!(ax, spikes["18"] ./ fsamp, ymin=0.5, ymax=1.0)
+f
+
+##
+
+row = first(eachrow(dfc))
+
+function gKJ(θ; μ=pi, γ=0.5, ρ=0, λ=0)
+    γbar = (1-ρ^2)/(2*(1-ρ*cos(λ)))
+    πprime = γ/γbar
+    return πprime / (2*π) * (1 + 2*γbar*(cos(θ-μ)-ρ*cos(λ))/(1 + ρ^2 - 2*ρ*cos(θ-μ-γ))) + (1-πprime)/(2*π)
+end
+function gKJ(θ::Vector{Float64}, μ::Vector{Float64}, γ::Vector{Float64}, ρ::Vector{Float64}, λ::Vector{Float64})
+    for k in eachindex(μ)
+        γbar = (1-ρ^2)/(2*(1-ρ*cos(λ)))
+        πprime = γ/γbar
+
+    end
+    return πprime / (2*π) * (1 + 2*γbar*(cos(θ-μ)-ρ*cos(λ))/(1 + ρ^2 - 2*ρ*cos(θ-μ-γ))) + (1-πprime)/(2*π)
+end
+
+
+θrange = range(0, 2*π, 1000)
+
+f = Figure()
+ax = PolarAxis(f[1,1])
+lines!(ax, θrange, gKJ.(θrange; μ=row.mokj_mu[1], γ=row.gamma[1], ρ=row.rho[1], λ=row.lam[1]))
+f
+
+## Try out what motor program would look like on polar plot
+muscle_colors = [
+    "lax" => "#94D63C", "rax" => "#6A992A",
+    "lba" => "#AE3FC3", "rba" => "#7D2D8C",
+    "lsa" => "#FFBE24", "rsa" => "#E7AC1E",
+    "ldvm"=> "#66AFE6", "rdvm"=> "#2A4A78",
+    #"ldlm"=> "#E87D7A", "rdlm"=> "#C14434"
+]
+phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[1])
+
+f = Figure()
+ax = PolarAxis(f[1,1], radius_at_origin=-1)
+ax2 = PolarAxis(f[1,2], radius_at_origin=-1)
+hiderdecorations!(ax)
+hidespines!(ax)
+hiderdecorations!(ax2)
+hidespines!(ax2)
+for i in eachindex(muscle_colors)
+    if !(muscle_colors[i][1] in keys(muscle_phase_dict))
+        continue
+    end
+    hist!(ax, muscle_phase_dict[muscle_colors[i][1]] .* 2*pi, 
+        bins=90, normalization=:pdf,
+        color=(muscle_colors[i][2], 0.5)
+    )
+    # hist!(ax2, muscle_phase_dict[muscle_colors[i][1]] .* 2*pi, 
+    #     bins=90, normalization=:pdf,
+    #     color=(muscle_colors[i][2], 0.5)
+    # )
+end
+hist!(ax, phase_dict["54"] .* 2*pi, bins=100, normalization=:pdf, offset=-1)
+hist!(ax2, phase_dict["27"] .* 2*pi, bins=100, normalization=:pdf, offset=-1)
+
+lines!(ax, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=8)
+lines!(ax2, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=8)
+f
+
+##
+neur = "9"
+thismoth = replace(moths[3], r"-1$" => "_1")
+
+# spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+
+discrete_vec = zeros(spikes[neur][end]+10)
+discrete_vec[spikes[neur]] .= 1
+
+gauss_kernel = exp.(- range(-3, 3, round(Int, 0.001 * fsamp)) .^2) # 1ms width gaussian
+conv_vec = conv(discrete_vec, gauss_kernel)
+
+# pxx = periodogram(discrete_vec, fs=fsamp)
+pxx = welch_pgram(discrete_vec, fsamp * 4; fs=fsamp)
+pxx_conv = welch_pgram(conv_vec, fsamp * 4; fs=fsamp)
+
+fi = findfirst(pxx.freq .> 1)
+li = findlast(pxx.freq .< 200)
+
+f, ax, ln = lines(pxx.freq[fi:li], pxx.power[fi:li] ./ maximum(pxx.power[fi:li]))
+lines!(ax, pxx_conv.freq[fi:li], pxx_conv.power[fi:li] ./ maximum(pxx_conv.power[fi:li]))
+f
