@@ -4,6 +4,7 @@ using NPZ
 using DelimitedFiles
 using Statistics
 using StatsBase # Mainly for rle
+using DSP
 using Arrow
 using GLM
 using CairoMakie
@@ -163,9 +164,11 @@ for mothi in eachindex(moths)
     # Fill good row
     for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "good")))
         neur = string(round(Int, row.neuron))
+        # thisdfc = @subset(dfc, :moth .== replace(moths[mothi], r"_1$" => "-1"), :neuron .== row.neuron)
         thisax = PolarAxis(
             f[1, i],
             title = neur * " " * string(round(row.mi, digits=3))
+            # title = neur * " " * string(round(log10(thisdfc[1,:peak_power]), digits=3))
         )
         hiderdecorations!(thisax, grid=false, minorgrid=false)
         hidethetadecorations!(thisax, grid=false, minorgrid=false)
@@ -175,9 +178,11 @@ for mothi in eachindex(moths)
     # Fill MUA row
     for (i,row) in enumerate(eachrow(@subset(dfmain, :label .== "mua")))
         neur = string(round(Int, row.neuron))
+        # thisdfc = @subset(dfc, :moth .== replace(moths[mothi], r"_1$" => "-1"), :neuron .== row.neuron)
         thisax = PolarAxis(
             f[2, i],
             title = neur * " " * string(round(row.mi, digits=3))
+            # title = neur * " " * string(round(log10(thisdfc[1,:peak_power]), digits=3))
         )
         hiderdecorations!(thisax, grid=false, minorgrid=false)
         hidethetadecorations!(thisax, grid=false, minorgrid=false)
@@ -188,7 +193,7 @@ for mothi in eachindex(moths)
     colgap!(f.layout, 0)
     push!(histfigs, f)
 end
-display(f)
+display(histfigs[1])
 
 ## ------------ Read circular stats from python
 
@@ -229,17 +234,39 @@ for test_var in test_vars
     end
 end
 
-##
-
+# Some summary stats
 @pipe dfc |> 
 groupby(_, [:moth]) |> 
 combine(_, :omnibus_p_signif => mean, :rao_p_signif => mean, :kuiper_p_signif => mean)
 
-##
-testdf = DataFrame(A=[1,1,1,2,2,2,3,3,3], B=[1,2,3,4,5,6,7,8,9])
-for gdf in groupby(testdf, :A)
-    gdf.B = gdf.A[1] .* gdf.B
+## ---------------- Dataframe of each neuron's power at wingbeat frequency
+wingbeat_freq_range = [12, 24] # Hz
+df_power = DataFrame()
+for moth in moths
+    thismoth = replace(moth, r"-1$" => "_1")
+    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+    labels = npzread(joinpath(data_dir, "..", thismoth * "_labels.npz"))
+    neurons = [k for k in keys(spikes) if labels[k] != 2]
+
+    for neur in neurons
+        discrete_vec = zeros(spikes[neur][end]+10)
+        discrete_vec[spikes[neur]] .= 1
+        pxx = welch_pgram(discrete_vec, fsamp * 10; fs=fsamp)
+
+        fi = findfirst(pxx.freq .> wingbeat_freq_range[1])
+        li = findlast(pxx.freq .< wingbeat_freq_range[2])
+        peak = findmax(pxx.power[fi:li])
+        append!(df_power, DataFrame(
+            moth=replace(moth, r"_1$" => "-1"), 
+            neuron=parse(Int, neur),
+            peak_power=peak[1], # peak power
+            peak_freq=pxx.freq[fi:li][peak[2]], # peak freq
+            total_power=sum(pxx.power[fi:li]), # total power in range
+        ))
+    end
 end
+
+leftjoin!(dfc, df_power, on=[:moth, :neuron])
 
 ##
 dfcv = @subset(dfc, :mean .!= 0.0)
@@ -486,24 +513,17 @@ lines!(ax2, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=8)
 f
 
 ##
-neur = "9"
-thismoth = replace(moths[3], r"-1$" => "_1")
-
-# spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
-
-discrete_vec = zeros(spikes[neur][end]+10)
-discrete_vec[spikes[neur]] .= 1
-
-gauss_kernel = exp.(- range(-3, 3, round(Int, 0.001 * fsamp)) .^2) # 1ms width gaussian
-conv_vec = conv(discrete_vec, gauss_kernel)
-
-# pxx = periodogram(discrete_vec, fs=fsamp)
-pxx = welch_pgram(discrete_vec, fsamp * 4; fs=fsamp)
-pxx_conv = welch_pgram(conv_vec, fsamp * 4; fs=fsamp)
-
-fi = findfirst(pxx.freq .> 1)
-li = findlast(pxx.freq .< 200)
-
-f, ax, ln = lines(pxx.freq[fi:li], pxx.power[fi:li] ./ maximum(pxx.power[fi:li]))
-lines!(ax, pxx_conv.freq[fi:li], pxx_conv.power[fi:li] ./ maximum(pxx_conv.power[fi:li]))
+# neur = "11"
+f = Figure()
+ax = [Axis(f[i,1]) for i in eachindex(moths)]
+for (i,moth) in enumerate(moths)
+    thismoth = replace(moth, r"-1$" => "_1")
+    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+    discrete_vec = zeros(spikes["ldlm"][end]+10)
+    discrete_vec[spikes["ldlm"]] .= 1
+    pxx = welch_pgram(discrete_vec, fsamp * 10; fs=fsamp)
+    fi = findfirst(pxx.freq .> 1)
+    li = findlast(pxx.freq .< 100)
+    lines!(ax[i], pxx.freq[fi:li], pxx.power[fi:li])
+end
 f
