@@ -269,61 +269,6 @@ mapping(:window, :value,
 draw(_, facet=(; linkyaxes=:rowwise))
 
 
-## ---------------- Look at phasic properties of neurons against motor information
-@pipe df |> 
-@groupby(_, [:moth, :neuron, :muscle]) |> 
-@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
-# @subset(_, :mi .> 0, :peak_mi) |> 
-leftjoin(_, dfc, on=[:moth, :neuron]) |> 
-@subset(_, :omnibus_stat .!= 0) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:kuiper_stat, :watson_stat, color=:has_timing_info, layout=:muscle) * (visual(Scatter))# + linear())
-) |> 
-draw(_, axis=(; xscale=log10, yscale=log10))
-##
-@pipe df |> 
-@subset(_, :mi .> 0, :peak_valid_mi, :muscle .== "all") |> 
-leftjoin(_, dfc, on=[:moth, :neuron]) |> 
-@subset(_, :omnibus_stat .!= 0) |> 
-(
-AlgebraOfGraphics.data(_) *
-# mapping(:gamma, :precision, color=:direction) * (visual(Scatter))# + linear())
-(mapping(:watson_stat=>log, :precision=>log, color=:direction) * visual(Scatter) + 
-mapping(:watson_stat=>log, :precision=>log) * linear())
-) |> 
-draw(_)#, axis=(; xscale=log10, yscale=log10))
-
-##
-
-bob = @pipe df |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
-leftjoin(_, dfc, on=[:moth, :neuron]) |> 
-@subset(_, :omnibus_stat .!= 0) |> 
-combine(_, 
-    [[:kuiper_stat, :mi], [:omnibus_stat, :mi], [:watson_stat, :mi], [:rao_stat, :mi], [:peak_power, :mi], [:total_power, :mi]] 
-    .=> ((a,b) -> cor(a,b)),
-    [[:kuiper_stat, :mi], [:omnibus_stat, :mi], [:watson_stat, :mi], [:rao_stat, :mi], [:peak_power, :mi], [:total_power, :mi]] .=> ((a,b) -> cor(log.(a),log.(b))) 
-    .=> [:log_kuiper, :log_omnibus, :log_watson, :log_rao, :log_peak, :log_total])
-##
-@pipe df |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
-leftjoin(_, dfc, on=[:moth, :neuron]) |> 
-# flatten(_, [:mokj_mu, :gamma]) |> 
-# @subset(_, :mokj_n_clusters .!= 0) |> 
-flatten(_, [:movm_rvec]) |> 
-@subset(_, :movm_n_clusters .!= 0) |> 
-groupby(_, [:moth, :neuron]) |> 
-combine(_, :movm_rvec => mean, :movm_rvec => std => :movm_rvec_sd, [:mi, :direction] .=> first, renamecols=false) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:movm_rvec_sd, :mi, color=:direction) * (visual(Scatter))# + linear())
-) |> 
-draw(_)
-
-
-
 
 ## Summary stats table
 bob = @pipe df |> 
@@ -528,63 +473,6 @@ draw(plt1 + plt2,)# axis=(; xscale=log10))
 # draw(plt1, axis=(; yscale=log10))
 
 
-## Curve of most precise neuron
-# ind = argmin(@subset(df, :peak_valid_mi, :mi .> 1).precision_noise)
-# row = @subset(df, :peak_valid_mi, :mi .> 1)[ind, :]
-f = Figure()
-ax = Axis(f[1,1], xscale=log10)
-for row in eachrow(@subset(df, :peak_valid_mi, :moth .== "2025-03-11", :neuron .== 3, (!).(:single)))
-    lines!(ax, row.precision_levels, row.precision_curve[2:end], label=row.muscle)
-end
-f[1,2] = Legend(f, ax)
-f
-
-##
-@pipe df |> 
-@subset(_, :mi .> 0) |> 
-@subset(_, :peak_valid_mi, :muscle .== "all") |> 
-(
-AlgebraOfGraphics.data(_) * 
-mapping(:nspikes, :mi, color=:embed) *
-visual(Scatter)
-) |> 
-draw(_, axis=(; xscale=log10))
-
-## Single muscles, on same plot
-@pipe df |> 
-@transform(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-@subset(_, :single) |> 
-@subset(_, :mi .> 0) |> 
-@transform(_, :value = :precision .- :window) |>
-# groupby(_, [:moth, :muscle]) |> 
-# combine(_, :mi => mean => :mi, :precision => mean => :precision) |> 
-@transform(_, :side = getindex.(:muscle, 1)) |> 
-(AlgebraOfGraphics.data(_) * 
-mapping(:precision, :value, 
-    row=:moth, #col=:side,
-    color=:label
-) * visual(Scatter)
-) |> 
-draw(_, axis=(; xscale=log10))#, yscale=log10))
-
-
-## What's up with these super precise neurons?
-rows = @pipe df |> 
-@subset(_, :peak_valid_mi) |> 
-@subset(_, :direction .== "descending", :precision_noise .< 10^0.25, :mi .> 0) |> 
-eachrow(_)
-
-f = Figure()
-ax = Axis(f[1,1], xscale=log10)
-for row in rows
-    lines!(ax, row.precision_levels, row.precision_noise_curve[2:end] ./ row.window, color=row.window, colorrange=(15, 200))
-    lines!(ax, row.precision_levels, row.precision_curve[2:end] ./ row.window, color=row.window, colorrange=(15, 200), linestyle=:dash)
-end
-f
-
-
 ## Stacked bar plot for each neuron 
 # categories = ["power", "steering"]
 # categories = ["Lpower", "Rpower"]
@@ -655,21 +543,6 @@ linkyaxes!(ax...)
 colsize!(f.layout, 1, Auto(4))
 f
 
-## Power vs steering fraction against things like firing rate
-categories = ["Lpower", "Lsteering"]
-
-# ddt = @pipe df |> 
-# select(_, Not([:precision_curve, :precision_levels])) |> 
-# groupby(_, [:moth, :neuron, :muscle]) |> 
-# combine(_, sdf -> sdf[argmax(sdf.mi), :]) |> 
-# @transform(_, :mi = :mi ./ :window) |> 
-# @transform(_, :window = :window .* 1000) |> 
-# @transform(_, :stack = indexin(:muscle, categories)) |> 
-# @subset(_, (!).(isnothing.(:stack)), :stack .!= 0) |> 
-# groupby(_, [:moth, :neuron]) |> 
-# transform(_, [:mi, :muscle] => ((mi, muscle) -> first(mi[muscle .== categories[1]])) => :mi_sort) |> 
-# @transform(_, :frac = )
-
 ## Stacked bar plots for PRECISION
 
 # categories = ["power", "steering"]
@@ -732,150 +605,6 @@ mapping(:meanrate, :precision,
 ) * visual(Scatter)
 ) |> 
 draw(_)#, axis=(; yscale=log10))
-
-## What optimal window sizes were chosen?
-using Colors
-
-dt = @pipe df |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), 1, 2)) |> 
-@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-@subset(_, :peak_valid_mi)
-
-bin_edges = sort(unique(df.window)) .- (diff(sort(unique(df.window)))[1] / 2)
-
-direction_colors = Dict(d => alphacolor(Makie.wong_colors()[i], 0.5) for (i,d) in enumerate(unique(dt.direction)))
-
-f = Figure()
-ax = [Axis(f[i,1]) for i in 1:2]
-for (i,gdf) in enumerate(groupby(dt, [:direction, :peak_off_valid]))
-    hist!(ax[gdf.peak_off_valid[1]], gdf.window, 
-        bins=bin_edges,
-        color=direction_colors[gdf.direction[1]], 
-        # weights=gdf.mi, 
-        normalization=:pdf,
-        label=gdf.direction[1]
-    )
-end
-Legend(f[:,2], ax[1])
-f
-
-##
-
-bin_edges = range(0, 40, 5)
-window_bins = sort(unique(df.window)) .- 5
-
-@pipe df |> 
-# @subset(_, :nspikes .> 1000) |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), true, false)) |> 
-@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-# @subset(_, :mi .> 0, :muscle .== "all") |> 
-@subset(_, :mi .> 0) |> 
-@transform(_, :mi_bin = searchsortedlast.(Ref(bin_edges), :mi)) |> 
-# @transform(_, :window = searchsortedfirst.(Ref(window_bins), :mi)) |> 
-@subset(_, :peak_valid_mi) |> 
-(
-AlgebraOfGraphics.data(_) *
-mapping(:window, color=:muscle, row=:muscle) * histogram(normalization=:probability, bins=window_bins) * visual(alpha=0.6)
-) |> 
-draw(_)
-
-
-
-## Look at how window size affected precision, information
-
-dt = @pipe df |> 
-# @subset(_, :neuron .== 97) |> 
-@transform(_, :neuron = string.(:neuron)) |> # .* :moth) |> 
-@subset(_, :mi .> 0) 
-
-@pipe dt[sortperm(dt.window),:] |> 
-@subset(_, :moth .== "2025-03-20") |> 
-# @transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
-@subset(_, :muscle .== "all") |> 
-groupby(_, [:moth, :neuron, :muscle]) |> 
-@transform(_, :chosen_precision = :precision[argmax(:mi)]) |> 
-@subset(_, :chosen_precision .< 10^1.5) |> 
-# @transform(_, :precision = :precision ./ :window, :precision_noise = :precision_noise ./ :window) |> 
-stack(_, [:mi, :precision, :precision_noise]) |> 
-(
-AlgebraOfGraphics.data(_) * 
-mapping(:window, :value, 
-    row=:variable, 
-    col=:neuron=>nonnumeric,
-    color=:window
-) * visual(ScatterLines) + 
-(mapping([0], [1]) * visual(ABLines))
-) |> 
-draw(_, facet=(; linkyaxes=:rowwise))
-
-
-
-##
-
-dt = @pipe df |> 
-@transform(_, :mi = :mi ./ :window, :window = :window .* 1000) |> 
-@subset(_, :mi .> 0, :neuron .== 42, :moth .== moths[6]) 
-
-@pipe dt[sortperm(dt.window),:] |> 
-# groupby(_, [:moth, :neuron, :muscle]) |> 
-# @transform(_, :chosen_precision = :precision[argmax(:mi)]) |> 
-# @subset(_, :chosen_precision .> 10^1.5) |> 
-stack(_, [:mi, :precision, :precision_noise]) |> 
-(
-AlgebraOfGraphics.data(_) * 
-mapping(:window, :value, 
-    row=:variable, 
-    col=:muscle=>nonnumeric,
-    color=:window
-) * visual(ScatterLines) + 
-(mapping([0], [1]) * visual(ABLines))
-) |> 
-draw(_, facet=(; linkyaxes=:rowwise))
-
-
-##
-
-dt = @subset(df, :muscle .== "Rsteering", :moth .== "2025-03-21", :neuron .== 42, :window .< 0.05)
-
-f = Figure()
-ax = Axis(f[1,1], xscale=log10)
-for row in eachrow(dt)
-    # lines!(ax, row.precision_levels, row.precision_curve[2:end] ./ row.window, color=row.window, colorrange=(0.015, 0.2))
-    # vlines!(ax, row.precision, color=row.window, colorrange=(0.015, 0.2))
-    lines!(ax, row.precision_levels, row.precision_curve[2:end] ./ row.window, color=row.window, colorrange=(0.015, 0.05))
-    vlines!(ax, row.precision, color=row.window, colorrange=(0.015, 0.05))
-end
-f
-##
-f, ax, ln = vlines(spk_neuron[27] ./ 30000, ymin=0.5, ymax=1)
-vlines!(ax, spk_muscle["ldlm"] ./ 30000, ymin=0, ymax=0.5)
-f
-
-##
-
-f = Figure()
-
-ax = Axis(f[1,1], xscale=log10)
-
-i = rand(1:nrow(df))
-mi = df.precision_curve[i] ./ df.precision_curve[i][1]
-
-hlines!(ax, mi[1])
-lines!(ax, df.precision_levels[i], mi[2:end])
-hlines!(ax, 0.9, color=:black, linestyle=:dash)
-vlines!(ax, df.window[i] * 1000)
-
-# sg_window = 2 * floor(Int, length(df.precision_levels[i]) / 10) + 1
-# sg_window = sg_window < 2 ? 5 : sg_window
-sg_window = 41
-curve = savitzky_golay(mi[2:end], sg_window, 2; deriv=0).y #./ mi[1]
-lines!(ax, df.precision_levels[i], curve)
-
-
-f
-
 
 ## -------------------------------- Figure 1 artifacts and details
 
@@ -1859,61 +1588,381 @@ ax31, ax32 = plot_mi_precision_against_window!(f, (1,3), dt[sortperm(dt.window),
 
 f
 
-##
 
-function reorder_mat(mat, order)
-    # Create mapping from old index to new index
-    index_mapping = Dict{Int, Int}()
-    for (new_idx, old_idx) in enumerate(order)
-        index_mapping[old_idx] = new_idx
+## ---------------------------------------- Phasic neurons explain information figure (Figure 5?) 
+muscle_colors = [
+    "lax" => "#94D63C", "rax" => "#6A992A",
+    "lba" => "#AE3FC3", "rba" => "#7D2D8C",
+    "lsa" => "#FFBE24", "rsa" => "#E7AC1E",
+    "ldvm"=> "#66AFE6", "rdvm"=> "#2A4A78",
+    #"ldlm"=> "#E87D7A", "rdlm"=> "#C14434"
+]
+# example_neurons = ["76", "27", "11", "15"] # Descending order of mi, but will be plot in reverse order (makes color/draw order work)
+example_neurons = ["76", "27", "11", "88"] # Descending order of mi, but will be plot in reverse order (makes color/draw order work)
+example_neuron_colors = Dict(neur => Makie.wong_colors()[3+i] for (i,neur) in enumerate(example_neurons))
+
+# function phasic_neuron_figure()
+f = Figure(size=(1900, 1076))
+
+top_row = f[1,1:2] = GridLayout()
+
+# -------- First panel, example neuron firing
+ga = top_row[1, 1] = GridLayout()
+ax_examp_range = [776, 778] .- 0.1
+ax_examp = Axis(ga[1,1], 
+    xticks=(ax_examp_range, ["0","2"]), limits=(tuple(ax_examp_range...), nothing),
+    xticklabelspace = 0.0, xlabel="Time (s)"
+)
+wb_duration_thresholds = (32.5, 100) # ms ldlm
+thismoth = replace.(moths[1], r"-1$" => "_1")
+spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+
+mask_neur = (spikes["76"] .> (ax_examp_range[1] - 1) * fsamp) .&& (spikes["76"] .< (ax_examp_range[2] + 1) * fsamp)
+mask = (spikes["ldlm"] .> (ax_examp_range[1] - 1) * fsamp) .&& (spikes["ldlm"] .< (ax_examp_range[2] + 1) * fsamp)
+spikevec = spikes["ldlm"][mask]
+
+diffvec = diff(spikevec) ./ fsamp .* 1000 # units of ms
+mask = (diffvec .> wb_duration_thresholds[1]) .&& (diffvec .< wb_duration_thresholds[2])
+start_inds = spikevec[findall(vcat(false, mask))]
+vspan!(ax_examp, start_inds[1:2:end-1] ./ fsamp, start_inds[2:2:end] ./ fsamp, color=RGBAf(0.9, 0.9, 0.9, 1.0))
+vlines!(ax_examp, spikevec ./ fsamp, ymin=0, ymax=0.5, color=:black)
+vlines!(ax_examp, spikes["76"][mask_neur] ./ fsamp, ymin=0.5, ymax=1.0)
+textlabel!(ax_examp, 0.95, 0.25, text="LDLM", space=:relative, fontsize=18, text_align=(:right, :center))
+textlabel!(ax_examp, 0.95, 0.75, text="Neuron 76", space=:relative, fontsize=18, text_align=(:right, :center), text_color=Makie.wong_colors()[1])
+# xlims!(ax_examp, ax_examp_range...)
+hideydecorations!(ax_examp)
+hidespines!(ax_examp)
+apply_letter_label(ga, "A")
+
+
+# -------- Second panel, circular hist with muscles and a neuron
+max_mi_neuron = @pipe df |> 
+    @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all", :label .== "good") |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi), :moth = replace.(:moth, r"-1$" => "_1")) |> 
+    groupby(_, :moth) |> 
+    combine(_, [:neuron, :mi] => (n,mi) -> n[findmax(mi)[2]]) |> 
+    @transform(_, :neuron_mi_function = string.(round.(Int, :neuron_mi_function)))
+max_mi_neuron = Dict(Pair.(max_mi_neuron.moth, max_mi_neuron.neuron_mi_function))
+
+gb = top_row[2,1] = GridLayout(padding=(0,0,0,0), tellwidth=false, tellheight=false)
+moth = moths[1]
+phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moth)
+ax_muscle_hist = PolarAxis(gb[1:end,1], 
+    radius_at_origin=-1,
+    clip=false, clip_r=false
+)
+muscle_theta_r = Dict(
+    "ax" => [pi+0.17*pi, 0.87], # Angle (radians) and radius of each text placement
+    "ba" => [pi*0.3, 0.7],
+    "sa" => [pi*0.08, 0.8],
+    "dvm"=> [2.75, 1.1]
+)
+rlims!(ax_muscle_hist, -1.0, 0.6)
+hiderdecorations!(ax_muscle_hist)
+hidespines!(ax_muscle_hist)
+lines!(ax_muscle_hist, [0, 0], [-1, 0.6], color=:black, linewidth=3)
+for i in eachindex(muscle_colors)
+    muscle = muscle_colors[i][1]
+    if !(muscle in keys(muscle_phase_dict))
+        continue
     end
-    # Create the reordered matrix
-    n = size(mat, 1)
-    reordered_mat = zeros(eltype(mat), n, n)
-    for i in 1:n
-        for j in 1:n
-            old_i = order[i]
-            old_j = order[j]
-            reordered_mat[i, j] = mat[old_i, old_j]
+    hist!(ax_muscle_hist, muscle_phase_dict[muscle] .* 2*pi, 
+        bins=90, normalization=:pdf, #scale_to=1.0,
+        color=(muscle_colors[i][2], 0.5)
+    )
+    # Muscle label for one muscle of each pair
+    if muscle[1] == 'r'
+        # mean_angle = mean(muscle_phase_dict[muscle] .* 2*pi)
+        text!(ax_muscle_hist, muscle_theta_r[muscle[2:end]][1], muscle_theta_r[muscle[2:end]][2], 
+            text=uppercase(muscle[2:end]), color=muscle_colors[i][2],
+            fontsize=22
+        )
+    end
+end
+hist!(ax_muscle_hist, phase_dict[max_mi_neuron[moth]] .* 2*pi, 
+    bins=ceil(Int, sqrt(length(phase_dict[max_mi_neuron[moth]]))), 
+    normalization=:pdf, offset=-1, scale_to=1.0)
+lines!(ax_muscle_hist, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=2)
+scatter!(ax_muscle_hist, 0, -1, color=:black, markersize=5)
+text!(ax_muscle_hist, pi/2, -0.6, text="N. 76", font=:bold, color=:black, fontsize=16, align=(:center, :center))
+
+lines!(ax_muscle_hist, [0, 0], [0.83, 0.98], color=:black, linewidth=3)
+text!(ax_muscle_hist, 0, 1., text="LDLM", color=:black, fontsize=22, align=(:left, :center))
+
+apply_letter_label(gb, "B")
+
+# -------- Circular histograms of all "good" neurons in a moth
+phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[1])
+gc = top_row[1:2, 2] = GridLayout()
+
+# 1. Selection of good neurons (not MUA) from moth 1
+phase_dict, wblen_dict, muscle_phase_dict = get_phase_dict(moths[1])
+df_neuron = @pipe df |> 
+    @subset(_, :moth .== replace(moths[1], r"_1$" => "-1"), :label .== "good") |> 
+    @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi))
+sort!(df_neuron, [order(:label), order(:mi)])
+# 2. For each neuron, draw polar histogram
+polar_axes = []
+polar_mis = Float64[]
+for (i,row) in enumerate(eachrow(df_neuron))
+    ri, ci = mod(i+1, 2) + 1, repeat(1:nrow(df_neuron), inner=2)[i]
+    neur = string(round(Int, row.neuron))
+    thisax = PolarAxis(top_row[1:2,2], 
+        width=Relative(0.3), height=Relative(0.3), halign=-0.271 + 0.075*i, valign=0.075 + 0.85 * (ri-1),
+        clip=false, clip_r=false
+    )
+    hiderdecorations!(thisax)
+    hidethetadecorations!(thisax, grid=false, minorgrid=false)
+    if neur in example_neurons
+        hist!(thisax, phase_dict[neur] .* 2 * pi, 
+            normalization=:pdf, bins=ceil(Int, sqrt(length(phase_dict[neur]))), color=example_neuron_colors[neur])
+        scatter!(thisax, 0, 0, color=:black, markersize=6)
+    else
+        hist!(thisax, phase_dict[neur] .* 2 * pi, normalization=:pdf, bins=ceil(Int, sqrt(length(phase_dict[neur]))))
+        scatter!(thisax, 0, 0, color=:black, markersize=6)
+    end
+    push!(polar_axes, thisax)
+    push!(polar_mis, max(row.mi, 0.0))
+end
+# 3. Add the number line axis on the same grid cell
+ax_nl = Axis(top_row[1:2,2], 
+    width=Relative(1.0), height=Relative(1.0),
+    halign=0.5, valign=0.5,
+    backgroundcolor=:transparent
+)
+hidedecorations!(ax_nl)
+hidespines!(ax_nl)
+mi_min, mi_max = -0.1, maximum(polar_mis) * 1.1
+y_min, y_max = 0.0, 1.0
+xlims!(ax_nl, mi_min, mi_max)
+ylims!(ax_nl, y_min, y_max)
+line_pos = 0.5
+lines!(ax_nl, [0, mi_max], [line_pos, line_pos], color=:black, linewidth=2) # Central number line
+poly!(ax_nl, Point2f[(mi_max, line_pos),(mi_max-0.2, line_pos + 0.025), (mi_max-0.2, line_pos - 0.025)], color=:black)
+for tick in [0.0, 10.0, 20.0]
+    lines!(ax_nl, [tick, tick], line_pos .+ [-0.025, 0.025], color=:black, linewidth=2) # End tick
+    textlabel!(ax_nl, tick, line_pos - 0.05, text=string(convert(Int, tick)), strokewidth=0)
+end
+text!(ax_nl, 0.7, 0.55, text="Mutual Information I(X;Y) (bits/s)", fontsize=22, align=(:left, :center), space=:relative)
+# 4. Connect lines from polar hist plots to number line
+on(events(f).window_open) do _  # fires once layout is resolved
+    ax_nl_bb = ax_nl.layoutobservables.computedbbox[]
+    ax_nl_origin = ax_nl_bb.origin
+    ax_nl_widths = ax_nl_bb.widths
+    for (pa, mi, i, neur) in zip(polar_axes, polar_mis, 1:length(polar_axes), string.(round.(Int, df_neuron.neuron)))
+        pa_bb = pa.layoutobservables.computedbbox[]
+        # Center of polar axis in scene pixels
+        if mod(i,2) == 0 # Bottom row of polar axes
+            px_center = pa_bb.origin .+ [pa_bb.widths[1], 0] ./ 2
+        else
+            px_center = pa_bb.origin .+ [pa_bb.widths[1] / 2, pa_bb.widths[2]]
+        end
+        # Convert scene pixels → ax_nl data coords
+        x_frac = (px_center[1] - ax_nl_origin[1]) / ax_nl_widths[1]
+        y_frac = (px_center[2] - ax_nl_origin[2]) / ax_nl_widths[2]
+        pm = mod(i,2) == 0 ? 1 : -1
+        x_data = mi_min + x_frac * (mi_max - mi_min)
+        y_data = y_min + y_frac * y_max  + pm*0.01 # ylims are (0,1)
+        # MI position on number line
+        color = neur in example_neurons ? example_neuron_colors[neur] : :gray
+        lines!(ax_nl, [x_data, mi], [y_data, line_pos], color=color, linewidth=0.8)
+        scatter!(ax_nl, mi, line_pos, color=color, markersize=15)
+        # Label position: centered on polar axis x, just above/below it
+        px_x_center = pa_bb.origin[1] + pa_bb.widths[1] / 2
+        x_label = mi_min + ((px_x_center - ax_nl_origin[1]) / ax_nl_widths[1]) * (mi_max - mi_min)
+        # Label for neuron polar plot
+        neur = string(round(Int, df_neuron[i, :neuron]))
+        text_color = neur in example_neurons ? example_neuron_colors[neur] : :black
+        if mod(i, 2) == 0  # top row: label above
+            px_top = pa_bb.origin[2] + pa_bb.widths[2]
+            y_frac = (px_top - ax_nl_origin[2]) / ax_nl_widths[2]
+            y_label = y_min + y_frac * y_max
+            text!(ax_nl, x_label, y_label, text="N. " * neur,
+                align=(:center, :bottom), fontsize=14, color=text_color, font=:bold)
+        else  # bottom row: label below
+            px_bottom = pa_bb.origin[2]
+            y_frac = (px_bottom - ax_nl_origin[2]) / ax_nl_widths[2]
+            y_label = y_min + y_frac * y_max
+            text!(ax_nl, x_label, y_label, text="N. " * neur,
+                align=(:center, :top), fontsize=14, color=text_color, font=:bold)
         end
     end
-    return reordered_mat
 end
 
-mothi = 4
+apply_letter_label(gc, "C")
+# colsize!(top_row, 1, Relative(1/6))
+rowgap!(top_row, 0)
+rowsize!(top_row, 1, Relative(1/4))
+colsize!(top_row, 2, Relative(2/3))
 
-n_good = good_neuron_dict[newmoths[mothi]][1]
-original_mat = matlist[mothi][1:n_good, 1:n_good]
-thismat = copy(original_mat)
-colrange = [-maximum(maximum(x) for x in matlist), maximum(maximum(x) for x in matlist)]
-# Transform from weight to distance matrices in a few different ways
-Smax, Rmax = maximum(thismat), minimum(thismat)
-# thismat = 1 ./ (thismat .+ abs(minimum(thismat)) .+ eps())
-D_syn = (Smax .- thismat) ./ (Smax + Rmax)
-D_red = (Smax .+ thismat) ./ (Smax - Rmax)
-D_U = 1 .- abs.(thismat) ./ maximum(abs.(thismat))
-D_syn[diagind(D_syn)] .= 0.0
-D_red[diagind(D_red)] .= 0.0
-D_U[diagind(D_U)] .= 0.0
 
-f = Figure()
+# -------- Power as predictor of MI, precision
+gd = f[2,1] = GridLayout()
+wingbeat_freq_range = [1, 100]
 
-for (D, clustname, i) in Iterators.zip([D_red, D_syn, D_U], ["Redundancy", "Synergy", "U curve"], [1,2,3])
-    clust = hclust(D, linkage=:complete)
-    nodes = Makie.hcl_nodes(clust) # this is an undocumented internal function
+spec_range = function(neur, spikes; wingbeat_freq_range=[1,200], fsamp=fsamp)
+    discrete_vec = zeros(spikes[neur][end]+10)
+    discrete_vec[spikes[neur]] .= 1
+    pxx = welch_pgram(discrete_vec, fsamp * 10; fs=fsamp)
 
-    axd = Axis(f[1,i], title=clustname)
-    axh = Axis(f[2,i])
-    dendrogram!(axd, nodes)
-    heatmap!(axh, reorder_mat(original_mat, clust.order), colormap=:seismic, colorrange=colrange)
-
-    hidedecorations!(axd)
-    hidedecorations!(axd)
+    fi = findfirst(pxx.freq .> wingbeat_freq_range[1])
+    li = findlast(pxx.freq .< wingbeat_freq_range[2])
+    return pxx.freq[fi:li], pxx.power[fi:li]
 end
-Colorbar(f[:,end+1], colormap=:seismic, colorrange=colrange)
-rowsize!(f.layout, 1, Relative(1/4))
-f
 
+ax_freq = Axis(gd[1,1], xlabel="Frequency (Hz)", ylabel="Power spectral density (dB/Hz)")
+# Wingbeat frequency line
+# pfreq, ppower = spec_range("76", spikes; wingbeat_freq_range=wingbeat_freq_range)
+# wbf = pfreq[findmax(ppower)[2]]
+# vlines!(ax_freq, wbf, color=:black, linestyle=(:dash,:dense), linewidth=2)
+vspan!(ax_freq, 17, 21, color=RGBf(0.8, 0.8, 0.8))
+# Spectra, histogram for each neuron
+power_vals = zeros(length(example_neurons))
+for (i, neur) in enumerate(example_neurons)
+    pfreq, ppower = spec_range(neur, spikes; wingbeat_freq_range=wingbeat_freq_range)
+    mask = (pfreq .> 12) .&& (pfreq .< 24)
+    ind = findmax(ppower[mask])[2] + findfirst(mask) - 1
+    bump = neur .== "27" ? 1.0 : 0.0
+    lines!(ax_freq, pfreq, 10 .* log10.(ppower) .+ bump, color=example_neuron_colors[neur])
+    scatter!(ax_freq, pfreq[ind], 10 .* log10.(ppower[ind]) .+ bump, color=:black, markersize=15)
+    scatter!(ax_freq, pfreq[ind], 10 .* log10.(ppower[ind]) .+ bump, color=example_neuron_colors[neur], markersize=10)
+    power_vals[i] = 10 .* log10.(ppower[ind]) .+ bump
+end
+xlims!(ax_freq, 0, 50)
+
+# Phase histograms ordered/sorted by peak power
+ax_power_sort = Axis(gd[2,1])
+hidedecorations!(ax_power_sort)
+hidespines!(ax_power_sort)
+power_polar_axes = []
+for (i, examp_neuron) in enumerate(example_neurons[sortperm(power_vals)])
+    this_inset = PolarAxis(gd[2,1], 
+        width=Relative(0.4), height=Relative(0.4), halign=-0.5 + 0.4 * i, valign=0.5,
+        clip=false, clip_r=false
+    )
+    hidedecorations!(this_inset)
+    hist!(this_inset, phase_dict[examp_neuron] .* 2*pi, 
+        normalization=:pdf, bins=ceil(Int, sqrt(length(phase_dict[examp_neuron]))),
+        color=example_neuron_colors[examp_neuron]
+    )
+    scatter!(this_inset, 0, 0, color=:black, markersize=5)
+    push!(power_polar_axes, this_inset)
+end
+# Put "axis" line, labels for peak power
+xmin, xmax = -80.5, -68
+ymin, ymax = -0.25, 0.8
+arrows2d!(ax_power_sort, Point2f(xmin, 0), [[xmax-xmin,0]])
+for lab_val in [-80, -76, -72]
+    lines!(ax_power_sort, [lab_val, lab_val], [-0.04, 0.04], color=:black)
+    text!(ax_power_sort, lab_val, -0.06, text=string(lab_val), align=(:center, :top))
+end
+text!(ax_power_sort, 0.5, 0.05, text="Power at wingbeat frequency (dB/Hz)", 
+    space=:relative, align=(:center, :center))
+limits!(ax_power_sort, (xmin, xmax), (ymin, ymax))
+on(events(f).window_open) do _  # fires once layout is resolved
+    ax_p_bb = ax_power_sort.layoutobservables.computedbbox[]
+    ax_p_origin = ax_p_bb.origin
+    ax_p_widths = ax_p_bb.widths
+    psort = sortperm(power_vals)
+    for (pa, pval, neur) in zip(power_polar_axes, power_vals[psort], example_neurons[psort])
+        pa_bb = pa.layoutobservables.computedbbox[]
+        # Top of polar axis in scene pixels
+        px_center = pa_bb.origin .+ [pa_bb.widths[1] / 2, pa_bb.widths[2]]
+        # Convert scene pixels → ax_power_sort data coords
+        x_data = xmin + ((px_center[1] - ax_p_origin[1]) / ax_p_widths[1]) * (xmax - xmin)
+        y_data = ymin + ((px_center[2] - pa_bb.widths[2]/2 - ax_p_origin[2]) / ax_p_widths[2]) * ymax  # will require fine tuning
+        # Power position on number line
+        color = example_neuron_colors[neur]
+        lines!(ax_power_sort, [x_data, pval], [y_data, 0], color=color, linewidth=0.8)
+        sc = scatter!(ax_power_sort, pval, 0, color=color, markersize=15)
+        translate!(sc, 0, 0, 10)
+        # Label position: centered on polar axis x, just above/below it
+        x_label = xmin + ((px_center[1] - ax_p_origin[1]) / ax_p_widths[1]) * (xmax - xmin)
+        # Label above neuron polar plot
+        px_top = pa_bb.origin[2] + pa_bb.widths[2]
+        y_label = ymin + ((px_top - ax_p_origin[2]) / ax_p_widths[2]) * ymax + 0.15
+        text!(ax_power_sort, x_label, y_label, text="N. " * neur,
+            align=(:center, :bottom), fontsize=14, color=color, font=:bold)
+    end
+end
+
+df_power = @pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+leftjoin(_, dfc, on=[:moth, :neuron])
+
+ax_power_mi = Axis(gd[1,2], yscale=log10, ylabel="I(X;Y) (bits/s)")
+ax_power_prec = Axis(gd[2,2], yscale=log10, xlabel="Power at wingbeat frequency (dB/Hz)", ylabel="Spike timing precision (ms)")
+linkxaxes!(ax_power_mi, ax_power_prec)
+rowgap!(gd, 0)
+
+scatter!(ax_power_mi, 10 .* log10.(df_power.peak_power), df_power.mi)
+mask = df_power.has_timing_info .== "Spike timing info"
+scatter!(ax_power_prec, 10 .* log10.(df_power.peak_power[mask]), df_power.precision[mask])
+
+apply_letter_label(gd, "D")
+
+# -------- Circularity as predictor of MI, precision
+ge = f[2,2] = GridLayout()
+
+df_circ = @pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+@subset(_, :omnibus_stat .!= 0)
+
+ecdf_func = function(phase_spikes, x)
+    sorted = sort(phase_spikes .* 2 * pi)
+    return searchsortedlast.(Ref(sorted), x) ./ length(sorted)
+end
+
+ax_ecdf_examp = Axis(ge[:,1], 
+    xlabel="Phase angle (Radians)", ylabel="Cumulative probability",
+    xticks=([0, pi/2, pi, 3*pi/2, 2*pi], ["0", "π/2", "π", "3π/2", "2π"]),
+    limits=((0,2*pi), (0,1))
+)
+ax_circ_mi = Axis(ge[1,2], xscale=log10, yscale=log10, ylabel="I(X;Y) (bits/s)")
+ax_circ_prec = Axis(ge[2,2], xscale=log10, yscale=log10, xlabel="Kuiper statistic V", ylabel="Spike timing precision (ms)")
+linkxaxes!(ax_circ_mi, ax_circ_prec)
+
+unif_vec = range(0, 1, 1000)
+for (i, examp_neuron) in enumerate(example_neurons)
+    xvec = range(0, 2*pi, 1000)
+    ecdf = ecdf_func(phase_dict[examp_neuron], xvec)
+    comparison = ecdf .- unif_vec
+    maxind = findmax(comparison)[2]
+    minind = findmin(comparison)[2]
+    lines!(ax_ecdf_examp, repeat([unif_vec[maxind] * 2*pi], 2), [unif_vec[maxind], ecdf[maxind]], 
+        color=example_neuron_colors[examp_neuron], linewidth=1.5,
+    )
+    lines!(ax_ecdf_examp, repeat([unif_vec[minind] * 2*pi], 2), [unif_vec[minind], ecdf[minind]], 
+        color=example_neuron_colors[examp_neuron], linewidth=1.5,
+    )
+    lines!(ax_ecdf_examp, xvec, ecdf, color=example_neuron_colors[examp_neuron], linewidth=2)
+end
+text!(ax_ecdf_examp, 5*pi/4, 0.4, text=L"D^-", color=:black, fontsize=17.5)
+text!(ax_ecdf_examp, 7*pi/4-pi/8, 0.9, text=L"D^+", color=:black, fontsize=17.5)
+text!(ax_ecdf_examp, 5*pi/4, 0.4, text=L"D^-", color=example_neuron_colors["27"], fontsize=17)
+text!(ax_ecdf_examp, 7*pi/4-pi/8, 0.9, text=L"D^+", color=example_neuron_colors["27"], fontsize=17)
+textlabel!(ax_ecdf_examp, 1.7*pi, 0.3, text=L"V=D^+ + D^-")
+
+lines!(ax_ecdf_examp, [0, 2*pi], [0, 1], color=:grey, linewidth=3.2) # Uniform distribution
+
+
+scatter!(ax_circ_mi, df_circ.kuiper_stat, df_circ.mi)
+mask = df_circ.has_timing_info .== "Spike timing info"
+scatter!(ax_circ_prec, df_circ.kuiper_stat[mask], df_circ.precision[mask])
+
+apply_letter_label(ge, "E")
+
+# return f
+# end
+
+# f = phasic_neuron_figure()
+display(f)
 
 ## ---------------- Look at phasic properties of neurons against motor information
 @pipe df |> 
@@ -1925,6 +1974,73 @@ leftjoin(_, dfc, on=[:moth, :neuron]) |>
 @subset(_, :omnibus_stat .!= 0) |> 
 (
 AlgebraOfGraphics.data(_) *
-mapping(:kuiper_stat, :watson_stat, color=:has_timing_info, layout=:muscle) * (visual(Scatter))# + linear())
+mapping(:kuiper_stat, :mi, color=:has_timing_info, layout=:muscle) * (visual(Scatter))# + linear())
+) |> 
+draw(_, axis=(; xscale=log10, yscale=log10))
+
+## Summary statistics of different circular stats
+mi_cor = @pipe df |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+@subset(_, :omnibus_stat .!= 0) |> 
+combine(_, 
+    [[:kuiper_stat, :mi], [:omnibus_stat, :mi], [:watson_stat, :mi], [:rao_stat, :mi], [:peak_power, :mi], [:total_power, :mi]] 
+    .=> ((a,b) -> cor(a,b)),
+    [[:kuiper_stat, :mi], [:omnibus_stat, :mi], [:watson_stat, :mi], [:rao_stat, :mi], [:peak_power, :mi], [:total_power, :mi]] .=> ((a,b) -> cor(log.(a),log.(b))) 
+    .=> [:log_kuiper, :log_omnibus, :log_watson, :log_rao, :log_peak, :log_total]) |> 
+println(_)
+mi_prec = @pipe df |> 
+@subset(_, :mi .> 0, :peak_valid_mi, :muscle .== "all") |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+@subset(_, :omnibus_stat .!= 0) |> 
+combine(_, 
+    [[:kuiper_stat, :precision], [:omnibus_stat, :precision], [:watson_stat, :precision], [:rao_stat, :precision], [:peak_power, :precision], [:total_power, :precision]] 
+    .=> ((a,b) -> cor(a,b)),
+    [[:kuiper_stat, :precision], [:omnibus_stat, :precision], [:watson_stat, :precision], [:rao_stat, :precision], [:peak_power, :precision], [:total_power, :precision]] .=> ((a,b) -> cor(log.(a),log.(b))) 
+    .=> [:log_kuiper, :log_omnibus, :log_watson, :log_rao, :log_peak, :log_total]) |> 
+println(_)
+
+
+##
+
+f = Figure()
+ax = Axis(f[1,1])
+thismoth = replace.(moths[1], r"-1$" => "_1")
+spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+vlines!(ax, spikes["ldlm"] ./ fsamp, ymin=0.0, ymax=0.5)
+vlines!(ax, spikes["27"] ./ fsamp, ymin=0.5, ymax=1.0)
+f
+
+##
+f = Figure()
+
+spec_range = function(neur, spikes; wingbeat_freq_range=[1,200], fsamp=fsamp)
+    discrete_vec = zeros(spikes[neur][end]+10)
+    discrete_vec[spikes[neur]] .= 1
+    pxx = welch_pgram(discrete_vec, fsamp * 20; fs=fsamp)
+
+    fi = findfirst(pxx.freq .> wingbeat_freq_range[1])
+    li = findlast(pxx.freq .< wingbeat_freq_range[2])
+    return pxx.freq[fi:li], pxx.power[fi:li]
+end
+
+for (i,moth) in enumerate(moths)
+    spikes = npzread(joinpath(data_dir, "..", moth * "_data.npz"))
+    ax = Axis(f[i,1])
+    pfreq, ppower = spec_range("ldlm", spikes; wingbeat_freq_range=wingbeat_freq_range)
+    lines!(ax, pfreq, ppower)
+    xlims!(ax, 0, 50)
+end
+f
+
+##
+
+@pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+(
+AlgebraOfGraphics.data(_) * mapping(:peak_power, :mi, color=:direction) * visual(Scatter)
 ) |> 
 draw(_, axis=(; xscale=log10, yscale=log10))

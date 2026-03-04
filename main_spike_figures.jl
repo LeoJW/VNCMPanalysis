@@ -195,7 +195,7 @@ for mothi in eachindex(moths)
 end
 display(histfigs[1])
 
-## ------------ Read circular stats from python
+# ------------ Read circular stats from python
 
 dfc = DataFrame(Arrow.Table(joinpath(data_dir, "..", "circular_stats.arrow")))
 disallowmissing!(dfc)
@@ -206,7 +206,7 @@ for col in vector_cols
 end
 transform!(dfc, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth)
 
-## False Discovery rate correction
+# False Discovery rate correction
 α = 0.05
 moth_pval_threshold = Dict()
 # Example plot for omnibus test
@@ -239,7 +239,7 @@ end
 groupby(_, [:moth]) |> 
 combine(_, :omnibus_p_signif => mean, :rao_p_signif => mean, :kuiper_p_signif => mean)
 
-## ---------------- Dataframe of each neuron's power at wingbeat frequency
+# ---------------- Dataframe of each neuron's power at wingbeat frequency
 wingbeat_freq_range = [12, 24] # Hz
 df_power = DataFrame()
 for moth in moths
