@@ -207,6 +207,90 @@ end
 
 #     end   
 # end
+#-------- Functions for determining how much of recording had firing/activity
+
+function get_proportion_of_active_windows(moth, neuron, window)
+    thismoth = replace(moth[1], r"-1$" => "_1")
+    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+    bouts = npzread(joinpath(data_dir, "..", thismoth * "_bouts.npz"))
+    unique_neurons = unique(neuron)
+    unique_windows = unique(window)
+    # Construct dictionary of number of valid windows for each window size, neuron
+    frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in unique_neurons)
+    for neur in unique_neurons
+        neuron_string = string(round(Int, neur))
+        for wind in unique_windows
+            wind_samples = (wind / 1000 * 30000)
+            # Loop over bouts
+            frac_active_bouts = zeros(length(bouts["starts"]))
+            for i in eachindex(bouts["starts"])
+                mask = (spikes[neuron_string] .>= bouts["starts"][i]) .&& (spikes[neuron_string] .< bouts["ends"][i])
+                spikes_in_bout = spikes[neuron_string][mask]
+                if length(spikes_in_bout) == 0
+                    frac_active_bouts[i] = 0.0
+                    continue
+                end
+                windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
+                window_assignments = searchsortedlast.(Ref(windows), spikes_in_bout)
+                full_windows = length(unique(window_assignments))
+                total_windows = length(windows)
+                frac_active_bouts[i] = full_windows / total_windows
+            end
+            # Mean of all bout fractions gives total fraction
+            frac_active_dict[neur][wind] = mean(frac_active_bouts)
+        end
+    end
+    frac_active_vec = [frac_active_dict[n][w] for (n,w) in zip(neuron, window)]
+    return frac_active_vec
+end
+
+# Kinematics version, goes off of extents set not by bouts but also by kinematics
+function get_proportion_of_active_windows_kine(moth, neuron, window)
+    thismoth = replace(moth[1], r"-1$" => "_1")
+    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
+    bouts = npzread(joinpath(data_dir, "..", thismoth * "_bouts.npz"))
+    kine = npzread(joinpath(data_dir, "..", thismoth * "_kinematics.npz"))
+    unique_neurons = unique(neuron)
+    unique_windows = unique(window)
+    # Modify bouts based on when kinematics was being captured
+    k_start, k_end = kine["index"][1], kine["index"][end]
+    # Remove bouts which end before kine start
+    inds = (!).(bouts["ends"] .<= k_start)
+    bouts["starts"], bouts["ends"] = bouts["starts"][inds], bouts["ends"][inds]
+    # Remove bouts which start after kine end
+    inds = (!).(bouts["starts"] .>= k_end)
+    bouts["starts"], bouts["ends"] = bouts["starts"][inds], bouts["ends"][inds]
+    # Shift bout start and end if kine starts/ends in middle of a bout
+    bouts["starts"][1] = k_start > bouts["starts"][1] ? k_start : bouts["starts"][1]
+    bouts["ends"][end] = k_end < bouts["ends"][end] ? k_end : bouts["ends"][end]
+    # Construct dictionary of number of valid windows for each window size, neuron
+    frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in unique_neurons)
+    for neur in unique_neurons
+        neuron_string = string(round(Int, neur))
+        for wind in unique_windows
+            wind_samples = (wind / 1000 * 30000)
+            # Loop over bouts
+            frac_active_bouts = zeros(length(bouts["starts"]))
+            for i in eachindex(bouts["starts"])
+                mask = (spikes[neuron_string] .>= bouts["starts"][i]) .&& (spikes[neuron_string] .< bouts["ends"][i])
+                spikes_in_bout = spikes[neuron_string][mask]
+                if length(spikes_in_bout) == 0
+                    frac_active_bouts[i] = 0.0
+                    continue
+                end
+                windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
+                window_assignments = searchsortedlast.(Ref(windows), spikes_in_bout)
+                full_windows = length(unique(window_assignments))
+                total_windows = length(windows)
+                frac_active_bouts[i] = full_windows / total_windows
+            end
+            # Mean of all bout fractions gives total fraction
+            frac_active_dict[neur][wind] = mean(frac_active_bouts)
+        end
+    end
+    frac_active_vec = [frac_active_dict[n][w] for (n,w) in zip(neuron, window)]
+    return frac_active_vec
+end
 
 #-------- Varied utility functions
 

@@ -3,6 +3,7 @@ using CSV
 using NPZ
 using DelimitedFiles
 using Arrow
+using FileIO
 using Statistics
 using StatsBase # Mainly for rle
 using Clustering
@@ -166,40 +167,6 @@ df_kine_neur = @pipe df_kine_neur |>
     groupby(_, [:moth, :neuron]) |> 
     transform!(_, [:window, :mi, :precision_noise] => get_optimal_mi_precision => [:max_valid_window, :peak_mi, :peak_valid_mi])
 
-function get_proportion_of_active_windows(moth, neuron, window)
-    thismoth = replace(moth[1], r"-1$" => "_1")
-    spikes = npzread(joinpath(data_dir, "..", thismoth * "_data.npz"))
-    bouts = npzread(joinpath(data_dir, "..", thismoth * "_bouts.npz"))
-    unique_neurons = unique(neuron)
-    unique_windows = unique(window)
-    # Construct dictionary of number of valid windows for each window size, neuron
-    frac_active_dict = Dict(n => Dict{Float64, Float64}() for n in unique_neurons)
-    for neur in unique_neurons
-        neuron_string = string(round(Int, neur))
-        for wind in unique_windows
-            wind_samples = (wind / 1000 * 30000)
-            # Loop over bouts
-            frac_active_bouts = zeros(length(bouts["starts"]))
-            for i in eachindex(bouts["starts"])
-                mask = (spikes[neuron_string] .>= bouts["starts"][i]) .&& (spikes[neuron_string] .< bouts["ends"][i])
-                spikes_in_bout = spikes[neuron_string][mask]
-                if length(spikes_in_bout) == 0
-                    frac_active_bouts[i] = 0.0
-                    continue
-                end
-                windows = collect(bouts["starts"][i]:wind_samples:bouts["ends"][i])
-                window_assignments = searchsortedlast.(Ref(windows), spikes_in_bout)
-                full_windows = length(unique(window_assignments))
-                total_windows = length(windows)
-                frac_active_bouts[i] = full_windows / total_windows
-            end
-            # Mean of all bout fractions gives total fraction
-            frac_active_dict[neur][wind] = mean(frac_active_bouts)
-        end
-    end
-    frac_active_vec = [frac_active_dict[n][w] for (n,w) in zip(neuron, window)]
-    return frac_active_vec
-end
 # Save MI values converted to bits/s of flapping time, rather than bits/s of any activity
 df = @pipe df |> 
 groupby(_, [:moth]) |> 
@@ -207,7 +174,7 @@ transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows => :
 @transform!(_, :mi = :mi .* :frac_active)
 df_kine_neur = @pipe df_kine_neur |> 
 groupby(_, [:moth]) |> 
-transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows => :frac_active) |> 
+transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows_kine => :frac_active) |> 
 @transform!(_, :mi = :mi .* :frac_active)
 
 
@@ -305,10 +272,12 @@ groupby(_, [:moth, :neuron]) |>
 @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
 @subset(_, :peak_mi, :mi .> 0) |> 
 leftjoin(_, df_neuron_to_MP, on=[:moth, :neuron], renamecols=""=>"_toMP") |> 
-@subset(_, :muscle_toMP .== "all") |> 
+# @subset(_, :muscle_toMP .== "all") |> 
+@transform(_, :diff = :mi_toMP .- :mi) |> 
 (
 AlgebraOfGraphics.data(_) * 
-mapping(:mi_toMP=>"Information to MP", :mi=>"Information to kinematics", color=:direction_toMP, layout=:muscle_toMP) * 
+# mapping(:mi_toMP=>"Information to MP", :mi=>"Information to kinematics", color=:direction_toMP, layout=:muscle_toMP) * 
+mapping(:mi_toMP=>"Information to MP", :diff=>"I(X;Y) - I(X;Z)", color=:direction_toMP, layout=:muscle_toMP) * 
 visual(Scatter) + mapping([0],[1]) * visual(ABLines, color=:black)
 ) |> 
 draw(_)#, axis=(; xscale=log10, yscale=log10))
@@ -409,6 +378,41 @@ mapping(:subset, :mi_subset, color=:window=>log, col=:moth, row=:muscle, group=:
 visual(ScatterLines)
 ) |> 
 draw(_)
+
+##
+
+dkn = @pipe df_kine_neur |> 
+groupby(_, [:moth, :neuron]) |> 
+@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :peak_mi)
+
+@pipe df |> 
+@subset(_, :peak_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
+leftjoin(_, @subset(df_kine, :peak_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
+leftjoin(_, dkn, on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
+@transform(_, :mi_XY = :mi) |> 
+@transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
+@transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
+@subset(_, (!).(ismissing.(:mi_XZ))) |> 
+# stack(_, [:mi_XY, :mi_XZ, :mi_YZ]) |> 
+(
+AlgebraOfGraphics.data(_) * 
+# mapping(:variable, :value, color=:muscle, group=:neuron=>nonnumeric, layout=:muscle) * visual(ScatterLines) 
+mapping(:mi_XY, :mi_XZ, color=:muscle, group=:neuron=>nonnumeric, layout=:muscle) * visual(Scatter) + 
+mapping([0],[1]) * visual(ABLines, color=:black)
+) |> 
+draw(_)
+
+##
+mgroups = ["Lpower", "Lsteering", "Rsteering", "Rpower", "steering", "power"]
+@pipe df_kine |> 
+@subset(_, :peak_valid_mi) |> 
+@transform(_, :muscle_group = ifelse.(:muscle .∈ Ref(mgroups), "group", "single/all")) |> 
+(
+AlgebraOfGraphics.data(_) *
+mapping(:mi, :precision, color=:muscle_group, marker=:muscle) * visual(Scatter)
+) |> 
+draw(_, axis=(; limits=(nothing, (0, 34))))
 
 
 ## ---------------- Main plot
@@ -1588,7 +1592,6 @@ ax31, ax32 = plot_mi_precision_against_window!(f, (1,3), dt[sortperm(dt.window),
 
 f
 ## ---------------------------------------- I(Neurons; kinematics)
-
 
 ## ---------------------------------------- Phasic neurons explain information figure (Figure 5?) 
 muscle_colors = [
