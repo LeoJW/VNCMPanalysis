@@ -1060,10 +1060,21 @@ groupby(_, [:moth]) |>
 transform!(_, [:moth, :neuron, :window] => get_proportion_of_active_windows_redundancy => :frac_active) |> 
 @transform!(_, :mi = :mi .* :frac_active)
 
+# Set MI of neuron pairs where both had fewer than 1000 spikes to NaN
+nspike_dict = Dict(tuple(row.moth, row.neuron) => row.nspikes for row in eachrow(df_neuronstats))
+dfr = @pipe dfr |> 
+DataFrames.transform(_, [:moth, :neuron] => ByRow() do m,n
+    n1, n2 = parse.(Int64, split(n, "-"))
+    nspike1, nspike2 = nspike_dict[m,n1], nspike_dict[m,n2]
+    (; nspike1, nspike2)
+end => AsTable) |> 
+@transform(_, :mi = ifelse.((:nspike1 .>= 1000) .|| (:nspike2 .>= 1000), :mi, NaN))
+
+
 ##
 using LinearAlgebra
-using MultivariateStats
-using Arpack
+# using MultivariateStats
+# using Arpack
 
 f = Figure(size=(800*1.56, 500))
 ga = f[1,1] = GridLayout()
@@ -1176,7 +1187,9 @@ poly!(axh, Point2f[(0,0), (1000, 0), (0, 1000)],
 poly!(axh, Point2f[(0,0), (-1000, 0), (0, 1000)],
     color=resample_cmap(:seismic, 10)[3], alpha=0.2
 )
-bins = range(minimum(ii), maximum(ii), 101)
+min_ii = minimum(x->isnan(x) ? 0 : x,ii)
+max_ii = maximum(x->isnan(x) ? 0 : x,ii)
+bins = range(min_ii, max_ii, 101)
 hist!(axh, ii[ii .< 0], bins=bins, color=resample_cmap(:seismic, 10)[2])
 hist!(axh, ii[ii .> 0], bins=bins, color=resample_cmap(:seismic, 10)[end-1])
 vlines!(axh, 0, color=:black)

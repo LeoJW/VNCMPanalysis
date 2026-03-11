@@ -112,7 +112,8 @@ function figure3()
         @subset(_, :window_select)
     dt = dt[sortperm(dt.peak_off_valid), :]
     mi_bins = range(0, maximum(dfmain.mi[dfmain.mi .> 0,:])+1, 20)
-    colors = [RGBA(0.5,0.5,0.5,1), Makie.wong_colors()[1]]
+    # colors = [RGBA(0.5,0.5,0.5,1), Makie.wong_colors()[1]]
+    colors = [colorant"#5e3c99", colorant"#e66101"]
 
     mask = dt.peak_off_valid .== "No spike timing info"
     hist!(ax_noinfo_dist, dt.mi[mask], bins=mi_bins, normalization=:pdf, color=colors[1])
@@ -233,3 +234,18 @@ f = with_theme(fontsize_theme) do
 end
 save(joinpath(fig_dir, "fig3_MI_and_precision.pdf"), f)
 display(f)
+
+##
+
+dfmain = @pipe df |> 
+@subset(_, :peak_valid_mi, :nspikes .> 1000) |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+# @subset(_, :label .== "good") |> 
+@transform(_, :muscle = ifelse.(:single, "single", :muscle)) |> 
+@subset(_, :muscle .== "all") |> 
+@transform(_, :eff = :mi ./ :nspikes) |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:mi, :eff, color=:direction) * visual(Scatter)
+) |> 
+draw(_)

@@ -7,6 +7,8 @@ This script requires running the first section of main_figures.jl and main_spike
 and other things set up and loaded. It's just put here to keep main_figures.jl from becoming 10,000 lines long
 """
 
+GLMakie.activate!() # Cairo doesn't do circular histograms correctly
+
 muscle_colors = [
     "lax" => "#94D63C", "rax" => "#6A992A",
     "lba" => "#AE3FC3", "rba" => "#7D2D8C",
@@ -26,6 +28,7 @@ example_neuron_colors = Dict(
     "11" => Makie.wong_colors()[4],
     "88" => Makie.wong_colors()[7]
 )
+circ_sort_rel_size = 0.37
 
 # function phasic_neuron_figure()
 f = Figure(size=(1900, 1500))
@@ -103,8 +106,8 @@ for i in eachindex(muscle_colors)
         )
     end
 end
-hist!(ax_muscle_hist, phase_dict[max_mi_neuron[moth]] .* 2*pi, 
-    bins=ceil(Int, sqrt(length(phase_dict[max_mi_neuron[moth]]))), 
+hist!(ax_muscle_hist, phase_dict[max_mi_neuron[thismoth]] .* 2*pi, 
+    bins=ceil(Int, sqrt(length(phase_dict[max_mi_neuron[thismoth]]))), 
     normalization=:pdf, offset=-1, scale_to=1.0)
 lines!(ax_muscle_hist, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=2)
 scatter!(ax_muscle_hist, 0, -1, color=:black, markersize=5)
@@ -263,7 +266,7 @@ hidespines!(ax_power_sort)
 power_polar_axes = []
 for (i, examp_neuron) in enumerate(example_neurons[sortperm(power_vals)])
     this_inset = PolarAxis(gd[2,1], 
-        width=Relative(0.4), height=Relative(0.4), halign=-0.5 + 0.4 * i, valign=0.5,
+        width=Relative(circ_sort_rel_size), height=Relative(circ_sort_rel_size), halign=-0.5 + 0.4 * i, valign=0.5,
         clip=false, clip_r=false
     )
     hidedecorations!(this_inset)
@@ -275,7 +278,7 @@ for (i, examp_neuron) in enumerate(example_neurons[sortperm(power_vals)])
     push!(power_polar_axes, this_inset)
 end
 # Put "axis" line, labels for peak power
-xmin, xmax = -80.5, -68
+xmin, xmax = -81, -68
 ymin, ymax = -0.25, 0.8
 arrows2d!(ax_power_sort, Point2f(xmin, 0), [[xmax-xmin,0]])
 ticks = Makie.get_tickvalues(LinearTicks(3), identity, xmin, xmax)
@@ -318,15 +321,12 @@ end
 df_power = @pipe df |> 
 @groupby(_, [:moth, :neuron, :muscle]) |> 
 @transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 0) |> 
 leftjoin(_, dfc, on=[:moth, :neuron])
 
 gd_right = gd[1:2, 2] = GridLayout()
 ax_power_mi = Axis(gd_right[1,1], yscale=log10, ylabel="I(X;Y) (bits/s)")
 ax_power_prec = Axis(gd_right[2,1], yscale=log10, xlabel="Power at wingbeat frequency (dB/Hz)", ylabel="Spike timing precision (ms)")
-linkxaxes!(ax_power_mi, ax_power_prec)
-rowgap!(gd_right, 0)
-colsize!(gd, 2, Relative(0.6))
 
 for timing_info in ["Spike timing info", "No spike timing info"]
     gdf = @subset(df_power, :has_timing_info .== timing_info)
@@ -346,14 +346,27 @@ end
 axislegend(ax_power_mi, position=:rb)
 hidexdecorations!(ax_power_mi, grid=false, minorgrid=false)
 
-apply_letter_label(gd, "D")
+apply_letter_label(gd, "Di")
+Label(gd[2,1,TopLeft()], "ii",
+    fontsize = 26,
+    font = :bold,
+    padding = (0, 0, 0, 0),
+    halign = :right,
+    tellwidth = false,
+    tellheight = false
+)
+apply_letter_label(gd_right, "iii")
+
+linkxaxes!(ax_power_mi, ax_power_prec)
+rowgap!(gd_right, 0)
+colsize!(gd, 2, Relative(0.6))
 
 # -------- Circularity as predictor of MI, precision
 
 df_circ = @pipe df |> 
 @groupby(_, [:moth, :neuron, :muscle]) |> 
 @transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 1000) |> 
 leftjoin(_, dfc, on=[:moth, :neuron]) |> 
 @subset(_, :omnibus_stat .!= 0)
 
@@ -370,9 +383,6 @@ ax_ecdf_examp = Axis(ge[:,1],
 ge_right = ge[1:2, 2] = GridLayout()
 ax_circ_mi = Axis(ge_right[1,1], xscale=log10, yscale=log10, ylabel="I(X;Y) (bits/s)")
 ax_circ_prec = Axis(ge_right[2,1], xscale=log10, yscale=log10, xlabel="Kuiper statistic V", ylabel="Spike timing precision (ms)")
-linkxaxes!(ax_circ_mi, ax_circ_prec)
-rowgap!(ge_right, 0)
-colsize!(ge, 2, Relative(0.6))
 
 unif_vec = range(0, 1, 1000)
 for (i, examp_neuron) in enumerate(example_neurons)
@@ -403,7 +413,7 @@ sort!(examp_circ, [order(:kuiper_stat)])
 circ_polar_axes = []
 for (i, examp_neuron) in enumerate(examp_circ.neuron)
     this_inset = PolarAxis(ge[2,1], 
-        width=Relative(0.4), height=Relative(0.4), halign=-0.5 + 0.4 * i, valign=0.5,
+        width=Relative(circ_sort_rel_size), height=Relative(circ_sort_rel_size), halign=-0.5 + 0.4 * i, valign=0.5,
         clip=false, clip_r=false
     )
     hidedecorations!(this_inset)
@@ -474,13 +484,26 @@ end
 axislegend(ax_circ_mi, position=:rb)
 hidexdecorations!(ax_circ_mi, grid=false, minorgrid=false)
 
-apply_letter_label(ge, "E")
+apply_letter_label(ge, "Ei")
+Label(ge[2,1,TopLeft()], "ii",
+    fontsize = 26,
+    font = :bold,
+    padding = (0, 0, 0, 0),
+    halign = :right,
+    tellwidth = false,
+    tellheight = false
+)
+apply_letter_label(ge_right, "iii")
+
+linkxaxes!(ax_circ_mi, ax_circ_prec)
+rowgap!(ge_right, 0)
+colsize!(ge, 2, Relative(0.6))
 
 # -------- Final panel showing how two methods disagree on neurons without timing information
 dt = @pipe df |> 
 @groupby(_, [:moth, :neuron, :muscle]) |> 
 @transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :mi .> 0, :peak_mi, :muscle .== "all") |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 1000) |> 
 leftjoin(_, dfc, on=[:moth, :neuron])
 
 ax_stat_comp = Axis(gf[1,1], 
