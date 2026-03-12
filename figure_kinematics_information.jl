@@ -9,198 +9,17 @@ and other things set up and loaded. It's just put here to keep main_figures.jl f
 """
 
 CairoMakie.activate!()
-# GLMakie.activate!()
 
-
-function figure_kinematics_info()
-inch = 96
-cm = inch / 2.54
-f = Figure(size=(17.8cm, 9cm))
-
-color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
-
-dkn = @pipe df_kine_neur |> 
-groupby(_, [:moth, :neuron]) |> 
-@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :peak_mi)
-# @subset(_, :peak_valid_mi)
-
-dt = @pipe df |> 
-@subset(_, :nspikes .> 1000, :peak_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
-leftjoin(_, @subset(df_kine, :peak_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
-# @subset(_, :nspikes .> 1000, :peak_valid_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
-# leftjoin(_, @subset(df_kine, :peak_valid_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
-leftjoin(_, dkn, on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
-@transform(_, :mi_XY = :mi) |> 
-@transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
-@transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
-@subset(_, (!).(ismissing.(:mi_XY)), (!).(ismissing.(:mi_XZ)))
-# stack(_, [:mi_XY, :mi_XZ, :mi_YZ])
-
-ga = f[1,1] = GridLayout()
-gb = f[1,2] = GridLayout()
-# Add a shaded box around DVM example
-box_ad = Box(
-    f[1, 1:2, Makie.GridLayoutBase.Outer()],
-    alignmode = Outside(-10, -15, -12, -10),
-    cornerradius = 8,
-    color = (:lightblue, 0.15),
-    strokecolor = (:steelblue, 0.8),
-    strokewidth = 2,
-)
-# Move the box to the background so it doesn't cover the plots
-Makie.translate!(box_ad.blockscene, 0, 0, -200)
-
-ax_scatter = Axis(f[1,1], xlabel="I(X;DVM) (bits/s)", ylabel="I(X;Z) (bits/s)")
-mask = [x[2:end] .== "dvm" for x in dt.muscle] .&& ((!).(isnan.(dt.mi_XY))) .&& ((!).(isnan.(dt.mi_XZ)))
-ablines!(ax_scatter, 0, 1, color=:black, linewidth=2)
-positions = [((dt[i,:mi_XY], dt[i,:mi_XZ]), (dt[i,:mi_XY], dt[i,:mi_XY])) for i in findall(mask)]
-linesegments!(ax_scatter, positions, color=:gray)
-scatter!(ax_scatter, dt[mask,:mi_XY], dt[mask,:mi_XZ], markersize=7)
-
-# Inset axis
-ax_inset = Axis(f[1,2], 
-    width=Relative(0.5), height=Relative(0.5), 
-    halign=0.9, valign=0.9, aspect=DataAspect())
-img = with_logger(ConsoleLogger(stderr, Logging.Error)) do # suppress warnings about eXIf format
-    load(assetpath(joinpath(fig_dir, "muscles_DVM.png")))
-end
-image!(ax_inset, rotr90(img))
-hidedecorations!(ax_inset)
-hidespines!(ax_inset)
-
-# DVM hist
-ax_hist = Axis(f[1,2], xlabel="I(X;Z) - I(X;DVM) (bits/s)", ylabel="Prob. density")
-hist!(ax_hist, dt[mask,:mi_XZ] .- dt[mask,:mi_XY], normalization=:pdf)
-vlines!(ax_hist, 0, color=:black)
-
-xlims!(ax_scatter, low=0)
-ylims!(ax_scatter, low=0)
-ylims!(ax_hist, low=0)
-
-# DLM hist
-# gc = f[1,3]# = GridLayout()
-ax_dlm_hist = Axis(f[1,3], xlabel="I(X;Z) - I(X;DLM) (bits/s)")
-mask = [x[2:end] .== "dlm" for x in dt.muscle] .&& ((!).(isnan.(dt.mi_XY))) .&& ((!).(isnan.(dt.mi_XZ)))
-hist!(ax_dlm_hist, dt[mask,:mi_XZ] .- dt[mask,:mi_XY], normalization=:pdf)
-vlines!(ax_dlm_hist, 0, color=:black)
-ylims!(ax_dlm_hist, low=0)
-# DLM uCT inset
-ax_dlm_inset = Axis(f[1,3], 
-    width=Relative(0.5), height=Relative(0.5), 
-    halign=0.9, valign=0.9, aspect=DataAspect())
-img = with_logger(ConsoleLogger(stderr, Logging.Error)) do # suppress warnings about eXIf format
-    load(assetpath(joinpath(fig_dir, "muscles_DLM.png")))
-end
-image!(ax_dlm_inset, rotr90(img))
-hidedecorations!(ax_dlm_inset)
-hidespines!(ax_dlm_inset)
-
-
-# gd = f[2,1:3] = GridLayout()
-
-# AX, BA, SA, DVM, DLM panels
-ax_muscle = []
-for (i,muscle) in enumerate(["ax", "ba", "sa"])
-    if muscle .== "ax"
-        thisax = Axis(f[2,i], 
-            xlabel="I(X;Z) - I(X;" * uppercase(muscle) * ") (bits/s)", ylabel="Prob. density"
-            # limits=(nothing, (-0.15, 0.5))
-        )
-    else
-        thisax = Axis(f[2,i], xlabel="I(X;Z) - I(X;" * uppercase(muscle) * ") (bits/s)",
-            # limits=(nothing, (-0.15, 0.5))
-        )
-        hideydecorations!(thisax, ticks=false, grid=false, minorgrid=false, minorticks=false)
-    end
-    push!(ax_muscle, thisax)
-    mask = [x[2:end] .== muscle for x in dt.muscle] .&& ((!).(isnan.(dt.mi_XY))) .&& ((!).(isnan.(dt.mi_XZ)))
-    hist!(thisax, dt[mask,:mi_XZ] .- dt[mask,:mi_XY], normalization=:pdf)
-    # vals = dt[mask,:precision_XZ] .- dt[mask,:precision]
-    # hist!(thisax, vals[abs.(vals) .< 50], normalization=:pdf)
-    vlines!(thisax, [0], color=:black)
-
-    # Inset axis
-    ax_inset = Axis(f[2,i], 
-        width=Relative(0.5), height=Relative(0.5), 
-        halign=0.9, valign=0.9, aspect=DataAspect())
-    img = with_logger(ConsoleLogger(stderr, Logging.Error)) do # suppress warnings about eXIf format
-        load(assetpath(joinpath(fig_dir, "muscles_$(uppercase(muscle)).png")))
-    end
-    image!(ax_inset, rotr90(img))
-    hidedecorations!(ax_inset)
-    hidespines!(ax_inset)
-end
-linkaxes!(ax_muscle...)
-[ylims!(ax, low=0) for ax in ax_muscle]
-
-# All muscles panels
-g_bottom = f[:,4] = GridLayout()
-ge = g_bottom[1,1] = GridLayout()
-gf = g_bottom[2,1] = GridLayout()
-
-ax_all = Axis(ge[1,1], xlabel="I(X;Z) - I(X;Y) (bits/s)", ylabel="Prob. density", title="All muscles")
-mask = dt.muscle .== "all"
-hist!(ax_all, dt[mask, :mi_XZ] .- dt[mask, :mi_XY], normalization=:pdf)
-vlines!(ax_all, [0], color=:black)
-ylims!(ax_all, low=0)
-
-# lastax = Axis(gc[1,1])
-ax_prec_all = Axis(gf[1,1], xlabel="τ(X;Z) - τ(X;Y) (ms)")
-ddt = @pipe df |> 
-    @subset(_, :nspikes .> 1000, :peak_valid_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
-    leftjoin(_, @subset(df_kine, :peak_valid_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
-    leftjoin(_, dkn, on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
-    @subset(_, :muscle .== "all", (!).(isnan.(:precision)), (!).(isnan.(:precision_XZ)))
-hist!(ax_prec_all, ddt.precision_XZ .- ddt.precision, normalization=:pdf)
-vlines!(ax_prec_all, [0], color=:black)
-ylims!(ax_prec_all, low=0)
-
-linkaxes!(ax_hist, ax_dlm_hist, ax_all, ax_muscle...)
-
-# apply_letter_label(ga, "A")
-# apply_letter_label(gb, "B")
-# apply_letter_label(gc, "C")
-# apply_letter_label(gd, "D")
-# apply_letter_label(ge, "E")
-colsize!(f.layout, 4, Relative(0.35))
-# rowgap!(f.layout, 0)
-# rowgap!(f.layout, 2, 10)
-
-f
-end
-
-fontsize_theme = Theme(fontsize = 12)
-f = with_theme(fontsize_theme) do
-    figure_kinematics_info()
-end
-display(f)
-
-save(joinpath(fig_dir, "fig_kinematics_MI.pdf"), f)
-
-
-
-## ------------------------------------------------------------------------
-
-
-
-# function figure_kinematics_info_alt()
+function figure_kinematics_info_alt()
 inch = 96
 cm = inch / 2.54
 f = Figure(size=(8.5cm, 15cm))
 
 
-dkn = @pipe df_kine_neur |> 
-groupby(_, [:moth, :neuron]) |> 
-@transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-@subset(_, :peak_valid_mi)
-
 dt = @pipe df |> 
-# @subset(_, :nspikes .> 1000, :peak_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
-# leftjoin(_, @subset(df_kine, :peak_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
-@subset(_, :nspikes .> 1000, :peak_valid_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
-leftjoin(_, @subset(df_kine, :peak_valid_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
-leftjoin(_, dkn, on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
+@subset(_, :nspikes .> 1000, :peak_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
+leftjoin(_, @subset(df_kine, :peak_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
+leftjoin(_, @subset(df_kine_neur, :peak_mi), on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
 @transform(_, :mi_XY = :mi) |> 
 @transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
 @transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
@@ -208,6 +27,21 @@ leftjoin(_, dkn, on=[:neuron, :moth], renamecols=""=>"_XZ") |>
 @subset(_, (!).(isnan.(:mi_XY)) .&& (!).(isnan.(:mi_XZ)))
 dt.bilat_muscle = [x[2:end] for x in dt.muscle]
 dt = @pipe dt |> 
+@transform!(_, :muscle = ifelse.(:single, :bilat_muscle, :muscle)) |> 
+@subset(_, (!).(:muscle .∈ Ref(["Rsteering", "Rpower", "Lsteering", "Lpower"]))) |> 
+@subset(_, abs.(:precision_XZ .- :precision) .< 50)
+
+dtp = @pipe df |> 
+@subset(_, :nspikes .> 1000, :peak_valid_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
+leftjoin(_, @subset(df_kine, :peak_valid_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
+leftjoin(_, @subset(df_kine_neur, :peak_valid_mi), on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
+@transform(_, :mi_XY = :mi) |> 
+@transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
+@transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
+@subset(_, (!).(ismissing.(:mi_XY)), (!).(ismissing.(:mi_XZ))) |> 
+@subset(_, (!).(isnan.(:mi_XY)) .&& (!).(isnan.(:mi_XZ)))
+dtp.bilat_muscle = [x[2:end] for x in dtp.muscle]
+dtp = @pipe dtp |> 
 @transform!(_, :muscle = ifelse.(:single, :bilat_muscle, :muscle)) |> 
 @subset(_, (!).(:muscle .∈ Ref(["Rsteering", "Rpower", "Lsteering", "Lpower"]))) |> 
 @subset(_, abs.(:precision_XZ .- :precision) .< 50)
@@ -225,40 +59,84 @@ colors = [
 
 ga = f[1,1] = GridLayout()
 gb = f[1,2] = GridLayout()
+colgap!(f.layout, 0)
 
 ax = Axis(ga[1,1], xlabel="I(X;Z) - I(X;Y) (bits/s)")
 hideydecorations!(ax)
 hidespines!(ax, :l, :r, :t)
 
+jitter_width = 0.1
+
+# Rainclouds for mutual information
 # Rainclouds sorts using unique(), so create category vector that orders how I want
 category = getindex.(Ref(sort_dict), dt.muscle)
 inds = sortperm(category, rev=true)
 vals = dt.mi_XZ .- dt.mi_XY
-# vals = dt.precision_XZ .- dt.precision
-rainclouds!(ax, category[inds], vals[inds],
-    orientation=:horizontal, plot_boxplots=false,
-    cloud_width = 1.5, jitter_width=0.1,
-    color=colors[indexin(category[inds], unique(category[inds]))],
-)
+# rainclouds!(ax, category[inds], vals[inds],
+#     orientation=:horizontal, plot_boxplots=false,
+#     clouds=hist, hist_bins=40,
+#     cloud_width = 1., jitter_width=0.1,
+#     color=colors[indexin(category[inds], unique(category[inds]))],
+# )
+# Raincloud plots + mean lines on histograms for MI
+for (i,cat) in enumerate(unique(category[inds]))
+    mask = category[inds] .== cat
+    # Plot scatter, hist
+    hist_bins = range(-12, 12, 31) # odd num. of bins gives clean separation at zero
+    hist!(ax, vals[inds][mask], bins=hist_bins, 
+        offset=i, scale_to=0.8,
+        color=colors[i])
+    scatter!(ax, vals[inds][mask], i .- rand(sum(mask)) .* jitter_width .- 0.02,
+        markersize=2.0, color=colors[i])
+    
+    # Calculate histogram heights, add mean line
+    mean_val = mean(vals[inds][mask])
+    thishist = fit(Histogram, vals[inds][mask], hist_bins)
+    heights = thishist.weights ./ maximum(thishist.weights) .* 0.8
+    bin_centers = (hist_bins[1:end-1] .+ hist_bins[2:end]) ./ 2
+    mean_bin_idx = findmin(abs.(bin_centers .- mean_val))[2]
+    mean_line_height = heights[mean_bin_idx]
+    lines!(ax, [mean_val, mean_val], [i, i+mean_line_height], color=:black)
+end
 
-ax2 = Axis(gb[1,1], xlabel="τ(X;Z) - τ(X;Y) (ms)", xticks=[-10, -5, 0, 5, 10])
+ax2 = Axis(gb[1,1], xlabel="τ(X;Y) - τ(X;Z) (ms)", xticks=[-10, -5, 0, 5, 10])
 hideydecorations!(ax2)
 hidespines!(ax2, :l, :r, :t)
 
-# Rainclouds sorts using unique(), so create category vector that orders how I want
-category = getindex.(Ref(sort_dict), dt.muscle)
+# Rainclouds for precision
+category = getindex.(Ref(sort_dict), dtp.muscle)
 inds = sortperm(category, rev=true)
-vals = dt.precision_XZ .- dt.precision
-rainclouds!(ax2, category[inds], vals[inds],
-    orientation=:horizontal, plot_boxplots=false,
-    cloud_width = 1.5, jitter_width=0.1,
-    color=colors[indexin(category[inds], unique(category[inds]))],
-)
+vals = dtp.precision .- dtp.precision_XZ
+# rainclouds!(ax2, category[inds], vals[inds],
+#     orientation=:horizontal, plot_boxplots=false,
+#     clouds=hist, hist_bins=40,
+#     cloud_width = 1., jitter_width=0.1,
+#     color=colors[indexin(category[inds], unique(category[inds]))],
+# )
+# Raincloud plots + mean lines on histograms for precision
+for (i,cat) in enumerate(unique(category[inds]))
+    mask = category[inds] .== cat
+    # Plot scatter, hist
+    hist_bins = range(-12, 12, 31) # odd num. of bins gives clean separation at zero
+    hist!(ax2, vals[inds][mask], bins=hist_bins, 
+        offset=i, scale_to=0.8,
+        color=colors[i])
+    scatter!(ax2, vals[inds][mask], i .- rand(sum(mask)) .* jitter_width .- 0.02,
+        markersize=2.0, color=colors[i])
+    
+    # Calculate histogram heights, add mean line
+    mean_val = mean(vals[inds][mask])
+    thishist = fit(Histogram, vals[inds][mask], hist_bins)
+    heights = thishist.weights ./ maximum(thishist.weights) .* 0.8
+    bin_centers = (hist_bins[1:end-1] .+ hist_bins[2:end]) ./ 2
+    mean_bin_idx = findmin(abs.(bin_centers .- mean_val))[2]
+    mean_line_height = heights[mean_bin_idx]
+    lines!(ax2, [mean_val, mean_val], [i, i+mean_line_height], color=:black)
+end
 
 
 # Muscle labels on left side
-# ylims = (0.8, 8.53)
-ylims = (0.8, 9.3)
+ylims = (0.8, 9.45)
 ylims!(ax, ylims)
 ylims!(ax2, ylims)
 for (i,lab) in enumerate(["All", "Power", "Steering", "DLM", "DVM", "SA", "BA", "AX"])
@@ -267,7 +145,7 @@ for (i,lab) in enumerate(["All", "Power", "Steering", "DLM", "DVM", "SA", "BA", 
     fontcol = lab in ["DLM", "DVM", "SA", "BA", "AX"] ? muscle_colors_dict["r" * lowercase(lab)] : :black
     Label(ga[1,1], lab,
         tellheight = false, tellwidth = false,
-        halign = :right, valign = rel_y,
+        halign = :right, valign = rel_y + 0.015,
         justification=:right,
         padding = (0, 90, 0, 0),
         font = lab == "All" ? :bold : :regular,
@@ -275,22 +153,42 @@ for (i,lab) in enumerate(["All", "Power", "Steering", "DLM", "DVM", "SA", "BA", 
     )
 end
 
-arrows2d!(ax, Point2f(0, 9.1), [[-7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
-arrows2d!(ax, Point2f(0, 9.1), [[+7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
-text!(ax, -10, 8.6, text="More info.\nto muscle(s)", fontsize=10)
-text!(ax, 10, 8.6, text="More info.\nto wings", fontsize=10, align=(:right, :bottom))
+arr_height = 8.9
+arrows2d!(ax, Point2f(0, arr_height), [[-7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
+arrows2d!(ax, Point2f(0, arr_height), [[+7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
+Label(ga[1,1], "More info.\nto muscle(s)",
+    tellheight = false, tellwidth = false,
+    halign = :left, valign = :top, justification=:right,
+    padding = (-8, 0, 0, 0), # (l,r,b,t)
+    fontsize=10
+)
+Label(ga[1,1], "More info.\nto wings",
+    tellheight = false, tellwidth = false,
+    halign = :right, valign = :top, justification=:left,
+    padding = (0, 0, 0, 0), # (l,r,b,t)
+    fontsize=10
+)
 
-arrows2d!(ax2, Point2f(0, 9.1), [[-7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
-arrows2d!(ax2, Point2f(0, 9.1), [[+7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
-text!(ax2, -15, 8.6, text="More precise\nto wings", fontsize=10)
-text!(ax2, 14, 8.6, text="More precise\nto muscle(s)", fontsize=10, align=(:right, :bottom))
+arrows2d!(ax2, Point2f(0, arr_height), [[-7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
+arrows2d!(ax2, Point2f(0, arr_height), [[+7,0]], minshaftlength=0, tiplength=0.65*8, tipwidth=0.65*14, shaftwidth=2.5)
+Label(gb[1,1], "More precise\nto muscle(s)",
+    tellheight = false, tellwidth = false,
+    halign = :left, valign = :top, justification=:right,
+    padding = (-10, 0, 0, 0), # (l,r,b,t)
+    fontsize=10
+)
+Label(gb[1,1], "More precise\nto wings",
+    tellheight = false, tellwidth = false,
+    halign = :right, valign = :top, justification=:left,
+    padding = (0, -9, 0, 0), # (l,r,b,t)
+    fontsize=10
+)
 
 # Inset axes
 for (i,lab) in enumerate(["all", "power", "steering", "DLM", "DVM", "SA", "BA", "AX"])
     ax_inset = Axis(f[:,:], 
         width=Relative(0.17), height=Relative(0.17), 
-        # halign=0.5, valign=0.155 * i - 0.19, 
-        halign=0.5, valign=0.14 * i - 0.2, 
+        halign=0.5, valign=0.14 * i - 0.18, 
         aspect=DataAspect()
     )
     img = with_logger(ConsoleLogger(stderr, Logging.Error)) do # suppress warnings about eXIf format
@@ -306,13 +204,16 @@ vlines!(ax2, [0], color=:black)
 xlims!(ax, -10, 10)
 xlims!(ax2, -12, 12)
 
-apply_letter_label(ga, "A")
-apply_letter_label(gb, "B")
+apply_letter_label(ga, "A"; fontsize=20)
+apply_letter_label(gb, "B"; fontsize=20)
 
 colsize!(f.layout, 1, Relative(0.5))
+rowgap!(f.layout, 0)
 
 f
-# end
+end
 
-# f = figure_kinematics_info_alt()
+f = figure_kinematics_info_alt()
 display(f)
+
+save(joinpath(fig_dir, "fig_kinematics_info.pdf"), f)

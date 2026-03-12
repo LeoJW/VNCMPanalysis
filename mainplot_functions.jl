@@ -357,9 +357,9 @@ end
 
 #-------- Plotting Utilities
 
-function apply_letter_label(g, letter_label)
+function apply_letter_label(g, letter_label; fontsize=26)
     Label(g[1, 1, TopLeft()], letter_label,
-        fontsize = 26,
+        fontsize = fontsize,
         font = :bold,
         padding = (0, 5, 5, 0),
         halign = :right)
