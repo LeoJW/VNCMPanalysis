@@ -613,11 +613,13 @@ draw(_)#, axis=(; yscale=log10))
 ## -------------------------------- Figure 1 artifacts and details
 
 ## Neuron and Muscle raster plots
+thismoth = "2025-02-25_1"
+neurons, muscles, unit_details = get_spikes(thismoth)
+kine = npzread(joinpath(data_dir, "..", thismoth * "_kinematics.npz"))
 
-neurons, muscles, unit_details = get_spikes("2025-03-12_1")
 ##
 embedding = h5read(joinpath(data_dir, "..", "fig_1_embedding_data.h5"), "dict_0")
-plot_range = [1101, 1101.5]
+plot_range = [700, 700.5] #[1101, 1101.5]
 
 fsamp = 30000
 # good_units = [unit for (unit, qual) in unit_details["quality"] if qual == "good"]
@@ -633,15 +635,16 @@ use_xticks = [plot_range[1], plot_range[1] + (plot_range[2] - plot_range[1]) / 2
 
 f = Figure(size=(700,980))
 ax = Axis(f[1,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
-axe = Axis(f[2,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
-axm = Axis(f[3,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]), xlabel="Time (s)")
+axe = Axis(f[2,1])#, xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
+axm = Axis(f[3,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
+axk = Axis(f[4,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]), xlabel="Time (s)")
 
 seg = 1 / length(good_units[mask][sorti])
 for (i,unit) in enumerate(good_units[mask][sorti])
     # Skip some upper rows for empty space
-    if (i >= 13) .&& (i <= 13 + 3)
-        continue
-    end
+    # if (i >= 13) .&& (i <= 13 + 3)
+    #     continue
+    # end
     col = unit == 97 ? Makie.wong_colors()[2] : :black # 33 also good
     vlines!(ax, neurons[unit] ./ fsamp, ymin=(i-1)*seg, ymax=i*seg, color=col)
 end
@@ -649,8 +652,13 @@ seg = 1 / length(good_muscles)
 for (i,unit) in enumerate(good_muscles)
     vlines!(axm, muscles[unit] ./ fsamp, ymin=(i-1)*seg, ymax=i*seg, color=muscle_colors_dict[unit])
 end
+for (i,angle) in enumerate(["Lphi", "Ltheta", "Lalpha", "Rphi", "Rtheta", "Ralpha"])
+    mask = (kine["index"] .> fsamp * plot_range[1]) .&& (kine["index"] .< fsamp * plot_range[2])
+    lines!(axk, kine["index"] ./ fsamp, kine[angle] ./ (maximum(kine[angle][mask]) - minimum(kine[angle][mask])) .+ i * 2)
+end
 
-mask = (embedding["time"] .> plot_range[1]) .&& (embedding["time"] .< plot_range[2])
+# mask = (embedding["time"] .> plot_range[1]) .&& (embedding["time"] .< plot_range[2])
+mask = fill(true, length(embedding["time"]))
 for i in 1:3
     xvals = embedding["X"][i,mask]
     yvals = embedding["Y"][i,mask]
@@ -659,21 +667,35 @@ for i in 1:3
     lines!(axe, embedding["time"][mask], xvals .+ 6*i, color=Makie.wong_colors()[2])
     lines!(axe, embedding["time"][mask], yvals .+ 6*i, color=Makie.wong_colors()[1])
 end
+ylims!(axe, 2, 22)
 
-linkxaxes!(ax, axe, axm)
+linkxaxes!(ax, axe, axm, axk)
 hidedecorations!(ax)
+hidexdecorations!(axm)
 hidedecorations!(axe)
-hideydecorations!(axm, ticks=false)
+hideydecorations!(axm)
+hideydecorations!(axk)
 hidespines!(axe)
 hidespines!(ax)
 hidespines!(axm)
+hidespines!(axk)
 xlims!(ax, plot_range)
 xlims!(axm, plot_range)
+xlims!(axk, plot_range)
 rowsize!(f.layout, 1, Auto(1.5))
 rowsize!(f.layout, 3, Auto(1.2))
+rowgap!(f.layout, 0)
 display(f)
 
 # save(joinpath(fig_dir, "fig1_spike_data_with_embedding.svg"), f)
+
+##
+# discrete_vec = zeros(muscles["ldlm"][end]+10)
+# discrete_vec[muscles["ldlm"]] .= 1
+spec = spectrogram(discrete_vec, fsamp*8, round(Int,fsamp), fs=fsamp)
+
+# mat = 10 .* log10.(power(spec))
+fhm, ax, hm = heatmap(time(spec), freq(spec)[1:2000], transpose(power(spec)[1:2000,:]))
 
 ## Small subplots of latents against each other
 
