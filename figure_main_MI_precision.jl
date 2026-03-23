@@ -125,16 +125,11 @@ function figure3()
     println("$(sum(dt.peak_off_valid .== "Spike timing info")) neurons with timing information")
     println("$(sum(mask)) neurons with no timing information")
 
-    text!(ax_noinfo_dist, 0.6, 0.4, text="No timing information \n at peak MI", 
-        align=(:center, :baseline),
+    text!(ax_noinfo_dist, 0.6, 0.8, text="No timing information", 
+        align=(:center, :center),
         font=:bold, fontsize=18,
         color=colors[1], space=:relative
     )
-    # text!(ax_hasinfo_dist, 0.5, 0.75, text="Timing information \n at peak MI", 
-    #     align=(:center, :baseline),
-    #     font=:bold, fontsize=20,
-    #     color=colors[2], space=:relative
-    # )
 
 
     # Information between muscles and kinematics I(Y;Z)
@@ -191,11 +186,11 @@ function figure3()
     
     # Set global gaps and spacing
     colsize!(f.layout, 1, Relative(0.3))
-    colgap!(f.layout, 1, 0)
+    colgap!(f.layout, -20)
     colsize!(gb, 1, Relative(0.35))
     colgap!(gb, 1, 5)
     rowgap!(gb, 1, 5)
-    colgap!(gb, 2, 40)
+    # colgap!(gb, 2, 40)
     rowgap!(gb, 2, -20)
     rowgap!(gb, 3, 0)
     # rowgap!(gb, 5, 0)
@@ -249,3 +244,26 @@ AlgebraOfGraphics.data(_) *
 mapping(:mi, :eff, color=:direction) * visual(Scatter)
 ) |> 
 draw(_)
+
+
+
+##------------- KS test for whether ascending vs descending from same distribution
+dt = @pipe df |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+@subset(_, :peak_mi, :muscle .== "all", :nspikes .> 1000)
+
+ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :mi], dt[dt.direction .== "descending", :mi])
+
+ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :precision], dt[dt.direction .== "descending", :precision])
+
+##------------- KS test for whether timing vs no timing significantly different
+dt = @pipe df |> 
+    @subset(_, :muscle .== "all", :nspikes .> 1000) |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+    groupby(_, [:moth, :neuron, :muscle]) |> 
+    @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+    @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
+    @subset(_, :window_select)
+
+ApproximateTwoSampleKSTest(dt[dt.peak_off_valid .== "Spike timing info", :mi], dt[dt.peak_off_valid .== "No spike timing info", :mi])
+# ApproximateTwoSampleKSTest(dt[dt.peak_off_valid .== "timing", :precision], dt[dt.peak_off_valid .== "no timing", :precision])

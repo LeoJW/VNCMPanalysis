@@ -6,6 +6,7 @@ using Arrow
 using FileIO
 using Statistics
 using StatsBase # Mainly for rle
+using HypothesisTests
 using Clustering
 using Graphs # for clique finding
 using GLM
@@ -942,24 +943,10 @@ display(f)
 # save(joinpath(fig_dir, "fig2_network_training_and_param_selection.pdf"), f)
 
 
-##------------- Likelihood ratio test for pareto vs exponential distribution in neuron information
-
-dt = @pipe df |> 
-    @subset(_, :muscle .== "all", :nspikes .> 1000) |> 
-    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
-    groupby(_, [:moth, :neuron, :muscle]) |> 
-    # transform(_, [:peak_valid_mi]) |> 
-    @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
-    @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
-    @subset(_, :window_select)
-dt = dt[sortperm(dt.peak_off_valid), :]
-
-f = Figure()
 
 
 ##------------- KS test for whether ascending vs descending from same distribution
 
-using HypothesisTests
 
 dt = @pipe df |> 
 @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
@@ -1095,10 +1082,12 @@ end => AsTable) |>
 
 ##
 using LinearAlgebra
-# using MultivariateStats
-# using Arpack
 
+function fig_redundancy()
+inch = 96
+cm = inch / 2.54
 f = Figure(size=(800*1.56, 500))
+# f = Figure(size=(17.5cm, 0.4*17.5cm))
 ga = f[1,1] = GridLayout()
 ax = [Axis(ga[i,j], aspect=DataAspect()) for i in 1:2, j in 1:3]
 
@@ -1161,7 +1150,7 @@ Colorbar(ga[:, end+1], colormap=:seismic, colorrange=colrange, label="II (bits/s
 apply_letter_label(ga, "A")
 
 # Get all precision and II values as vectors
-prec_change, ii = Float64[], Float64[]
+prec_change, ii, ii_prec = Float64[], Float64[], Float64[]
 for moth in newmoths
     # II uses all neurons
     sdf = @subset(df, :peak_mi, :muscle .== "all", :moth .== moth)
@@ -1189,8 +1178,12 @@ for moth in newmoths
         npair = parse.(Float64, split(row.neuron, "-"))
         i_prec = @subset(sdf, :neuron .== npair[1]).precision
         j_prec = @subset(sdf, :neuron .== npair[2]).precision
+        i_mi = @subset(sdf, :neuron .== npair[1]).mi
+        j_mi = @subset(sdf, :neuron .== npair[2]).mi
         if length(i_prec) > 0 && length(j_prec) > 0
-            append!(prec_change, row.precision - mean([i_prec[1], j_prec[1]]))
+            # append!(prec_change, row.precision - mean([i_prec[1], j_prec[1]]))
+            append!(prec_change, row.precision - min(i_prec[1], j_prec[1]))
+            push!(ii_prec, row.mi - (i_mi[1] + j_mi[1]))
         end
     end
 end
@@ -1211,7 +1204,7 @@ poly!(axh, Point2f[(0,0), (-1000, 0), (0, 1000)],
 )
 min_ii = minimum(x->isnan(x) ? 0 : x,ii)
 max_ii = maximum(x->isnan(x) ? 0 : x,ii)
-bins = range(min_ii, max_ii, 101)
+bins = range(-max_ii, max_ii, 201)
 hist!(axh, ii[ii .< 0], bins=bins, color=resample_cmap(:seismic, 10)[2])
 hist!(axh, ii[ii .> 0], bins=bins, color=resample_cmap(:seismic, 10)[end-1])
 vlines!(axh, 0, color=:black)
@@ -1227,8 +1220,8 @@ text!(axh, 0.85, 0.5, text="Synergistic",
     space=:relative, 
     align=(:center, :bottom)
 )
-xlims!(axh, -25, 25)
-ylims!(axh, 0, 400)
+xlims!(axh, -10, 25)
+ylims!(axh, 0, 200)
 apply_letter_label(gb, "B")
 
 gc = g2[2,1] = GridLayout()
@@ -1245,47 +1238,145 @@ apply_letter_label(gc, "C")
 
 rowgap!(g2, 0)
 
-
 colsize!(f.layout, 1, Relative(0.6))
+return f
+end
 
+f = fig_redundancy()
 save(joinpath(fig_dir, "fig4_redundancy.pdf"), f)
 f
-# Could do this as hist with scatter of II and precision: One day!
 
-##
-
-# II uses all neurons
+##  Plot amount of new information against amount of new precision. II with "interaction precision"
+# Right now these differ on how many II calculations there are.... Double check this nonsense. THIS NONSENSE
 dfrm = @subset(dfr, :peak_valid_mi)
-dfrm.ii .= 0.0
+dfrm.ii .= NaN
+dfrm.ip .= NaN
 dfrm.direction .= "UU"
 sdf = @subset(df, :peak_valid_mi, :muscle .== "all")
-# Arrange neurons by firing rate
-neurons = unique(sdf.neuron)
 # Populate matrix
 for (i,row) in enumerate(eachrow(dfrm))
     npair = parse.(Float64, split(row.neuron, "-"))
     idf = @subset(sdf, :neuron .== npair[1], :moth .== row.moth)
     jdf = @subset(sdf, :neuron .== npair[2], :moth .== row.moth)
     i_mi, j_mi = idf.mi, jdf.mi
-    if length(i_mi) > 0 && length(j_mi) > 0
+    i_prec, j_prec = idf.precision, jdf.precision
+    # if length(i_mi) > 0 && length(j_mi) > 0
+    if length(i_prec) > 0 && length(j_prec) > 0
         dfrm.ii[i] = row.mi - (i_mi[1] + j_mi[1])
+        dfrm.ip[i] = row.precision - min(i_prec[1], j_prec[1])
         directs = sort([uppercase(idf.direction[1][1]), uppercase(jdf.direction[1][1])])
         dfrm.direction[i] = directs[1] * "-" * directs[2]
     end
 end
 
-# f = Figure()
-# ax = Axis(f[1,1])
-# mask = dfrm.ii .!= 0
-# scatter!(ax, dfrm.ii[mask], dfrm.precision[mask])
-# f
-@pipe dfrm |> 
-@subset(_, :ii .!= 0) |> 
-(AlgebraOfGraphics.data(_) * 
-mapping(:ii, :precision, color=:direction) * visual(Scatter, alpha=0.7)
-) |> 
-draw(_)
+dfrm = @subset(dfrm, (!).(isnan.(:ip)) .&& (!).(isnan.(:ii)))
 
+f = Figure()
+
+axtop = Axis(f[1,1])
+axcenter = Axis(f[2,1],
+    xlabel="I(Xᵢ,Xⱼ; Y) - (I(Xᵢ;Y) + I(Xⱼ;Y))  (bits/s)",
+    ylabel="τ(Xᵢ,Xⱼ; Y) - min(τ(Xᵢ;Y), τ(Xⱼ;Y))  (ms)"
+)
+axright = Axis(f[2,2])
+
+# Shading
+poly!(axcenter, Point2f[(0,-1000), (1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[end-2], alpha=0.2,
+    xautolimits=false, yautolimits=false)
+poly!(axcenter, Point2f[(0,-1000), (-1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[3], alpha=0.2,
+    xautolimits=false, yautolimits=false)
+poly!(axtop, Point2f[(0,-1000), (1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[end-2], alpha=0.2,
+    xautolimits=false, yautolimits=false)
+poly!(axtop, Point2f[(0,-1000), (-1000, 0), (0, 1000)],
+    color=resample_cmap(:seismic, 10)[3], alpha=0.2,
+    xautolimits=false, yautolimits=false)
+
+text!(axtop, 0.15, 0.5, text="Redundant", 
+    fontsize=18, color=resample_cmap(:seismic, 10)[2],
+    align=(:center, :bottom), space=:relative)
+text!(axtop, 0.85, 0.5, text="Synergistic", 
+    fontsize=18, color=resample_cmap(:seismic, 10)[end-1],
+    align=(:center, :bottom), space=:relative)
+text!(axright, 0.5, 0.9, text="Paired \n less precise", 
+    fontsize=18, color=:black,
+    align=(:center, :center), space=:relative)
+text!(axright, 0.5, 0.1, text="Paired \n more precise", 
+    fontsize=18, color=:black,
+    align=(:center, :center), space=:relative)
+
+
+maxval_ii = max(abs(minimum(dfrm.ii)), maximum(dfrm.ii))
+maxval_ip = max(abs(minimum(dfrm.ip)), maximum(dfrm.ip))
+ii_bins = range(-maxval_ii, maxval_ii, 81)
+ip_bins = range(-maxval_ii, maxval_ii, 41)
+hist!(axtop, dfrm.ii[dfrm.ii .< 0], bins=ii_bins, color=resample_cmap(:seismic, 10)[2])
+hist!(axtop, dfrm.ii[dfrm.ii .> 0], bins=ii_bins, color=resample_cmap(:seismic, 10)[end-1])
+scatter!(axcenter, dfrm.ii, dfrm.ip, color=RGB(0.25), markersize=6)
+hist!(axright, dfrm.ip, direction=:x, bins=ip_bins, color=RGB(0.35))
+
+vlines!(axtop, 0, color=:black, linewidth=2)
+hlines!(axright, 0, color=:black, linewidth=2)
+hlines!(axcenter, 0, color=:black, linewidth=2)
+vlines!(axcenter, 0, color=:black, linewidth=2)
+
+linkxaxes!(axcenter, axtop)
+linkyaxes!(axcenter, axright)
+ylims!(axtop, low=0)
+xlims!(axright, low=0)
+xl = (-maxval_ii-0.5, maxval_ii+0.5)
+yl = (-maxval_ip-0.5, maxval_ip+0.5)
+xlims!(axcenter, xl...)
+ylims!(axcenter, yl...)
+
+hidedecorations!(axtop)
+hidedecorations!(axright)
+rowsize!(f.layout, 1, Relative(1/4))
+colsize!(f.layout, 2, Relative(1/4))
+rowgap!(f.layout, 0)
+colgap!(f.layout, 0)
+
+display(f)
+##
+
+# II uses all neurons
+dfrm = @subset(dfr, :peak_valid_mi)
+dfrm.ii .= 0.0
+dfrm.pi .= 0.0
+dfrm.direction .= "UU"
+sdf = @subset(df, :peak_valid_mi, :muscle .== "all")
+# Populate matrix
+for (i,row) in enumerate(eachrow(dfrm))
+    npair = parse.(Float64, split(row.neuron, "-"))
+    idf = @subset(sdf, :neuron .== npair[1], :moth .== row.moth)
+    jdf = @subset(sdf, :neuron .== npair[2], :moth .== row.moth)
+    i_mi, j_mi = idf.mi, jdf.mi
+    i_prec, j_prec = idf.precision, jdf.precision
+    if length(i_mi) > 0 && length(j_mi) > 0
+        dfrm.ii[i] = row.mi - (i_mi[1] + j_mi[1])
+        dfrm.pi[i] = row.precision - min(i_prec[1], j_prec[1])
+        directs = sort([uppercase(idf.direction[1][1]), uppercase(jdf.direction[1][1])])
+        dfrm.direction[i] = directs[1] * "-" * directs[2]
+    end
+end
+
+
+CairoMakie.activate!()
+
+plt = (
+mapping([0], [0]) * visual(ABLines, color=:black) + 
+mapping([0]) * visual(VLines, color=:black) +
+AlgebraOfGraphics.data(@subset(dfrm, :ii .!= 0)) * 
+mapping(:ii=>L"II(X_1, X_2; Y) \text{ (bits/s)}", :pi=>L"\tau (X_1,X_2;Y) - min(\tau(X_1;Y),\text{ } \tau(X_2;Y)) \text{ (ms)}", 
+    color=:direction=>"Direction", row=:direction) * 
+visual(Scatter, alpha=0.7)
+)
+f = draw(plt, figure=(; size=(400, 800)))
+display(f)
+
+save(joinpath(fig_dir, "supp_precision_interactioninfo.pdf"), f)
 ## -------------------------------- Redundancy: Individual information vs II
 newmoths = [replace(m, r"_1$" => "-1") for m in moths]
 for (ii, (axi,axj,moth)) in enumerate(Iterators.zip(repeat(1:2, inner=3), repeat(1:3,2), newmoths))
