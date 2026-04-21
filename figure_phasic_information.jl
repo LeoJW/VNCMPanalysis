@@ -9,6 +9,7 @@ and other things set up and loaded. It's just put here to keep main_figures.jl f
 
 GLMakie.activate!() # Cairo doesn't do circular histograms correctly
 
+function phasic_neuron_figure()
 muscle_colors = [
     "lax" => "#94D63C", "rax" => "#6A992A",
     "lba" => "#AE3FC3", "rba" => "#7D2D8C",
@@ -55,7 +56,7 @@ mask = (diffvec .> wb_duration_thresholds[1]) .&& (diffvec .< wb_duration_thresh
 start_inds = spikevec[findall(vcat(false, mask))]
 vspan!(ax_examp, start_inds[1:2:end-1] ./ fsamp, start_inds[2:2:end] ./ fsamp, color=RGBAf(0.9, 0.9, 0.9, 1.0))
 vlines!(ax_examp, spikevec ./ fsamp, ymin=0, ymax=0.5, color=:black)
-vlines!(ax_examp, spikes["76"][mask_neur] ./ fsamp, ymin=0.5, ymax=1.0)
+vlines!(ax_examp, spikes["76"][mask_neur] ./ fsamp, ymin=0.5, ymax=1.0, color=Makie.wong_colors()[1])
 textlabel!(ax_examp, 0.95, 0.25, text="LDLM", space=:relative, fontsize=18, text_align=(:right, :center))
 textlabel!(ax_examp, 0.95, 0.75, text="Neuron 76", space=:relative, fontsize=18, text_align=(:right, :center), text_color=Makie.wong_colors()[1])
 hideydecorations!(ax_examp)
@@ -108,12 +109,12 @@ for i in eachindex(muscle_colors)
 end
 hist!(ax_muscle_hist, phase_dict[max_mi_neuron[thismoth]] .* 2*pi, 
     bins=ceil(Int, sqrt(length(phase_dict[max_mi_neuron[thismoth]]))), 
-    normalization=:pdf, offset=-1, scale_to=1.0)
+    normalization=:pdf, offset=-1, scale_to=1.0, color=Makie.wong_colors()[1])
 lines!(ax_muscle_hist, range(0, 2*pi, 1000), zeros(1000), color=:black, linewidth=2)
 scatter!(ax_muscle_hist, 0, -1, color=:black, markersize=5)
-text!(ax_muscle_hist, pi/2, -0.6, text="N. 76", font=:bold, color=:black, fontsize=16, align=(:center, :center))
+text!(ax_muscle_hist, pi/2, -0.6, text="N. 76", font=:bold, color=:black, fontsize=18, align=(:center, :center))
 
-lines!(ax_muscle_hist, [0, 0], [0.83, 0.98], color=:black, linewidth=3)
+lines!(ax_muscle_hist, [0, 0], [0.92, 0.98], color=:black, linewidth=3)
 text!(ax_muscle_hist, 0, 1., text="LDLM", color=:black, fontsize=22, align=(:left, :center))
 
 apply_letter_label(gb, "B")
@@ -207,13 +208,16 @@ on(events(f).window_open) do _  # fires once layout is resolved
             y_frac = (px_top - ax_nl_origin[2]) / ax_nl_widths[2]
             y_label = y_min + y_frac * y_max
             text!(ax_nl, x_label, y_label, text="N. " * neur,
-                align=(:center, :bottom), fontsize=14, color=text_color, font=:bold)
+                align=(:center, :bottom), fontsize=20, color=text_color, font=:bold)
         else  # bottom row: label below
             px_bottom = pa_bb.origin[2]
             y_frac = (px_bottom - ax_nl_origin[2]) / ax_nl_widths[2]
             y_label = y_min + y_frac * y_max
+            if neur == "82"
+                x_label += 0.15
+            end
             text!(ax_nl, x_label, y_label, text="N. " * neur,
-                align=(:center, :top), fontsize=14, color=text_color, font=:bold)
+                align=(:center, :top), fontsize=20, color=text_color, font=:bold)
         end
     end
 end
@@ -225,8 +229,8 @@ colsize!(top_row, 2, Relative(2/3))
 
 
 bottom_row = f[2, 1:3] = GridLayout()
-gd = bottom_row[1, 1] = GridLayout()
-ge = bottom_row[1, 2] = GridLayout()
+gd = bottom_row[1, 2] = GridLayout()
+ge = bottom_row[1, 1] = GridLayout()
 gf = bottom_row[1, 3] = GridLayout()
 
 
@@ -286,8 +290,7 @@ for lab_val in ticks
     lines!(ax_power_sort, [lab_val, lab_val], [-0.04, 0.04], color=:black)
     text!(ax_power_sort, lab_val, -0.06, text=string(lab_val), align=(:center, :top))
 end
-text!(ax_power_sort, 0.5, 0.05, text="Power at wingbeat frequency (dB/Hz)", 
-    space=:relative, align=(:center, :center))
+Label(gd[2,1,Bottom()], "Power at \n wingbeat frequency (dB/Hz)", fontsize=18, tellwidth=false, padding=(0,0,0,-20))
 limits!(ax_power_sort, (xmin, xmax), (ymin, ymax))
 let xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax
     on(events(f).window_open) do _  # fires once layout is resolved
@@ -313,7 +316,7 @@ let xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax
             px_top = pa_bb.origin[2] + pa_bb.widths[2]
             y_label = ymin + ((px_top - ax_p_origin[2]) / ax_p_widths[2]) * ymax + 0.15
             text!(ax_power_sort, x_label, y_label, text="N. " * neur,
-                align=(:center, :bottom), fontsize=14, color=color, font=:bold)
+                align=(:center, :bottom), fontsize=18, color=color, font=:bold)
         end
     end
 end
@@ -343,10 +346,10 @@ for timing_info in ["Spike timing info", "No spike timing info"]
             # color=color_dict[first(gdf.direction)])
     end
 end
-axislegend(ax_power_mi, position=:rb)
+axislegend(ax_power_mi, position=:rb, backgroundcolor=(:white, 1.0))
 hidexdecorations!(ax_power_mi, grid=false, minorgrid=false)
 
-apply_letter_label(gd, "Di")
+apply_letter_label(gd, "Ei")
 Label(gd[2,1,TopLeft()], "ii",
     fontsize = 26,
     font = :bold,
@@ -385,7 +388,7 @@ ax_circ_mi = Axis(ge_right[1,1], xscale=log10, yscale=log10, ylabel="I(X;Y) (bit
 ax_circ_prec = Axis(ge_right[2,1], xscale=log10, yscale=log10, xlabel="Kuiper statistic V", ylabel="Spike timing precision (ms)")
 
 unif_vec = range(0, 1, 1000)
-for (i, examp_neuron) in enumerate(example_neurons)
+for (i, examp_neuron) in enumerate(example_neurons[[1,3,4,2]]) # run in different order to get example N. 27 on top
     xvec = range(0, 2*pi, 1000)
     ecdf = ecdf_func(phase_dict[examp_neuron], xvec)
     comparison = ecdf .- unif_vec
@@ -399,9 +402,9 @@ for (i, examp_neuron) in enumerate(example_neurons)
     )
     lines!(ax_ecdf_examp, xvec, ecdf, color=example_neuron_colors[examp_neuron], linewidth=2)
 end
-text!(ax_ecdf_examp, 5*pi/4, 0.4, text=L"D^-", color=example_neuron_colors["27"], fontsize=17)
-text!(ax_ecdf_examp, 7*pi/4-pi/8, 0.9, text=L"D^+", color=example_neuron_colors["27"], fontsize=17)
-textlabel!(ax_ecdf_examp, 1.6*pi, 0.1, text=L"V=D^+ + D^-", fontsize=17)
+text!(ax_ecdf_examp, pi*0.97, 0.32, text=L"D^-", color=example_neuron_colors["27"], fontsize=19)
+text!(ax_ecdf_examp, 7*pi/4-pi/8-0.1, 0.895, text=L"D^+", color=example_neuron_colors["27"], fontsize=19)
+textlabel!(ax_ecdf_examp, pi/2+0.5, 0.85, text=L"V=D^+ + D^-", fontsize=20)
 
 # Phase histograms ordered/sorted by circularity
 ax_circ_sort = Axis(ge[2,1])
@@ -433,8 +436,8 @@ for lab_val in ticks
     lines!(ax_circ_sort, [lab_val, lab_val], [-0.04, 0.04], color=:black)
     text!(ax_circ_sort, lab_val, -0.06, text=string(lab_val), align=(:center, :top))
 end
-text!(ax_circ_sort, 0.5, 0.05, text="Kuiper statistic V", 
-    space=:relative, align=(:center, :center))
+# text!(ax_circ_sort, 0.5, 0.05, text="Kuiper statistic V", space=:relative, align=(:center, :center))
+Label(ge[2,1,Bottom()], "Kuiper statistic V", fontsize=18, tellwidth=false, padding=(0,0,0,-35))
 limits!(ax_circ_sort, (xmin, xmax), (ymin, ymax))
 let xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax
     on(events(f).window_open) do _  # fires once layout is resolved
@@ -459,7 +462,7 @@ let xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax
             px_top = pa_bb.origin[2] + pa_bb.widths[2]
             y_label = ymin + ((px_top - ax_p_origin[2]) / ax_p_widths[2]) * ymax + 0.15
             text!(ax_circ_sort, x_label, y_label, text="N. " * neur,
-                align=(:center, :bottom), fontsize=14, color=color, font=:bold)
+                align=(:center, :bottom), fontsize=18, color=color, font=:bold)
         end
     end
 end
@@ -481,10 +484,10 @@ for timing_info in ["Spike timing info", "No spike timing info"]
         )
     end
 end
-axislegend(ax_circ_mi, position=:rb)
+# axislegend(ax_circ_mi, position=:rb, backgroundcolor=(:white, 0.5))
 hidexdecorations!(ax_circ_mi, grid=false, minorgrid=false)
 
-apply_letter_label(ge, "Ei")
+apply_letter_label(ge, "Di")
 Label(ge[2,1,TopLeft()], "ii",
     fontsize = 26,
     font = :bold,
@@ -515,7 +518,7 @@ for gdf in groupby(dt, :has_timing_info)
     scatter!(ax_stat_comp, gdf.kuiper_stat, 10 .* log10.(gdf.peak_power), 
         label=gdf.has_timing_info[1], color=timing_colors[gdf.has_timing_info[1]])
 end
-axislegend(ax_stat_comp, position=:rb)
+axislegend(ax_stat_comp, position=:lt)
 xlims!(ax_stat_comp, 0.86, 70)
 apply_letter_label(gf, "F")
 
@@ -523,9 +526,164 @@ apply_letter_label(gf, "F")
 colgap!(bottom_row, 20)
 colsize!(bottom_row, 3, Relative(1/5))
 rowsize!(f.layout, 2, Relative(0.5))
-# return f
-# end
+return f
+end
 
-# f = phasic_neuron_figure()
+fontsize_theme = Theme(fontsize = 18)
+f = with_theme(fontsize_theme) do
+    phasic_neuron_figure()
+end
 display(f)
 save(joinpath(fig_dir, "fig_phasic.png"), f)
+
+
+## Supplement Figure: Other circularity tests
+CairoMakie.activate!()
+
+timing_colors = Dict("No spike timing info" => "#5e3c99", "Spike timing info" => "#e66101")
+
+df_circ = @pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 1000) |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+@subset(_, :omnibus_stat .!= 0)
+
+
+tests = ["kuiper", "watson", "rao", "omnibus"]
+
+f = Figure(size=(1000,400))
+ax_mi = [Axis(f[1,i], xscale=log10, yscale=log10) for i in 1:length(tests)]
+ax_prec = [Axis(f[2,i], xscale=log10, yscale=log10) for i in 1:length(tests)]
+
+for (i, test) in enumerate(tests)
+    for timing_info in ["Spike timing info", "No spike timing info"]
+        gdf = @subset(df_circ, :has_timing_info .== timing_info)
+        scatter!(ax_mi[i], gdf[:, test * "_stat"], gdf.mi,
+            label=gdf.has_timing_info[1],
+            color=timing_colors[gdf.has_timing_info[1]]
+        )
+        if timing_info == "Spike timing info"
+            scatter!(ax_prec[i], gdf[:, test * "_stat"], gdf.precision,
+                label=gdf.has_timing_info[1],
+                color=timing_colors[gdf.has_timing_info[1]]
+            )
+        end
+    end
+    linkxaxes!(ax_mi[i], ax_prec[i])
+    hidexdecorations!(ax_mi[i], grid=false)
+    ax_prec[i].xlabel = titlecase(test) * " test statistic"
+end
+linkyaxes!(ax_prec...)
+linkyaxes!(ax_mi...)
+
+ax_mi[1].ylabel = "I(X;Y) (bits/s)"
+ax_prec[1].ylabel = "τ(X;Y) (ms)"
+
+f[0,:] = Legend(f, ax_mi[end], grid=false, minorgrid=false, orientation = :horizontal)
+
+display(f)
+
+save(joinpath(fig_dir, "fig_supp_circularity_tests.pdf"), f)
+
+##
+@pipe df_circ |> 
+(
+AlgebraOfGraphics.data(_) * 
+mapping(:kuiper_stat, :mi, color=:direction) * visual(Scatter)
+) |> 
+draw(_, axis=(; xscale=log10, yscale=log10))
+
+##
+
+
+dfc = DataFrame(Arrow.Table(joinpath(data_dir, "..", "circular_stats.arrow")))
+disallowmissing!(dfc)
+vector_cols = ["movm_mu", "kappa", "movm_rvec", "movm_BIC", "mokj_mu", "gamma", "rho", "lam", "mokj_BIC"]
+# Clean up types
+for col in vector_cols
+    dfc[!,col] = [convert(Vector{Float64}, v) for v in dfc[!,col]]
+end
+transform!(dfc, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth)
+
+α = 0.05
+moth_pval_threshold = Dict()
+# Example plot for omnibus test
+f = Figure(size=(300,700))
+for (i,dt) in enumerate(groupby(@subset(dfc, :omnibus_p .!= 0), :moth))
+    ax = Axis(f[i,1], title=dt.moth[1])
+    p = sort(dt.omnibus_p)
+    mask = p .<= (collect(1:nrow(dt)) / nrow(dt) * α)
+    nonzero = findall(p .!= 0)
+    lastind = findlast(p[nonzero] .<= (collect(1:length(p[nonzero])) / length(p[nonzero]) * α))
+    lastind = min(length(p[nonzero])-1, lastind)
+    moth_pval_threshold[dt.moth[1]] = p[lastind] + (p[lastind+1] - p[lastind])/2
+    scatterlines!(ax, collect(1:nrow(dt))[mask], p[mask], color=Makie.wong_colors()[1])
+    scatterlines!(ax, collect(1:nrow(dt))[(!).(mask)], p[(!).(mask)], color=:red)
+end
+display(f)
+
+## Linear models between metrics (Kuiper, PSD@wbf) and mutual info/precision
+
+df_circ = @pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 1000) |> 
+leftjoin(_, dfc, on=[:moth, :neuron]) |> 
+@subset(_, :omnibus_stat .!= 0)
+
+models = [
+    lm(@formula(log(mi) ~ log(kuiper_stat) * has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ log(kuiper_stat) + has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ log(kuiper_stat)), df_circ)
+    lm(@formula(log(mi) ~ 1), df_circ)
+]
+println(bic.([mod.model for mod in models]))
+println(ftest([mod.model for mod in models]...))
+
+df_circ_prec = @subset(df_circ, :has_timing_info .== "Spike timing info")
+models = [
+    lm(@formula(log(precision) ~ log(kuiper_stat)), df_circ_prec)
+    lm(@formula(log(precision) ~ 1), df_circ_prec)
+]
+println(bic.([mod.model for mod in models]))
+println(ftest([mod.model for mod in models]...))
+
+
+models = [
+    lm(@formula(log(mi) ~ log(kuiper_stat) * has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ log(kuiper_stat) + has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ log(kuiper_stat)), df_circ)
+    lm(@formula(log(mi) ~ 1), df_circ)
+]
+
+# Power spectral density
+df_circ = @transform(df_circ, :psd = 10 .* log10.(:peak_power))
+models = [
+    lm(@formula(log(mi) ~ psd * has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ psd + has_timing_info), df_circ)
+    lm(@formula(log(mi) ~ psd), df_circ)
+    lm(@formula(log(mi) ~ 1), df_circ)
+]
+println(ftest([mod.model for mod in models]...))
+
+df_circ_prec = @subset(df_circ, :has_timing_info .== "Spike timing info")
+models = [
+    lm(@formula(log(precision) ~ psd), df_circ_prec)
+    lm(@formula(log(precision) ~ 1), df_circ_prec)
+]
+println(ftest([mod.model for mod in models]...))
+
+# Compare two metrics
+
+
+##
+
+@pipe df |> 
+@groupby(_, [:moth, :neuron, :muscle]) |> 
+@transform(_, :has_timing_info = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+@subset(_, :mi .> 0, :peak_mi, :muscle .== "all", :nspikes .> 1000) |> 
+(
+AlgebraOfGraphics.data(_) * mapping(:meanrate, :precision, color=:moth) * visual(Scatter)
+) |> 
+draw(_)

@@ -206,7 +206,7 @@ for col in vector_cols
 end
 transform!(dfc, :moth => ByRow(x -> replace(x, r"_1$" => "-1")) => :moth)
 
-# False Discovery rate correction
+# False Discovery rate correction (Benjamini–Hochberg procedure)
 α = 0.05
 moth_pval_threshold = Dict()
 # Example plot for omnibus test
@@ -215,12 +215,14 @@ for (i,dt) in enumerate(groupby(@subset(dfc, :omnibus_p .!= 0), :moth))
     ax = Axis(f[i,1], title=dt.moth[1])
     p = sort(dt.omnibus_p)
     mask = p .<= (collect(1:nrow(dt)) / nrow(dt) * α)
-    lastind = findlast(mask)
+    nonzero = findall(p .!= 0)
+    lastind = findlast(p[nonzero] .<= (collect(1:length(p[nonzero])) / length(p[nonzero]) * α))
+    lastind = min(length(p[nonzero])-1, lastind)
     moth_pval_threshold[dt.moth[1]] = p[lastind] + (p[lastind+1] - p[lastind])/2
     scatterlines!(ax, collect(1:nrow(dt))[mask], p[mask], color=Makie.wong_colors()[1])
     scatterlines!(ax, collect(1:nrow(dt))[(!).(mask)], p[(!).(mask)], color=:red)
 end
-f
+display(f)
 # Run correction for all tests
 test_vars = [:kuiper_p, :watson_p, :rao_p, :omnibus_p]
 for test_var in test_vars
@@ -230,14 +232,14 @@ for test_var in test_vars
         lastind = findlast(p[nonzero] .<= (collect(1:length(p[nonzero])) / length(p[nonzero]) * α))
         lastind = min(length(p[nonzero])-1, lastind)
         moth_pval_threshold = p[nonzero][lastind] + (p[nonzero][lastind+1] - p[nonzero][lastind]) / 2
-        dt[!,string(test_var) * "_signif"] = dt[!,test_var] .< moth_pval_threshold
+        dt[!,string(test_var) * "_signif"] = dt[!,test_var] .<= moth_pval_threshold
     end
 end
 
 # Some summary stats
 @pipe dfc |> 
 groupby(_, [:moth]) |> 
-combine(_, :omnibus_p_signif => mean, :rao_p_signif => mean, :kuiper_p_signif => mean)
+combine(_, :kuiper_p_signif => mean, :watson_p_signif => mean, :rao_p_signif => mean, :omnibus_p_signif => mean)
 
 # ---------------- Dataframe of each neuron's power at wingbeat frequency
 wingbeat_freq_range = [12, 24] # Hz

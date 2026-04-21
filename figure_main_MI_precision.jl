@@ -10,7 +10,7 @@ CairoMakie.activate!()
 # GLMakie.activate!()
 
 function figure3()
-    f = Figure(size=(1300, 600))
+    f = Figure(size=(1300, 625))
 
     dfmain = @pipe df |> 
     @subset(_, :peak_valid_mi, :nspikes .> 1000) |> 
@@ -48,6 +48,8 @@ function figure3()
     linkxaxes!(ax1, axtop)
     linkyaxes!(ax1, axright)
 
+    timing_info_colors = [colorant"#e66101", colorant"#5e3c99"]
+
     # Plot the scatter with density data
     data = dfmain[dfmain.muscle .== "all", :]
     color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
@@ -60,9 +62,9 @@ function figure3()
         label = titlecase(gdf.direction[1])
         scatter!(ax1, gdf.mi, gdf.precision, label=label, color=color_dict[gdf.direction[1]], markersize=12)
     end
-    usecol = Makie.wong_colors()[1]
-    hist!(axtop, data.mi, bins=mi_bins, normalization=:pdf, color=usecol)
-    hist!(axright, data.precision, bins=prec_bins, direction=:x, normalization=:pdf, color=usecol)
+    histcol = :grey #Makie.wong_colors()[1]
+    hist!(axtop, data.mi, bins=mi_bins, normalization=:pdf, color=histcol)
+    hist!(axright, data.precision, bins=prec_bins, direction=:x, normalization=:pdf, color=histcol)
 
     # Add mean value lines
     mean_mi = mean(data.mi)
@@ -84,24 +86,25 @@ function figure3()
     # Horizontal line on right histogram (axright) at mean precision value, stopping at histogram height
     lines!(axright, [0, mean_prec_height], [mean_precision, mean_precision], color=:black, linewidth=2)
 
+    text!(ax1, 0.99, 0.99, text="Neurons with \nspike timing info.", 
+        align=(:right, :top),
+        font=:bold, fontsize=18,
+        color=timing_info_colors[1], space=:relative
+    )
+
     ylims!(axtop, low = 0)
     ylims!(ax1, 0, nothing)
     ylims!(axright, 0, nothing)
     xlims!(axright, low = 0)
-    hidedecorations!(axtop, grid = false)
-    hidedecorations!(axright, grid = false, minorgrid=false)
+    hidexdecorations!(axtop, grid=false)
+    hideydecorations!(axtop)
+    hidexdecorations!(axright)
+    hideydecorations!(axright, grid=false)
 
     leg = Legend(gb[1, 2], ax1, labelsize=16)
     leg.tellheight = true
 
-    # Bottom raincloud plot
-    # axrain = Axis(gb[3,1],
-    #     xlabel="Mutual Information (bits/s)"
-    # )
-    # ax_hasinfo_dist = Axis(gb[3,1], yscale=log10, ylabel="Prob. density")
-    # ax_hasinfo_box = Axis(gb[4,1])
-    ax_noinfo_dist = Axis(gb[3,1], yscale=log10, ylabel="Prob. density")
-    ax_noinfo_box = Axis(gb[4,1], xlabel="I(X;Y) (bits/s)")
+    ax_noinfo = Axis(gb[3,1], xlabel="I(X;Y) (bits/s)")
 
     dt = @pipe df |> 
         @subset(_, :muscle .== "all", :nspikes .> 1000) |> 
@@ -109,27 +112,30 @@ function figure3()
         groupby(_, [:moth, :neuron, :muscle]) |> 
         @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
         @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
-        @subset(_, :window_select)
+        @subset(_, :window_select, :peak_off_valid .== "No spike timing info")
     dt = dt[sortperm(dt.peak_off_valid), :]
-    mi_bins = range(0, maximum(dfmain.mi[dfmain.mi .> 0,:])+1, 20)
-    # colors = [RGBA(0.5,0.5,0.5,1), Makie.wong_colors()[1]]
-    colors = [colorant"#5e3c99", colorant"#e66101"]
+    mi_bins = range(0, maximum(dt.mi)+1, 10)
 
-    mask = dt.peak_off_valid .== "No spike timing info"
-    hist!(ax_noinfo_dist, dt.mi[mask], bins=mi_bins, normalization=:pdf, color=colors[1])
-    rainclouds!(ax_noinfo_box, fill("", sum(mask)), dt.mi[mask],
-        orientation=:horizontal,
-        plot_boxplots=true, clouds=nothing,
-        markersize=8, color = colors[1]
-    )
-    println("$(sum(dt.peak_off_valid .== "Spike timing info")) neurons with timing information")
-    println("$(sum(mask)) neurons with no timing information")
-
-    text!(ax_noinfo_dist, 0.6, 0.8, text="No timing information", 
-        align=(:center, :center),
+    text!(ax_noinfo, 0.99, 0.99, text="Neurons without \nspike timing info.", 
+        align=(:right, :top),
         font=:bold, fontsize=18,
-        color=colors[1], space=:relative
+        color=timing_info_colors[2], space=:relative
     )
+    for (i,gdf) in enumerate(groupby(dt, :direction))
+        # scatter!(ax1, gdf.mi, gdf.precision, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+        scatter!(ax_noinfo, gdf.mi, rand(nrow(gdf)), color=color_dict[gdf.direction[1]], markersize=12)
+    end
+    hist!(ax_noinfo, dt.mi, bins=mi_bins, normalization=:pdf, offset=1.5, scale_to=2.0, color=histcol)
+    # Calculate bin heights, add mean line
+    mean_mi = mean(dt.mi)
+    mi_hist = fit(Histogram, dt.mi, mi_bins)
+    mi_heights = mi_hist.weights ./ (sum(mi_hist.weights) * step(mi_bins))  # Normalize to PDF
+    mi_bin_centers = (mi_bins[1:end-1] .+ mi_bins[2:end]) ./ 2
+    mean_mi_bin_idx = findmin(abs.(mi_bin_centers .- mean_mi))[2]
+    mean_mi_height = mi_heights[mean_mi_bin_idx]
+    lines!(ax_noinfo, [mean_mi, mean_mi], [1.5, 1.5 + mean_mi_height / maximum(mi_heights) * 2.0], color=:black, linewidth=2)
+
+    hideydecorations!(ax_noinfo)
 
 
     # Information between muscles and kinematics I(Y;Z)
@@ -139,8 +145,8 @@ function figure3()
     )
     inset_lims = ((75.4,125.7), (0.5,4))
     ax_YZ_inset = Axis(gb[2,3],
-        width=Relative(0.4), height=Relative(0.4),
-        halign=0.7, valign=0.8,
+        width=Relative(0.5), height=Relative(0.5),
+        halign=0.7, valign=0.9,
         xlabel="I(Y;Z) (bits/s)",
         ylabel="τ(Y;Z) (ms)",
         xticks=[80,100,120], yticks=[1,2,3], limits=inset_lims
@@ -169,20 +175,77 @@ function figure3()
     leg_YZ = Legend(gb[1,3], 
         [group_color, group_all], [muscles, ["All muscles"]], [nothing, nothing], 
         nbanks=5, orientation=:vertical, titleposition=:left,
-        rowgap=0, colgap=0,
+        rowgap=2, colgap=0, groupgap=0,
         labelsize=14, titlevisible=nothing
     )
     # leg_YZ = Legend(gb[1, 3], ax_YZ, labelsize=16, orientation=:horizontal, nbanks=2)
     # leg_YZ.tellheight = true
 
-    rowsize!(gb, 3, Relative(0.15))
-    rowsize!(gb, 4, Relative(0.08))
+    
+    dt = @pipe df |> 
+        @subset(_, :muscle .== "all", :nspikes .> 1000) |> 
+        @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+        groupby(_, [:moth, :neuron, :muscle]) |> 
+        @transform(_, :peak_off_valid = ifelse.(findfirst(:peak_mi) .!= findfirst(:peak_valid_mi), "No spike timing info", "Spike timing info")) |> 
+        @transform(_, :window_select = ifelse.(:peak_off_valid .== "Spike timing info", :peak_valid_mi, :peak_mi)) |> 
+        @subset(_, :window_select)
+    total_neurons = nrow(dt)
+    
+    bar_ax = gb[3,2:3] = GridLayout()
+    ax_bars = Axis(bar_ax[1,2], xlabel="Number of Neurons", 
+        xticks=[0, 50, 100, total_neurons],
+        xgridvisible=false
+    )
+    # Stacked sideways bar for number ascending, descending, uncertain
+    height = [
+        nrow(@subset(dt, :direction .== "descending")),
+        nrow(@subset(dt, :direction .== "ascending")),
+        nrow(@subset(dt, :direction .== "uncertain"))
+    ]
+    println(height)
+    barplot!(ax_bars, [2,2,2], height, 
+        stack=[1,2,3], color=[1,2,3], gap=0.2,
+        colormap=collect(values(color_dict)),
+        direction=:x,
+        label=[key => (; color=val) for (key, val) in color_dict]
+        )
+    # Stacked sideways bar for number of number with timing vs number without
+    height = [
+        nrow(@subset(dt, :peak_off_valid .== "Spike timing info")),
+        nrow(@subset(dt, :peak_off_valid .== "No spike timing info"))
+    ]
+    barplot!(ax_bars, [1,1], height, stack=[1,2], color=[1,2],
+        colormap=timing_info_colors,
+        direction=:x,
+        label=[lab => (; color=timing_info_colors[i]) for (i, lab) in enumerate(["Timing info.", "No timing info."])]
+    )
 
-    linkxaxes!(ax1, axtop, ax_noinfo_box, ax_noinfo_dist)
+    # Legend(bar_ax[1,3], ax_bars, framevisible=false)
+    line_elements = [PolyElement(color = color_dict[k]) for k in ["descending", "ascending", "uncertain"]]
+    timing_elements = [PolyElement(color = timing_info_colors[i]) for i in 1:2]
+    line_labels = ["Descending", "Ascending", "Uncertain"]
+    timing_labels = ["Timing info.", "No timing info."]
+    Legend(bar_ax[1,3], 
+        [line_elements, timing_elements], # Nested list of elements
+        [line_labels, timing_labels], # Nested list of labels
+        [nothing, nothing], # Optional group titles
+        framevisible=false,
+        rowgap=1, # Spacing within groups
+        groupgap=20, # Spacing BETWEEN groups
+        labelsize=15
+    )
+    
+    xlims!(ax_bars, 0, 144)
+    hideydecorations!(ax_bars)
+    hidespines!(ax_bars, :l, :t, :r)
+    colsize!(bar_ax, 1, Relative(0.01)) # Null space to left
+    # colsize!(bar_ax, 3, Relative(0.025)) # Legend space to right
+    
+    rowsize!(gb, 3, Relative(0.26))
+
+    linkxaxes!(ax1, axtop, ax_noinfo)
     linkyaxes!(ax1, axright, ax_YZ)
-    hidexdecorations!(ax_noinfo_dist, grid=false)
-    hideydecorations!(ax_noinfo_box)
-    xlims!(ax_noinfo_box, 0, nothing)
+    xlims!(ax_noinfo, 0, nothing)
     
     # Set global gaps and spacing
     colsize!(f.layout, 1, Relative(0.3))
@@ -190,10 +253,8 @@ function figure3()
     colsize!(gb, 1, Relative(0.35))
     colgap!(gb, 1, 5)
     rowgap!(gb, 1, 5)
-    # colgap!(gb, 2, 40)
+    colgap!(gb, 2, 10)
     rowgap!(gb, 2, -20)
-    rowgap!(gb, 3, 0)
-    # rowgap!(gb, 5, 0)
 
     Label(ga[1,1,TopLeft()], "A",
         fontsize = 30,
@@ -214,6 +275,12 @@ function figure3()
         halign = :right
     )
     Label(gb[1,3,TopLeft()], "D",
+        fontsize = 30,
+        font = :bold,
+        padding = (0, 5, 5, 0),
+        halign = :right
+    )
+    Label(bar_ax[1,2,TopLeft()], "E",
         fontsize = 30,
         font = :bold,
         padding = (0, 5, 5, 0),
@@ -251,10 +318,12 @@ draw(_)
 dt = @pipe df |> 
 @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
 @subset(_, :peak_mi, :muscle .== "all", :nspikes .> 1000)
+println(ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :mi], dt[dt.direction .== "descending", :mi]))
 
-ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :mi], dt[dt.direction .== "descending", :mi])
-
-ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :precision], dt[dt.direction .== "descending", :precision])
+dt = @pipe df |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+@subset(_, :peak_valid_mi, :muscle .== "all", :nspikes .> 1000)
+println(ApproximateTwoSampleKSTest(dt[dt.direction .== "ascending", :precision], dt[dt.direction .== "descending", :precision]))
 
 ##------------- KS test for whether timing vs no timing significantly different
 dt = @pipe df |> 

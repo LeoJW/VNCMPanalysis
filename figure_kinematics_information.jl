@@ -97,6 +97,10 @@ for (i,cat) in enumerate(unique(category[inds]))
     mean_bin_idx = findmin(abs.(bin_centers .- mean_val))[2]
     mean_line_height = heights[mean_bin_idx]
     lines!(ax, [mean_val, mean_val], [i, i+mean_line_height], color=:black)
+    # Draw asterisk if significantly different from zero
+    if pvalue(OneSampleTTest(vals[inds][mask])) < 0.05
+        text!(ax, 5.0, i + 0.45, text="*", fontsize=25, align=(:center, :center))
+    end
 end
 
 ax2 = Axis(gb[1,1], xlabel="τ(X;Y) - τ(X;Z) (ms)", xticks=[-10, -5, 0, 5, 10])
@@ -132,6 +136,10 @@ for (i,cat) in enumerate(unique(category[inds]))
     mean_bin_idx = findmin(abs.(bin_centers .- mean_val))[2]
     mean_line_height = heights[mean_bin_idx]
     lines!(ax2, [mean_val, mean_val], [i, i+mean_line_height], color=:black)
+    # Draw asterisk if significantly different from zero
+    if pvalue(OneSampleTTest(vals[inds][mask])) < 0.05
+        text!(ax2, 5.0, i + 0.45, text="*", fontsize=25, align=(:center, :center))
+    end
 end
 
 
@@ -217,3 +225,80 @@ f = figure_kinematics_info_alt()
 display(f)
 
 save(joinpath(fig_dir, "fig_kinematics_info.pdf"), f)
+
+
+## Stats for paper
+
+dt = @pipe df |> 
+@subset(_, :nspikes .> 1000, :peak_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
+leftjoin(_, @subset(df_kine, :peak_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
+leftjoin(_, @subset(df_kine_neur, :peak_mi), on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
+@transform(_, :mi_XY = :mi) |> 
+@transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
+@transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
+@subset(_, (!).(ismissing.(:mi_XY)), (!).(ismissing.(:mi_XZ))) |> 
+@subset(_, (!).(isnan.(:mi_XY)) .&& (!).(isnan.(:mi_XZ)))
+dt.bilat_muscle = [x[2:end] for x in dt.muscle]
+dt = @pipe dt |> 
+@transform!(_, :muscle = ifelse.(:single, :bilat_muscle, :muscle)) |> 
+@subset(_, (!).(:muscle .∈ Ref(["Rsteering", "Rpower", "Lsteering", "Lpower"]))) |> 
+@subset(_, abs.(:precision_XZ .- :precision) .< 50)
+
+dtp = @pipe df |> 
+@subset(_, :nspikes .> 1000, :peak_valid_mi, :moth .∈ Ref(["2025-02-25", "2025-02-25-1"])) |> 
+leftjoin(_, @subset(df_kine, :peak_valid_mi), on=[:muscle, :moth], renamecols=""=>"_YZ") |> 
+leftjoin(_, @subset(df_kine_neur, :peak_valid_mi), on=[:neuron, :moth], renamecols=""=>"_XZ") |> 
+@transform(_, :mi_XY = :mi) |> 
+@transform(_, :n2m_loss = :mi_XY .- :mi_XZ) |> 
+@transform(_, :m2k_loss = :mi_YZ .- :mi_XZ) |> 
+@subset(_, (!).(ismissing.(:mi_XY)), (!).(ismissing.(:mi_XZ))) |> 
+@subset(_, (!).(isnan.(:mi_XY)) .&& (!).(isnan.(:mi_XZ)))
+dtp.bilat_muscle = [x[2:end] for x in dtp.muscle]
+dtp = @pipe dtp |> 
+@transform!(_, :muscle = ifelse.(:single, :bilat_muscle, :muscle)) |> 
+@subset(_, (!).(:muscle .∈ Ref(["Rsteering", "Rpower", "Lsteering", "Lpower"]))) |> 
+@subset(_, abs.(:precision_XZ .- :precision) .< 50)
+
+
+sort_dict = Dict(
+    "ax"=>"a", "ba"=>"b", "sa"=>"c", "dvm"=>"d", "dlm"=>"e", "steering"=>"f", "power"=>"g", "all"=>"h"
+)
+category = getindex.(Ref(sort_dict), dt.muscle)
+inds = sortperm(category, rev=true)
+
+vals = dt.mi_XZ .- dt.mi_XY
+mask = category[inds] .== "h"
+
+println(OneSampleTTest(vals[inds][mask]))
+println(quantile(abs.(vals[inds][mask]), 0.9))
+println(std(vals[inds][mask]))
+
+for muscle in ["ax", "ba", "sa", "dvm", "dlm", "steering", "power", "all"]
+    println("-----------------------------------------------")
+    println(muscle * "  ------------")
+    mask = category[inds] .== sort_dict[muscle]
+    println(sum(vals[inds][mask] .< 0))
+    println(string(round(sum(vals[inds][mask] .< 0) / length(vals[inds][mask]), digits=3)) * " %")
+    println(mean(vals[inds][mask]))
+    println(OneSampleTTest(vals[inds][mask]))
+end
+
+println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+category = getindex.(Ref(sort_dict), dtp.muscle)
+inds = sortperm(category, rev=true)
+vals = dtp.precision .- dtp.precision_XZ
+
+for muscle in ["ax", "ba", "sa", "dvm", "dlm", "steering", "power", "all"]
+    println("-----------------------------------------------")
+    println(muscle * "  ------------")
+    mask = category[inds] .== sort_dict[muscle]
+    # println(sum(vals[inds][mask] .< 0))
+    # println(string(round(sum(vals[inds][mask] .< 0) / length(vals[inds][mask]), digits=3)) * " %")
+    println(string(mean(vals[inds][mask])) * " pm " * string(std(vals[inds][mask])))
+    # println(OneSampleTTest(vals[inds][mask]))
+end
+
+##
+
+f, ax, sc = scatter(dtp.mi_XZ, dtp.precision_XZ)
