@@ -9,6 +9,21 @@ and other things set up and loaded. It's just put here to keep main_figures.jl f
 CairoMakie.activate!()
 # GLMakie.activate!()
 
+# Calculate bin heights, add mean line
+function hist_mean_line!(ax, var, bins; direction=:y)
+    mean_val = mean(var)
+    mi_hist = fit(Histogram, var, bins)
+    heights = mi_hist.weights ./ (sum(mi_hist.weights) * step(bins))  # Normalize to PDF
+    bin_centers = (bins[1:end-1] .+ bins[2:end]) ./ 2
+    mean_bin_idx = findmin(abs.(bin_centers .- mean_val))[2]
+    mean_val_height = heights[mean_bin_idx]
+    if direction == :y
+        lines!(ax, [mean_val, mean_val], [0, mean_val_height / maximum(heights)], color=:black, linewidth=2)
+    else
+        lines!(ax, [0, mean_val_height / maximum(heights)], [mean_val, mean_val], color=:black, linewidth=2)
+    end
+end
+
 function figure3()
     f = Figure(size=(1300, 625))
 
@@ -336,3 +351,102 @@ dt = @pipe df |>
 
 ApproximateTwoSampleKSTest(dt[dt.peak_off_valid .== "Spike timing info", :mi], dt[dt.peak_off_valid .== "No spike timing info", :mi])
 # ApproximateTwoSampleKSTest(dt[dt.peak_off_valid .== "timing", :precision], dt[dt.peak_off_valid .== "no timing", :precision])
+
+
+
+##------------- Firing rate supplement figure
+CairoMakie.activate!()
+
+color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
+
+f = Figure(size=(1100, 375))
+ga = f[1,1] = GridLayout()
+gb = f[1,2] = GridLayout()
+gc = f[1,3] = GridLayout()
+ax_mi = Axis(ga[1,1], ylabel="I(X;Y) (bits/s)")
+ax_prec = Axis(ga[2,1], xlabel="Mean firing rate (Hz)", ylabel="τ(X;Y) (ms)")
+ax_eta1 = Axis(gb[1,1], xlabel="Mean firing rate (Hz)", ylabel="η₁ (bits/spike)")
+ax_eta1_h = Axis(gb[1,2])
+ax_eta2 = Axis(gc[1,1], xlabel="Mean firing rate (Hz)", ylabel="η₂ (bits/bits)")
+ax_eta2_h = Axis(gc[1,2])
+
+dat = @pipe df |> 
+    @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+    @transform(_, :muscle = ifelse.(:single, "single", :muscle))
+for gdf in groupby(dat, :direction)
+    label = titlecase(gdf.direction[1])
+    scatter!(ax_mi, gdf.meanrate, gdf.mi, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+
+dat = @pipe df |> 
+    @subset(_, :peak_valid_mi, :nspikes .> 1000, :muscle .== "all") |> 
+    @transform(_, :mi = ifelse.(:mi .< 0, 0, :mi)) |> 
+    @transform(_, :muscle = ifelse.(:single, "single", :muscle))
+for gdf in groupby(dat, :direction)
+    label = titlecase(gdf.direction[1])
+    scatter!(ax_prec, gdf.meanrate, gdf.precision, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+
+linkxaxes!(ax_mi, ax_prec)
+xlims!(ax_mi, low=0)
+xlims!(ax_prec, low=0)
+
+# Efficiency 1
+dat = @pipe df |> 
+@subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi))
+for gdf in groupby(dat, :direction)
+    label = titlecase(gdf.direction[1])
+    scatter!(ax_eta1, gdf.meanrate, gdf.mi ./ gdf.meanrate, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+bins = range(0, 1, 20)
+hist!(ax_eta1_h, dat.mi ./ dat.meanrate, direction=:x, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_eta1_h, dat.mi ./ dat.meanrate, bins, direction=:x)
+
+hidedecorations!(ax_eta1_h)
+colgap!(gb, 0)
+linkyaxes!(ax_eta1, ax_eta1_h)
+ylims!(ax_eta1, 0, 1)
+ylims!(ax_eta1_h, 0, 1)
+xlims!(ax_eta1, low=0)
+xlims!(ax_eta1_h, low=0)
+colsize!(gb, 2, Relative(1/3))
+
+var = dat.mi ./ dat.meanrate
+println("$(mean(var)) pm $(std(var))")
+
+# Efficiency 2
+dat = @pipe df |> 
+@subset(_, :peak_valid_mi, :nspikes .> 1000, :muscle .== "all") |> 
+@transform(_, :mi = ifelse.(:mi .< 0, 0, :mi))
+dat.Hmax = dat.meanrate .* log2.(exp(1) ./ (dat.meanrate .* dat.precision ./ 1000))
+dat.eta2 = dat.mi ./ dat.Hmax
+for gdf in groupby(dat, :direction)
+    label = titlecase(gdf.direction[1])
+    scatter!(ax_eta2, gdf.meanrate, gdf.eta2, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+
+bins = range(0, 1, 40)
+hist!(ax_eta2_h, dat.eta2, direction=:x, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_eta2_h, dat.eta2, bins, direction=:x)
+
+hidedecorations!(ax_eta2_h)
+colgap!(gc, 0)
+linkyaxes!(ax_eta2, ax_eta2_h)
+ylims!(ax_eta2, 0, 1)
+ylims!(ax_eta2_h, 0, 1)
+xlims!(ax_eta2, low=0)
+xlims!(ax_eta2_h, low=0)
+colsize!(gc, 2, Relative(1/3))
+
+println("$(mean(dat.eta2)) pm $(std(dat.eta2))")
+
+apply_letter_label(ga, "A")
+apply_letter_label(gb, "B")
+apply_letter_label(gc, "C")
+
+save(joinpath(fig_dir, "fig_supp_firing_rate.pdf"), f)
+display(f)
+
+
