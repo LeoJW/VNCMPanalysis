@@ -359,16 +359,22 @@ CairoMakie.activate!()
 
 color_dict = Dict("descending" => Makie.wong_colors()[1], "ascending" => Makie.wong_colors()[2], "uncertain" => Makie.wong_colors()[4])
 
-f = Figure(size=(1100, 375))
+f = Figure(size=(1100, 400))
 ga = f[1,1] = GridLayout()
 gb = f[1,2] = GridLayout()
 gc = f[1,3] = GridLayout()
-ax_mi = Axis(ga[1,1], ylabel="I(X;Y) (bits/s)")
-ax_prec = Axis(ga[2,1], xlabel="Mean firing rate (Hz)", ylabel="τ(X;Y) (ms)")
-ax_eta1 = Axis(gb[1,1], xlabel="Mean firing rate (Hz)", ylabel="η₁ (bits/spike)")
-ax_eta1_h = Axis(gb[1,2])
-ax_eta2 = Axis(gc[1,1], xlabel="Mean firing rate (Hz)", ylabel="η₂ (bits/bits)")
-ax_eta2_h = Axis(gc[1,2])
+gd = f[1,4] = GridLayout()
+ax_mi = Axis(ga[1,1], ylabel="I(X;Y) (bits/s)", xscale=log10, yscale=log10)
+ax_prec = Axis(ga[2,1], xlabel="Mean firing rate (Hz)", ylabel="τ(X;Y) (ms)", xscale=log10, yscale=log10)
+ax_eta1 = Axis(gb[2,1], xlabel="Mean firing rate (Hz)", ylabel="η₁ (bits/spike)")
+ax_fr1 = Axis(gb[1,1])
+ax_eta1_h = Axis(gb[2,2])
+ax_eta2 = Axis(gc[2,1], xlabel="Mean firing rate (Hz)", ylabel="η₂ (bits/bits)")
+ax_fr2 = Axis(gc[1,1])
+ax_eta2_h = Axis(gc[2,2])
+ax_eta3 = Axis(gd[2,1], xlabel="Mean firing rate (Hz)", ylabel="η₃ (bits/bits)")
+ax_fr3 = Axis(gd[1,1])
+ax_eta3_h = Axis(gd[2,2])
 
 dat = @pipe df |> 
     @subset(_, :peak_mi, :nspikes .> 1000, :muscle .== "all") |> 
@@ -389,8 +395,6 @@ for gdf in groupby(dat, :direction)
 end
 
 linkxaxes!(ax_mi, ax_prec)
-xlims!(ax_mi, low=0)
-xlims!(ax_prec, low=0)
 
 # Efficiency 1
 dat = @pipe df |> 
@@ -403,15 +407,23 @@ end
 bins = range(0, 1, 20)
 hist!(ax_eta1_h, dat.mi ./ dat.meanrate, direction=:x, bins=bins, normalization=:pdf, scale_to=1.0)
 hist_mean_line!(ax_eta1_h, dat.mi ./ dat.meanrate, bins, direction=:x)
+bins = range(0, 150, 45)
+hist!(ax_fr1, dat.meanrate, direction=:y, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_fr1, dat.meanrate, bins, direction=:y)
 
 hidedecorations!(ax_eta1_h)
+hidedecorations!(ax_fr1)
 colgap!(gb, 0)
+linkxaxes!(ax_eta1, ax_fr1)
 linkyaxes!(ax_eta1, ax_eta1_h)
 ylims!(ax_eta1, 0, 1)
 ylims!(ax_eta1_h, 0, 1)
 xlims!(ax_eta1, low=0)
 xlims!(ax_eta1_h, low=0)
+xlims!(ax_fr1, low=0)
+ylims!(ax_fr1, low=0)
 colsize!(gb, 2, Relative(1/3))
+rowsize!(gb, 1, Relative(1/3))
 
 var = dat.mi ./ dat.meanrate
 println("$(mean(var)) pm $(std(var))")
@@ -430,23 +442,64 @@ end
 bins = range(0, 1, 40)
 hist!(ax_eta2_h, dat.eta2, direction=:x, bins=bins, normalization=:pdf, scale_to=1.0)
 hist_mean_line!(ax_eta2_h, dat.eta2, bins, direction=:x)
+bins = range(0, 150, 45)
+hist!(ax_fr2, dat.meanrate, direction=:y, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_fr2, dat.meanrate, bins, direction=:y)
 
 hidedecorations!(ax_eta2_h)
+hidedecorations!(ax_fr2)
 colgap!(gc, 0)
 linkyaxes!(ax_eta2, ax_eta2_h)
+linkxaxes!(ax_eta2, ax_fr2)
 ylims!(ax_eta2, 0, 1)
 ylims!(ax_eta2_h, 0, 1)
 xlims!(ax_eta2, low=0)
 xlims!(ax_eta2_h, low=0)
+xlims!(ax_fr2, low=0)
+ylims!(ax_fr2, low=0)
 colsize!(gc, 2, Relative(1/3))
+rowsize!(gc, 1, Relative(1/3))
 
 println("$(mean(dat.eta2)) pm $(std(dat.eta2))")
+
+# Efficiency 3 (less conservative, Rieke Bodner Bialek 1995)
+dat.p = dat.meanrate .* dat.precision ./ 1000
+# dat.Smax = -1 / (dat.precision ./ 1000) .* (dat.p .* log2.(dat.p) .+ (1 .- dat.p) .* log2.(1 .- dat.p))
+dat.Smax = dat.meanrate .* log2.(1 ./ ())
+dat.eta3 = dat.mi ./ dat.Smax
+for gdf in groupby(dat, :direction)
+    label = titlecase(gdf.direction[1])
+    scatter!(ax_eta3, gdf.meanrate, gdf.eta3, label=label, color=color_dict[gdf.direction[1]], markersize=12)
+end
+
+bins = range(0, 1, 40)
+hist!(ax_eta3_h, dat.eta3, direction=:x, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_eta3_h, dat.eta3, bins, direction=:x)
+bins = range(0, 150, 45)
+hist!(ax_fr3, dat.meanrate, direction=:y, bins=bins, normalization=:pdf, scale_to=1.0)
+hist_mean_line!(ax_fr3, dat.meanrate, bins, direction=:y)
+
+hidedecorations!(ax_eta3_h)
+hidedecorations!(ax_fr3)
+colgap!(gc, 0)
+linkyaxes!(ax_eta3, ax_eta3_h)
+linkxaxes!(ax_eta3, ax_fr3)
+ylims!(ax_eta3, 0, 1)
+ylims!(ax_eta3_h, 0, 1)
+xlims!(ax_eta3, low=0)
+xlims!(ax_eta3_h, low=0)
+xlims!(ax_fr3, low=0)
+ylims!(ax_fr3, low=0)
+colsize!(gc, 2, Relative(1/3))
+rowsize!(gc, 1, Relative(1/3))
+
+println("$(mean(dat.eta3)) pm $(std(dat.eta3))")
+
 
 apply_letter_label(ga, "A")
 apply_letter_label(gb, "B")
 apply_letter_label(gc, "C")
+apply_letter_label(gd, "D")
 
 save(joinpath(fig_dir, "fig_supp_firing_rate.pdf"), f)
 display(f)
-
-

@@ -483,14 +483,13 @@ draw(plt1 + plt2,)# axis=(; xscale=log10))
 # categories = ["Lsteering", "Rsteering"]
 # categories = ["Lpower", "Lsteering"]
 # categories = ["Lsteering", "Lpower", "Rpower", "Rsteering"]
-# categories = ["lax", "lba", "lsa", "ldvm", "ldlm"]
-# categories = ["lax", "lba", "lsa", "ldvm", "ldlm", "rdlm", "rdvm", "rsa", "rba"]
+# categories = vcat(single_muscles, ["Lsteering", "Lpower", "Rpower", "Rsteering"], "power", "steering")
 categories = single_muscles
 
 ddt = @pipe df |> 
 select(_, Not([:precision_curve, :precision_levels])) |> 
 # @subset(_, :peak_valid_mi) |> 
-@subset(_, :peak_mi) |> 
+@subset(_, :peak_mi, :nspikes .> 1000) |> 
 # groupby(_, [:moth, :neuron]) |> 
 # transform!(_, [:mi, :muscle] => ((mi,muscle) -> begin
 #     ind = findfirst(muscle .== "Lsteering")
@@ -513,13 +512,6 @@ groupby(_, [:moth, :neuron]) |>
 # @transform(_, :mi = :precision_noise ./ :mi_total)
 ddt.stack = Vector{Int64}(ddt.stack)
 
-if "rax" in categories
-    bob = @pipe ddt |> 
-        @subset(_, :moth .== "2025-03-12-1", :peak_mi, :direction .== "descending", :muscle .== "rax")
-    row = rand(eachrow(bob))
-    row.mi = 0
-    push!(ddt, row)
-end
 
 colors = Makie.wong_colors()
 
@@ -534,7 +526,7 @@ for (i,moth) in enumerate(unique(df.moth))
         sort!(dt, [order(:muscle), order(:label), order(:mi_total)])
         nlevels = length(unique(dt.muscle))
 
-        barplot!(ax[i,j], repeat(1:nrow(dt)÷nlevels, nlevels), dt.mi,
+        barplot!(ax[i,j], repeat(1:nrow(dt)÷nlevels, nlevels), dt.mi,#./ dt.mi_total,
             dodge=dt.stack, 
             # color=colors[dt.stack]
             color=dt.stack, colorrange=extrema(dt.stack)
@@ -547,6 +539,11 @@ linkyaxes!(ax...)
 colsize!(f.layout, 1, Auto(4))
 f
 
+##
+@pipe ddt |> 
+@subset(_, :moth .== "2025-03-12-1") |> 
+groupby(_, :muscle) |> 
+combine(_, nrow)
 ## Stacked bar plots for PRECISION
 
 # categories = ["power", "steering"]
@@ -612,6 +609,8 @@ draw(_)#, axis=(; yscale=log10))
 
 ## -------------------------------- Figure 1 artifacts and details
 
+# Neuron is 18, moth 2025-02-25_1
+
 ## Neuron and Muscle raster plots
 thismoth = "2025-02-25_1"
 neurons, muscles, unit_details = get_spikes(thismoth)
@@ -619,7 +618,7 @@ kine = npzread(joinpath(data_dir, "..", thismoth * "_kinematics.npz"))
 
 ##
 embedding = h5read(joinpath(data_dir, "..", "fig_1_embedding_data.h5"), "dict_0")
-plot_range = [700, 700.5] #[1101, 1101.5]
+plot_range = [699, 699.5] #[700, 700.5] #[1101, 1101.5]
 
 fsamp = 30000
 # good_units = [unit for (unit, qual) in unit_details["quality"] if qual == "good"]
@@ -633,31 +632,45 @@ sorti = sortperm(DataFrame(a=unit_fr[mask], b=nspikes[mask], copycols=false))
 
 use_xticks = [plot_range[1], plot_range[1] + (plot_range[2] - plot_range[1]) / 2, plot_range[2]]
 
-f = Figure(size=(700,980))
+# f = Figure(size=(700,980))
+f = Figure(size=(700,860), fontsize=20)
 ax = Axis(f[1,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
 axe = Axis(f[2,1])#, xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
 axm = Axis(f[3,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]))
 axk = Axis(f[4,1], xticks=(use_xticks, ["0", "0.25", "0.5"]), yticks=([],[]), xlabel="Time (s)")
 
-seg = 1 / length(good_units[mask][sorti])
+# seg = 1 / length(good_units[mask][sorti])
+seg = 1 / 10
 for (i,unit) in enumerate(good_units[mask][sorti])
-    # Skip some upper rows for empty space
-    # if (i >= 13) .&& (i <= 13 + 3)
-    #     continue
-    # end
-    col = unit == 97 ? Makie.wong_colors()[2] : :black # 33 also good
+    if (i > 10)
+        continue
+    end
+    col = unit == 18 ? Makie.wong_colors()[2] : :black # 33 also good
     vlines!(ax, neurons[unit] ./ fsamp, ymin=(i-1)*seg, ymax=i*seg, color=col)
 end
-seg = 1 / length(good_muscles)
-for (i,unit) in enumerate(good_muscles)
-    vlines!(axm, muscles[unit] ./ fsamp, ymin=(i-1)*seg, ymax=i*seg, color=muscle_colors_dict[unit])
+seg = 1 / length(single_muscles)
+for (i,unit) in enumerate(single_muscles)
+    if unit .== "rdvm"
+        vlines!(axm, muscles["ldvm"] ./ fsamp .+ 0.002 .* rand(length(muscles["ldvm"])), ymin=(i-1)*seg, ymax=i*seg, color=muscle_colors_dict[unit])
+    else
+        vlines!(axm, muscles[unit] ./ fsamp, ymin=(i-1)*seg, ymax=i*seg, color=muscle_colors_dict[unit])
+    end
 end
-for (i,angle) in enumerate(["Lphi", "Ltheta", "Lalpha", "Rphi", "Rtheta", "Ralpha"])
+angles = ["Lphi", "Rphi", "Ltheta", "Rtheta", "Lalpha", "Ralpha"]
+colordict = Dict(ang => Makie.categorical_colors(:tab20, 20)[i] for (i,ang) in enumerate(angles))
+offsets = 1.2 .* repeat(1:3, inner=2)
+for (i,angle) in enumerate(angles)
     mask = (kine["index"] .> fsamp * plot_range[1]) .&& (kine["index"] .< fsamp * plot_range[2])
-    lines!(axk, kine["index"] ./ fsamp, kine[angle] ./ (maximum(kine[angle][mask]) - minimum(kine[angle][mask])) .+ i * 2)
+    max_range = 90 * pi/180
+    lines!(axk, 
+        kine["index"] ./ fsamp, 
+        kine[angle] ./ max_range .+ offsets[i],
+        color=colordict[angle]
+    )
+    first_x = kine["index"][mask][1]
+    lines!(axk, [first_x, first_x] ./ fsamp, offsets[i] .+ [-0.5, 0.5], color=:black)
 end
 
-# mask = (embedding["time"] .> plot_range[1]) .&& (embedding["time"] .< plot_range[2])
 mask = fill(true, length(embedding["time"]))
 for i in 1:3
     xvals = embedding["X"][i,mask]
@@ -672,6 +685,7 @@ ylims!(axe, 2, 22)
 linkxaxes!(ax, axe, axm, axk)
 hidedecorations!(ax)
 hidexdecorations!(axm)
+hidexdecorations!(axk, label=false, ticklabels=false, ticks=false)
 hidedecorations!(axe)
 hideydecorations!(axm)
 hideydecorations!(axk)
@@ -682,12 +696,35 @@ hidespines!(axk)
 xlims!(ax, plot_range)
 xlims!(axm, plot_range)
 xlims!(axk, plot_range)
-rowsize!(f.layout, 1, Auto(1.5))
+rowsize!(f.layout, 1, Auto(1.0))
 rowsize!(f.layout, 3, Auto(1.2))
+rowsize!(f.layout, 4, Auto(1.0))
 rowgap!(f.layout, 0)
 display(f)
 
-# save(joinpath(fig_dir, "fig1_spike_data_with_embedding.svg"), f)
+save(joinpath(fig_dir, "fig1_spike_data_with_embedding.pdf"), f)
+
+
+## More figure 1 artifacts: Spike template
+
+f = Figure()
+ax = Axis(f[1,1])
+
+kilosort_dir = "/Users/leo/Desktop/ResearchPhD/VNCMP/localdata/2025-03-12_1/kilosort4"
+templates = npzread(joinpath(kilosort_dir, "templates.npy"))
+channel_pos = npzread(joinpath(kilosort_dir, "channel_positions.npy"))
+
+f = Figure()
+ax = Axis(f[1,1])
+
+seg_size = 10
+for i in axes(channel_pos, 1)
+    x_pos, y_pos = channel_pos[i,1], channel_pos[i,2]
+    x_range = range(-seg_size/2, seg_size/2, size(templates)[2])
+    lines!(ax, x_pos .+ x_range, y_pos .+ 4.5 .* templates[8,:,i], color=:black)
+end
+display(f)
+
 
 ##
 # discrete_vec = zeros(muscles["ldlm"][end]+10)
@@ -1745,3 +1782,4 @@ leftjoin(_, dfc, on=[:moth, :neuron]) |>
 AlgebraOfGraphics.data(_) * mapping(:peak_power, :mi, color=:direction) * visual(Scatter)
 ) |> 
 draw(_, axis=(; xscale=log10, yscale=log10))
+
